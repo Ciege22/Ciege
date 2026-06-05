@@ -1,65 +1,92 @@
-import Image from "next/image";
+const navItems = [
+  { label: "Deck Builder", active: true },
+  { label: "Action Board", active: false },
+  { label: "NTP Tracker", active: false },
+  { label: "SCOP Invoice", active: false },
+];
+
+const stats = [
+  { label: "Active Decks", value: "12", delta: "+8%" },
+  { label: "Open Actions", value: "34", delta: "-4%" },
+  { label: "NTPs Pending", value: "7", delta: "+14%" },
+  { label: "SCOP Invoices", value: "18", delta: "+22%" },
+];
 
 export default function Home() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-zinc-950 text-zinc-100">
+      <div className="mx-auto max-w-[1600px] px-6 py-8">
+        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+          <aside className="rounded-[32px] border border-white/10 bg-white/5 p-6 shadow-[0_24px_120px_-80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+            <div className="mb-8">
+              <p className="text-xs uppercase tracking-[0.4em] text-emerald-300/80">Ciege</p>
+              <h1 className="mt-3 text-3xl font-semibold text-white">PM Dashboard</h1>
+              <p className="mt-2 text-sm leading-6 text-zinc-400">
+                Navigate your planning platform and keep every delivery aligned.
+              </p>
+            </div>
+
+            <nav className="space-y-2">
+              {navItems.map((item) => (
+                <button
+                  key={item.label}
+                  className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition hover:bg-white/10 ${
+                    item.active ? "bg-emerald-400/10 text-emerald-300" : "text-zinc-300"
+                  }`}
+                  type="button"
+                >
+                  {item.label}
+                </button>
+              ))}
+            </nav>
+
+            <div className="mt-10 rounded-3xl border border-white/10 bg-zinc-900/70 p-4 text-sm text-zinc-400">
+              <p className="font-medium text-white">Platform insight</p>
+              <p className="mt-3 leading-6">
+                Keep your project teams aligned with a single source of truth for decks, actions, NTPs, and invoices.
+              </p>
+            </div>
+          </aside>
+
+          <main className="space-y-6">
+            <section className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-[0_24px_120px_-80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+              <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                <div className="max-w-2xl">
+                  <p className="text-sm uppercase tracking-[0.4em] text-emerald-300/80">
+                    Welcome back, team
+                  </p>
+                  <h2 className="mt-4 text-4xl font-semibold text-white">
+                    Run your product operations with confidence.
+                  </h2>
+                  <p className="mt-4 text-base leading-7 text-zinc-400">
+                    Ciege brings your Deck Builder, Action Board, NTP Tracker and SCOP Invoice flow together in one polished workspace.
+                  </p>
+                </div>
+
+                <div className="rounded-3xl bg-zinc-900/90 px-5 py-4 text-sm text-zinc-300 ring-1 ring-white/10">
+                  <p className="text-zinc-400">Next sync</p>
+                  <p className="mt-1 text-xl font-semibold text-white">Thursday · 10:00 AM</p>
+                </div>
+              </div>
+            </section>
+
+            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {stats.map((stat) => (
+                <article
+                  key={stat.label}
+                  className="rounded-[28px] border border-white/10 bg-zinc-900/80 p-6 shadow-xl shadow-black/20"
+                >
+                  <p className="text-sm font-medium uppercase tracking-[0.35em] text-zinc-500">
+                    {stat.label}
+                  </p>
+                  <p className="mt-4 text-4xl font-semibold text-white">{stat.value}</p>
+                  <p className="mt-3 text-sm text-emerald-300">{stat.delta} vs last week</p>
+                </article>
+              ))}
+            </section>
+          </main>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      </div>
     </div>
   );
 }
