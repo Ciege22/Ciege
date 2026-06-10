@@ -88,34 +88,86 @@ def replace_text_in_shape(shape, old, new):
             if old in str(run.text):
                 run.text = run.text.replace(old, new)
 
-def set_table_cell(shape, row, col, text, color=None, bold=None):
+def set_table_cell(shape, row, col, text, color=None, bold=None, clear_fill=False, fill_rgb=None):
     try:
-        # Collapse newlines — literal \n in a:t is invalid OOXML and renders blank in PowerPoint
+        NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
         text = str(text).replace('\n', ' | ').replace('\r', '')
         cell = shape.table.cell(row, col)
+        if clear_fill or fill_rgb is not None:
+            tcPr = cell._tc.get_or_add_tcPr()
+            for tag in [qn('a:solidFill'), qn('a:gradFill'), qn('a:pattFill'), qn('a:blipFill')]:
+                for el in tcPr.findall(tag):
+                    tcPr.remove(el)
+            solid = etree.SubElement(tcPr, f'{{{NS}}}solidFill')
+            srgb  = etree.SubElement(solid, f'{{{NS}}}srgbClr')
+            srgb.set('val', fill_rgb if fill_rgb else 'FFFFFF')
         tf = cell.text_frame
-        # Wipe every run in every paragraph so no stale text survives across sessions
-        for para in tf.paragraphs:
-            for r_el in para._p.findall(qn('a:r')):
-                t_el = r_el.find(qn('a:t'))
-                if t_el is not None:
-                    t_el.text = ''
-        # Write desired text into the first paragraph's first run
         para0 = tf.paragraphs[0]
-        runs = para0._p.findall(qn('a:r'))
-        if runs:
-            t_el = runs[0].find(qn('a:t'))
-            if t_el is not None:
-                t_el.text = str(text)
-            if para0.runs:
-                if color: para0.runs[0].font.color.rgb = color
-                if bold is not None: para0.runs[0].font.bold = bold
+        # Capture run properties BEFORE removing runs so we can restore font size/face.
+        rPr_copy = None
+        existing_runs = para0._p.findall(qn('a:r'))
+        if existing_runs:
+            src_rPr = existing_runs[0].find(qn('a:rPr'))
+            if src_rPr is not None:
+                rPr_copy = copy.deepcopy(src_rPr)
+        # Fall back to endParaRPr if no run had properties
+        if rPr_copy is None:
+            end_rpr_src = para0._p.find(qn('a:endParaRPr'))
+            if end_rpr_src is not None:
+                rPr_copy = etree.Element(f'{{{NS}}}rPr')
+                for attr, val in end_rpr_src.attrib.items():
+                    rPr_copy.set(attr, val)
+                for child in end_rpr_src:
+                    rPr_copy.append(copy.deepcopy(child))
+        # Clamp oversized sz at run, paragraph defRPr, and endParaRPr levels.
+        # Table content uses ~600–1000; slide/theme defaults are 1200+.
+        # We SET to 800 (8pt) rather than deleting, so the table's last-column or
+        # other inherited style cannot override with a large size.
+        _FALLBACK_SZ = '800'
+        def _clamp_sz(el):
+            if el is None: return
+            try:
+                if int(el.get('sz', 0)) > 1100:
+                    el.set('sz', _FALLBACK_SZ)
+            except (ValueError, TypeError):
+                pass
+        _clamp_sz(rPr_copy)
+        pPr = para0._p.find(qn('a:pPr'))
+        if pPr is not None:
+            _clamp_sz(pPr.find(qn('a:defRPr')))
+        _clamp_sz(para0._p.find(qn('a:endParaRPr')))
+        # If rPr_copy has no sz at all (blank template cell), set one explicitly so
+        # the run cannot inherit an oversized table-level or theme default.
+        if rPr_copy is not None and not rPr_copy.get('sz'):
+            rPr_copy.set('sz', _FALLBACK_SZ)
+        elif rPr_copy is None:
+            rPr_copy = etree.Element(f'{{{NS}}}rPr')
+            rPr_copy.set('sz', _FALLBACK_SZ)
+        # Remove ALL runs from ALL paragraphs — including any previously inserted
+        # after <a:endParaRPr> (invalid OOXML that PowerPoint silently ignores).
+        for para in tf.paragraphs:
+            for r_el in list(para._p.findall(qn('a:r'))):
+                para._p.remove(r_el)
+        # Build a fresh run with preserved properties and insert BEFORE <a:endParaRPr>.
+        r_new = etree.Element(f'{{{NS}}}r')
+        if rPr_copy is not None:
+            r_new.append(rPr_copy)
+        t_new = etree.SubElement(r_new, f'{{{NS}}}t')
+        t_new.text = str(text)
+        end_rpr = para0._p.find(qn('a:endParaRPr'))
+        if end_rpr is not None:
+            end_rpr.addprevious(r_new)
         else:
-            NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-            r_new = etree.SubElement(para0._p, f'{{{NS}}}r')
-            t_new = etree.SubElement(r_new, f'{{{NS}}}t')
-            t_new.text = str(text)
-    except: pass
+            para0._p.append(r_new)
+        # Apply color/bold through the python-pptx run API
+        if para0.runs:
+            if color:
+                para0.runs[0].font.color.rgb = color
+            if bold is not None:
+                para0.runs[0].font.bold = bold
+    except Exception as _e:
+        import sys as _s
+        print(f'[set_table_cell] row={row} col={col} err={_e!r}', file=_s.stderr, flush=True)
 
 
 def expand_table_rows(shape, needed_data_rows):
@@ -181,6 +233,9 @@ def extract_data(tracker_path: str, snapshot_path: str,
         (c for c in df.columns if c.strip().rstrip(':').strip().lower() == 'cx notes'),
         None
     )
+    import sys
+    cx_candidates = [c for c in df.columns if 'cx' in c.lower()]
+    print(f'[extract_data] _cx_col={_cx_col!r}  cx_candidates={cx_candidates}', file=sys.stderr, flush=True)
 
     # String columns
     str_cols = {
@@ -280,7 +335,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
                          else (2 if x['cat'] == 'Program Team' else 1))
         por[name] = {
             'total': len(grp), 'ntp': len(with_ntp), 'pending': len(pending),
-            'ntp_hops': with_ntp[['HOP', 'General Contractor', 'Site CM', 'has_mat', '_ntp_wait', '_cx']].to_dict('records'),
+            'ntp_hops': with_ntp[[c for c in ['HOP', 'General Contractor', 'Site CM', 'has_mat', '_ntp_wait', '_cx', '_pm', '_ntp_owner', 'MS15 Implementation Start F', 'MS16 Implementation Ends F'] if c in with_ntp.columns]].to_dict('records'),
             'pending_rows': pending_rows,
             'external': [r for r in pending_rows if r['cat'] == 'External'],
             'prog_team': [r for r in pending_rows if r['cat'] == 'Program Team'],
@@ -389,15 +444,27 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     def fix_chart(xml_bytes, fc_vals, act_vals, snap_vals):
         xml = xml_bytes.decode('utf-8')
-        # Update existing fc/act caches (fc = first series in XML, act = second)
+        has_snap = '<c:v>Snap Plan</c:v>' in xml
         caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
-        if len(caches) >= 2:
-            xml = xml[:caches[0].start()] + build_cache(fc_vals) + xml[caches[0].end():]
-            caches2 = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
-            if len(caches2) >= 2:
-                xml = xml[:caches2[1].start()] + build_cache(act_vals) + xml[caches2[1].end():]
+
+        if has_snap and len(caches) >= 3:
+            # Snap Plan was already added and reordered to position 0 by a previous run.
+            # XML series order: [0]=Snap Plan, [1]=Forecast, [2]=Actual
+            # Replace back-to-front so offsets stay valid after each substitution.
+            xml = xml[:caches[2].start()] + build_cache(act_vals) + xml[caches[2].end():]
+            caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
+            xml = xml[:caches[1].start()] + build_cache(fc_vals) + xml[caches[1].end():]
+            caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
+            xml = xml[:caches[0].start()] + build_cache(snap_vals) + xml[caches[0].end():]
+        else:
+            # Fresh template: 2 series — [0]=Forecast, [1]=Actual
+            if len(caches) >= 2:
+                xml = xml[:caches[0].start()] + build_cache(fc_vals) + xml[caches[0].end():]
+                caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
+                xml = xml[:caches[1].start()] + build_cache(act_vals) + xml[caches[1].end():]
+
         # Add Snap Plan series if not already present
-        if snap_vals is not None and '<c:v>Snap Plan</c:v>' not in xml:
+        if snap_vals is not None and not has_snap:
             cat_pts = ''.join(f'<c:pt idx="{i}"><c:v>{l}</c:v></c:pt>' for i, l in enumerate(labels))
             cat_cache = f'<c:strCache><c:ptCount val="{len(labels)}"/>{cat_pts}</c:strCache>'
             dlbls = (
@@ -539,6 +606,53 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                                     encoding='UTF-8', standalone=True)
                                 break
 
+    # ── Delete last 2 slides (Invoice & SCOP review — no longer needed) ─────────
+    for _del_offset in [1, 0]:
+        _d_prs_bytes = content.get('ppt/presentation.xml', b'')
+        _d_rels_bytes = content.get('ppt/_rels/presentation.xml.rels', b'')
+        if not _d_prs_bytes or not _d_rels_bytes:
+            continue
+        _d_prs_root = etree.fromstring(_d_prs_bytes)
+        _d_sld_lst  = _d_prs_root.find(f'.//{{{_P_NS}}}sldIdLst')
+        _d_ids      = _d_sld_lst.findall(f'{{{_P_NS}}}sldId') if _d_sld_lst is not None else []
+        _d_idx      = len(_d_ids) - 1 - _del_offset  # last or second-to-last
+        if _d_idx < 0:
+            continue
+        _d_tgt = _d_ids[_d_idx]
+        _d_rid = _d_tgt.get(f'{{{_R_NS}}}id')
+        _d_rels_root = etree.fromstring(_d_rels_bytes)
+        _d_zip_path  = None
+        for _rel in _d_rels_root.findall(f'{{{_PKG_NS}}}Relationship'):
+            if _rel.get('Id') == _d_rid:
+                _d_zip_path = 'ppt/slides/' + _rel.get('Target', '').split('/')[-1]
+                break
+        if not _d_zip_path or _d_zip_path not in content:
+            continue
+        # 1. Remove from sldIdLst
+        _d_sld_lst.remove(_d_tgt)
+        content['ppt/presentation.xml'] = etree.tostring(
+            _d_prs_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+        # 2. Remove from rels
+        for _rel in _d_rels_root.findall(f'{{{_PKG_NS}}}Relationship'):
+            if _rel.get('Id') == _d_rid:
+                _d_rels_root.remove(_rel)
+                break
+        content['ppt/_rels/presentation.xml.rels'] = etree.tostring(
+            _d_rels_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+        # 3. Remove slide XML and its rels file
+        del content[_d_zip_path]
+        content.pop(_d_zip_path.replace('ppt/slides/', 'ppt/slides/_rels/') + '.rels', None)
+        # 4. Remove Override from [Content_Types].xml
+        _d_ct = content.get('[Content_Types].xml', b'')
+        if _d_ct:
+            _d_ct_root = etree.fromstring(_d_ct)
+            for _ov in _d_ct_root.findall(f'{{{_CT_NS}}}Override'):
+                if _ov.get('PartName') == '/' + _d_zip_path:
+                    _d_ct_root.remove(_ov)
+                    content['[Content_Types].xml'] = etree.tostring(
+                        _d_ct_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+                    break
+
     # Save temp file for pptx manipulation
     tmp_path = output_path + '.tmp.pptx'
     with zipfile.ZipFile(tmp_path, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -661,7 +775,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             set_table_cell(mss_tbl, ri, 3, d['hop_ops'].get(hop, ''))
             set_table_cell(mss_tbl, ri, 4, r.get('Readiness', ''))
             set_table_cell(mss_tbl, ri, 5, fmt_d(ms15a))
-            set_table_cell(mss_tbl, ri, 6, gv(r, '_cx'))
+            set_table_cell(mss_tbl, ri, 6, '')
         else:
             for ci in range(7): set_table_cell(mss_tbl, ri, ci, '')
     set_shape_text(shapes7[9],
@@ -679,7 +793,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             set_table_cell(la_tbl_mss, ri, 3, d['hop_ops'].get(hop, ''))
             set_table_cell(la_tbl_mss, ri, 4, r.get('Readiness', ''))
             set_table_cell(la_tbl_mss, ri, 5, fmt_d(ms15f))
-            set_table_cell(la_tbl_mss, ri, 6, gv(r, '_cx'))
+            set_table_cell(la_tbl_mss, ri, 6, '')
         else:
             for ci in range(7): set_table_cell(la_tbl_mss, ri, ci, '')
 
@@ -687,23 +801,50 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     shapes8 = list(prs.slides[6].shapes)
     la_tbl = shapes8[7]
     la_sorted = d['la'].sort_values('MS15 Implementation Start F')
+    _la_cx_col = d.get('_cx_col')
+    import sys as _sys
+    try:
+        _la_tbl_cols = len(list(la_tbl.table.columns))
+    except Exception as _e:
+        _la_tbl_cols = f'ERR:{_e}'
+    print(f'[look-ahead] _cx_col={_la_cx_col!r}, la rows={len(la_sorted)}, table_cols={_la_tbl_cols}', file=_sys.stderr, flush=True)
+    # Detect the template's alternating-row fill color from row 2 (first even data row).
+    # Fall back to EDEDED if the template cell has no explicit solid fill.
+    _la_alt_grey = 'EDEDED'
+    try:
+        _ev_tc = la_tbl.table.cell(2, 0)._tc
+        _ev_tcPr = _ev_tc.find(qn('a:tcPr'))
+        if _ev_tcPr is not None:
+            _ev_solid = _ev_tcPr.find(qn('a:solidFill'))
+            if _ev_solid is not None:
+                _ev_srgb = _ev_solid.find(qn('a:srgbClr'))
+                if _ev_srgb is not None and _ev_srgb.get('val'):
+                    _la_alt_grey = _ev_srgb.get('val')
+    except Exception:
+        pass
     for ri in range(1, 11):
+        row_fill = 'FFFFFF' if ri % 2 != 0 else _la_alt_grey
         if ri - 1 < len(la_sorted):
             r = la_sorted.iloc[ri - 1]; hop = r['HOP']
             ntp_sym = '✓' if r.get('has_ntp', False) else '✗'
             nw = gv(r, '_ntp_wait') or gv(r, '_cx')
-            set_table_cell(la_tbl, ri, 0, hop)
-            set_table_cell(la_tbl, ri, 1, d['hop_gc_pm'].get(hop, ''))
-            set_table_cell(la_tbl, ri, 2, gv(r, 'General Contractor'))
+            cx_val = gv(r, '_cx')
+            # Fallback: read directly from cx column if _cx is empty
+            if not cx_val and _la_cx_col:
+                cx_val = gv(r, _la_cx_col)
+            print(f'  HOP={hop} _cx={cx_val[:40]!r}', file=_sys.stderr, flush=True)
+            set_table_cell(la_tbl, ri, 0, hop, fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 1, d['hop_gc_pm'].get(hop, ''), fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 2, gv(r, 'General Contractor'), fill_rgb=row_fill)
             set_table_cell(la_tbl, ri, 3, ntp_sym,
-                           color=GREEN_C if ntp_sym == '✓' else RED_C, bold=True)
-            set_table_cell(la_tbl, ri, 4, fmt_d(r.get('MS15 Implementation Start F')))
-            set_table_cell(la_tbl, ri, 5, d['hop_site_cm'].get(hop, ''))
-            set_table_cell(la_tbl, ri, 6, d['hop_ops'].get(hop, ''))
-            set_table_cell(la_tbl, ri, 7, nw[:50])
-            set_table_cell(la_tbl, ri, 8, gv(r, '_cx')[:50])
+                           color=GREEN_C if ntp_sym == '✓' else RED_C, bold=True, fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 4, fmt_d(r.get('MS15 Implementation Start F')), fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 5, d['hop_site_cm'].get(hop, ''), fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 6, d['hop_ops'].get(hop, ''), fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 7, nw[:200], fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 8, cx_val[:200], fill_rgb=row_fill)
         else:
-            for ci in range(9): set_table_cell(la_tbl, ri, ci, '')
+            for ci in range(9): set_table_cell(la_tbl, ri, ci, '', fill_rgb=row_fill)
 
     # Slide 9: In progress table (index 7 after deletion)
     shapes9 = list(prs.slides[7].shapes)
@@ -750,9 +891,14 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 tbl = shape.table
                 hdrs = [tbl.cell(0, ci).text.strip() for ci in range(len(tbl.columns))]
                 if 'HOP' not in hdrs: continue
-                hop_col = next((i for i, h in enumerate(hdrs) if h == 'HOP'), 0)
-                gc_col = next((i for i, h in enumerate(hdrs) if h == 'GC'), 1)
-                mat_col = next((i for i, h in enumerate(hdrs) if 'Mat' in h), gc_col + 1)
+                hop_col   = next((i for i, h in enumerate(hdrs) if h.strip() == 'HOP'), 0)
+                pm_col    = next((i for i, h in enumerate(hdrs) if h.strip() == 'PM'), None)
+                gc_col    = next((i for i, h in enumerate(hdrs) if h.strip() == 'GC'), 1)
+                mat_col   = next((i for i, h in enumerate(hdrs) if 'Mat' in h), None)
+                ntp_col   = next((i for i, h in enumerate(hdrs) if h.strip() == 'NTP'), None)
+                start_col = next((i for i, h in enumerate(hdrs) if 'Start' in h), None)
+                end_col   = next((i for i, h in enumerate(hdrs) if 'End' in h and 'Start' not in h), None)
+                owner_col = next((i for i, h in enumerate(hdrs) if 'Owner' in h or 'Action' in h), None)
                 comment_col = len(hdrs) - 1
                 ntp_hops = sorted(p['ntp_hops'], key=lambda h: d['hop_ms16f'].get(h['HOP'],
                                   pd.Timestamp('2099-01-01')) or pd.Timestamp('2099-01-01'))
@@ -771,11 +917,29 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                         ntp_wait = str(h.get('_ntp_wait', '')).strip()
                         cx = str(h.get('_cx', '')).strip()
                         cell_note = comment or ntp_wait or cx
+                        pm_val = str(h.get('_pm', '')).strip()
+                        pm_val = '' if pm_val.lower() == 'nan' else pm_val
+                        owner_val = str(h.get('_ntp_owner', '')).strip()
+                        owner_val = '' if owner_val.lower() == 'nan' else owner_val
+                        ms15f_val = h.get('MS15 Implementation Start F')
+                        ms16f_val = h.get('MS16 Implementation Ends F')
                         set_table_cell(shape, ri, hop_col, hop)
+                        if pm_col is not None:
+                            set_table_cell(shape, ri, pm_col, pm_val)
                         set_table_cell(shape, ri, gc_col, gc)
-                        if mat_col < len(hdrs):
+                        if mat_col is not None:
                             set_table_cell(shape, ri, mat_col, mat_sym,
                                            color=GREEN_C if mat_sym == '✓' else RED_C, bold=True)
+                        if ntp_col is not None:
+                            set_table_cell(shape, ri, ntp_col, '✓', color=GREEN_C, bold=True)
+                        if start_col is not None:
+                            set_table_cell(shape, ri, start_col,
+                                           fmt_dm(ms15f_val) if pd.notna(ms15f_val) else '')
+                        if end_col is not None:
+                            set_table_cell(shape, ri, end_col,
+                                           fmt_dm(ms16f_val) if pd.notna(ms16f_val) else '')
+                        if owner_col is not None:
+                            set_table_cell(shape, ri, owner_col, owner_val)
                         set_table_cell(shape, ri, comment_col, cell_note[:55] if cell_note else '')
                     else:
                         for ci in range(len(hdrs)): set_table_cell(shape, ri, ci, '')
