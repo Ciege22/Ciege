@@ -440,6 +440,21 @@ def extract_data(tracker_path: str, snapshot_path: str,
     complete_months, complete_labels, cx_complete_fc, cx_complete_act, all_complete_fc = _consolidate(
         complete_months, complete_labels, cx_complete_fc, cx_complete_act, all_complete_fc_raw)
 
+    # Cycle time averages — grouped by MS16 A completion month, all DON 444 HOPs
+    def _cycle_avg(mo, yr):
+        grp = df[
+            (df['MS16 Implementation Ends A'].dt.month == mo) &
+            (df['MS16 Implementation Ends A'].dt.year  == yr) &
+            df['MS15 Implementation Start A'].notna() &
+            df['MS16 Implementation Ends A'].notna()
+        ]
+        if len(grp) == 0: return None
+        days = (grp['MS16 Implementation Ends A'] - grp['MS15 Implementation Start A']).dt.days
+        return int(round(days.mean()))
+
+    cycle_times = {(mo, yr): _cycle_avg(mo, yr)
+                   for yr in [2026] for mo in range(1, 13)}
+
     # Lookups
     hop_gc_pm = {}; hop_ops = {}; hop_site_cm = {}; hop_pm = {}
     hop_mat = {}; hop_ntp = {}; hop_ms16f = {}
@@ -466,6 +481,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
         'all_starts_fc': all_starts_fc, 'all_complete_fc': all_complete_fc,
         'starts_labels': starts_labels, 'complete_labels': complete_labels,
         'starts_months': starts_months, 'complete_months': complete_months,
+        'cycle_times': cycle_times,
         'hop_gc_pm': hop_gc_pm, 'hop_ops': hop_ops, 'hop_site_cm': hop_site_cm,
         'hop_pm': hop_pm, 'hop_mat': hop_mat, 'hop_ntp': hop_ntp,
         'hop_ms16f': hop_ms16f, 'today': today, 'deck_date': deck_date
@@ -1081,6 +1097,30 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     update_por_pending(14, 'July',      'jul', 'Jul Pending NTP')
     update_por_pending(17, 'August',    'aug', 'Aug Pending NTP')
     update_por_pending(20, 'September', 'sep', 'Sep Pending NTP')
+
+    # Cycle time slides — auto-detected by "YYYY Mon. Average" label, any position in deck
+    _MO_SHORT = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',
+                 7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'}
+    for _slide in prs.slides:
+        _avg_shape = None; _mo_key = None
+        for _sh in _slide.shapes:
+            if not _sh.has_text_frame: continue
+            _match = re.match(r'(\d{4})\s+(\w{3})\.\s+Average',
+                              _sh.text_frame.text.strip())
+            if _match:
+                _yr  = int(_match.group(1))
+                _ms  = _match.group(2)
+                _mon = next((k for k, v in _MO_SHORT.items() if v == _ms), None)
+                if _mon:
+                    _avg_shape = _sh; _mo_key = (_mon, _yr)
+                break
+        if _mo_key and _mo_key in d['cycle_times']:
+            _avg_val = d['cycle_times'][_mo_key]
+            if _avg_val is not None:
+                for _sh in _slide.shapes:
+                    if _sh.has_text_frame and 'Days' in _sh.text_frame.text:
+                        set_shape_text(_sh, f'{_avg_val} Days')
+                        break
 
     # Final date sweep — catch anything missed
     for slide in prs.slides:
