@@ -74,6 +74,11 @@ def set_shape_text(shape, text, para_idx=0, run_idx=0):
             if r is not None:
                 t = r.find(qn('a:t'))
                 if t is not None: t.text = str(text)
+            else:
+                NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+                r_new = etree.SubElement(para._p, f'{{{NS}}}r')
+                t_new = etree.SubElement(r_new, f'{{{NS}}}t')
+                t_new.text = str(text)
     except: pass
 
 def replace_text_in_shape(shape, old, new):
@@ -85,22 +90,51 @@ def replace_text_in_shape(shape, old, new):
 
 def set_table_cell(shape, row, col, text, color=None, bold=None):
     try:
+        # Collapse newlines — literal \n in a:t is invalid OOXML and renders blank in PowerPoint
+        text = str(text).replace('\n', ' | ').replace('\r', '')
         cell = shape.table.cell(row, col)
-        para = cell.text_frame.paragraphs[0]
-        if para.runs:
-            para.runs[0].text = str(text)
-            if color: para.runs[0].font.color.rgb = color
-            if bold is not None: para.runs[0].font.bold = bold
+        tf = cell.text_frame
+        # Wipe every run in every paragraph so no stale text survives across sessions
+        for para in tf.paragraphs:
+            for r_el in para._p.findall(qn('a:r')):
+                t_el = r_el.find(qn('a:t'))
+                if t_el is not None:
+                    t_el.text = ''
+        # Write desired text into the first paragraph's first run
+        para0 = tf.paragraphs[0]
+        runs = para0._p.findall(qn('a:r'))
+        if runs:
+            t_el = runs[0].find(qn('a:t'))
+            if t_el is not None:
+                t_el.text = str(text)
+            if para0.runs:
+                if color: para0.runs[0].font.color.rgb = color
+                if bold is not None: para0.runs[0].font.bold = bold
         else:
-            r_elem = para._p.find(qn('a:r'))
-            if r_elem is not None:
-                t = r_elem.find(qn('a:t'))
-                if t is not None: t.text = str(text)
-            else:
-                NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-                r_new = etree.SubElement(para._p, f'{{{NS}}}r')
-                t_new = etree.SubElement(r_new, f'{{{NS}}}t')
-                t_new.text = str(text)
+            NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+            r_new = etree.SubElement(para0._p, f'{{{NS}}}r')
+            t_new = etree.SubElement(r_new, f'{{{NS}}}t')
+            t_new.text = str(text)
+    except: pass
+
+
+def expand_table_rows(shape, needed_data_rows):
+    """Append duplicate rows so table has at least needed_data_rows data rows (header excluded)."""
+    try:
+        tbl_el = shape.table._tbl
+        trs = tbl_el.findall(qn('a:tr'))
+        current_data = len(trs) - 1  # header is row 0
+        if current_data >= needed_data_rows:
+            return
+        last_tr = trs[-1]
+        for _ in range(needed_data_rows - current_data):
+            new_tr = copy.deepcopy(last_tr)
+            for tc in new_tr.findall(qn('a:tc')):
+                for a_r in tc.findall('.//' + qn('a:r')):
+                    t_el = a_r.find(qn('a:t'))
+                    if t_el is not None:
+                        t_el.text = ''
+            tbl_el.append(new_tr)
     except: pass
 
 
@@ -133,6 +167,9 @@ def extract_data(tracker_path: str, snapshot_path: str,
 
     # Status flags
     df['has_ntp'] = df['NTP A'].dt.year >= 2025
+    # Fallback: if NTP A column is entirely empty, proxy via NTP Action Owner being blank
+    if df['has_ntp'].sum() == 0 and 'NTP Action Owner' in df.columns:
+        df['has_ntp'] = df['NTP Action Owner'].isna() | (df['NTP Action Owner'].astype(str).str.strip() == '')
     df['has_mat'] = df['Material Received A '].dt.year >= 2025
     df['started'] = df['MS15 Implementation Start A'].notna()
     df['complete'] = df['MS16 Implementation Ends A'].notna()
@@ -195,13 +232,18 @@ def extract_data(tracker_path: str, snapshot_path: str,
         return ' | '.join(c)
     df['VendorConflict'] = df.apply(vendor_conflict, axis=1)
 
-    # Core counts
+    # Core counts (deduplicated DON 444 HOPs — used for slide 4 deltas and snapshot)
     total = len(df)
     ntp_count = int(df['has_ntp'].sum())
     mat_count = int(df['has_mat'].sum())
     started_count = int(df['started'].sum())
     complete_count = int(df['complete'].sum())
     ip_count = int(df['in_progress'].sum())
+
+    # Raw counts for slide 5 display: use same filtered/deduped df as all other slides
+    # (previously used raw sheet / 2 which drifted when rows weren't exactly 2-per-HOP)
+    mat_display_str = str(mat_count)
+    ntp_display_str = str(ntp_count)
 
     # Load snapshot for deltas
     with open(snapshot_path) as f:
@@ -225,14 +267,14 @@ def extract_data(tracker_path: str, snapshot_path: str,
             pending_rows.append({
                 'HOP': r['HOP'], 'GC': gv(r, 'General Contractor'),
                 'CM': gv(r, 'Site CM'), 'owner': gv(r, 'NTP Action Owner'),
-                'waiting': gv(r, 'NTP is waiting on'), 'cat': cat,
+                'waiting': gv(r, 'NTP is waiting on'), 'cx': gv(r, 'CX Notes:'), 'cat': cat,
                 'ms15f': r.get(ms15f_col), 'has_mat': bool(r['has_mat'])
             })
         pending_rows.sort(key=lambda x: 0 if x['cat'] == 'External'
                          else (2 if x['cat'] == 'Program Team' else 1))
         por[name] = {
             'total': len(grp), 'ntp': len(with_ntp), 'pending': len(pending),
-            'ntp_hops': with_ntp[['HOP', 'General Contractor', 'Site CM', 'has_mat']].to_dict('records'),
+            'ntp_hops': with_ntp[['HOP', 'General Contractor', 'Site CM', 'has_mat', '_ntp_wait', '_cx']].to_dict('records'),
             'pending_rows': pending_rows,
             'external': [r for r in pending_rows if r['cat'] == 'External'],
             'prog_team': [r for r in pending_rows if r['cat'] == 'Program Team'],
@@ -295,6 +337,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     return {
         'df': df, 'por': por, 'la': la, 'mss': mss, 'ip_df': ip_df,
         'total': total, 'ntp_count': ntp_count, 'mat_count': mat_count,
+        'mat_display_str': mat_display_str, 'ntp_display_str': ntp_display_str,
         'started_count': started_count, 'complete_count': complete_count,
         'ip_count': ip_count, 'new_starts': new_starts, 'completions': completions,
         'snap': snap, 'ntp_comments': ntp_comments,
@@ -324,6 +367,12 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     with zipfile.ZipFile(previous_deck_path, 'r') as z:
         content = {n: z.read(n) for n in z.namelist()}
 
+    # Fixed snap plan values (monthly counts, bars 1-10 = Jan/26+ through Oct/26)
+    MS15_SNAP = [0, 0, 21, 35, 45, 49, 51, 50, 51, 49]
+    MS16_SNAP = [0, 0, 18, 28, 40, 47, 50, 51, 49, 50]
+    labels = ['Jan/26+','Feb/26','Mar/26','Apr/26','May/26','Jun/26',
+              'Jul/26','Aug/26','Sep/26','Oct/26']
+
     # Fix chart XML cache
     def build_cache(vals):
         pts = ''.join(f'<c:pt idx="{i}"><c:v>{v}</c:v></c:pt>'
@@ -331,39 +380,81 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         return (f'<c:numCache><c:formatCode>General</c:formatCode>'
                 f'<c:ptCount val="{len(vals)}"/>{pts}</c:numCache>')
 
-    def fix_chart(xml_bytes, fc_vals, act_vals):
+    def fix_chart(xml_bytes, fc_vals, act_vals, snap_vals):
         xml = xml_bytes.decode('utf-8')
+        # Update existing fc/act caches
         caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
         if len(caches) >= 2:
             xml = xml[:caches[0].start()] + build_cache(fc_vals) + xml[caches[0].end():]
             caches2 = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
             if len(caches2) >= 2:
                 xml = xml[:caches2[1].start()] + build_cache(act_vals) + xml[caches2[1].end():]
+        # Add Snap Plan series if not already present
+        if snap_vals is not None and '<c:v>Snap Plan</c:v>' not in xml:
+            cat_pts = ''.join(f'<c:pt idx="{i}"><c:v>{l}</c:v></c:pt>' for i, l in enumerate(labels))
+            cat_cache = f'<c:strCache><c:ptCount val="{len(labels)}"/>{cat_pts}</c:strCache>'
+            dlbls = (
+                '<c:dLbls>'
+                '<c:numFmt formatCode="#,##0" sourceLinked="0"/>'
+                '<c:spPr><a:noFill/><a:ln><a:noFill/></a:ln><a:effectLst/></c:spPr>'
+                '<c:txPr><a:bodyPr/><a:lstStyle/><a:p><a:pPr>'
+                '<a:defRPr sz="700" b="0" i="0" u="none" strike="noStrike">'
+                '<a:solidFill><a:srgbClr val="000000"/></a:solidFill>'
+                '<a:latin typeface="Arial"/>'
+                '</a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>'
+                '<c:showLegendKey val="0"/><c:showVal val="1"/>'
+                '<c:showCatName val="0"/><c:showSerName val="0"/>'
+                '<c:showPercent val="0"/><c:showBubbleSize val="0"/>'
+                '<c:showLeaderLines val="0"/></c:dLbls>'
+            )
+            snap_ser = (
+                '<c:ser>'
+                '<c:idx val="2"/><c:order val="2"/>'
+                '<c:tx><c:strRef><c:f>Sheet1!$D$1</c:f>'
+                '<c:strCache><c:ptCount val="1"/>'
+                '<c:pt idx="0"><c:v>Snap Plan</c:v></c:pt>'
+                '</c:strCache></c:strRef></c:tx>'
+                '<c:spPr><a:solidFill><a:srgbClr val="A6A6A6"/></a:solidFill>'
+                '<a:effectLst/></c:spPr>'
+                '<c:invertIfNegative val="0"/>'
+                f'{dlbls}'
+                f'<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$11</c:f>{cat_cache}</c:strRef></c:cat>'
+                f'<c:val><c:numRef><c:f>Sheet1!$D$2:$D$11</c:f>'
+                f'{build_cache(snap_vals)}</c:numRef></c:val>'
+                '</c:ser>'
+            )
+            pos = xml.rfind('</c:ser>')
+            if pos != -1:
+                pos += len('</c:ser>')
+                xml = xml[:pos] + snap_ser + xml[pos:]
         return xml.encode('utf-8')
 
     if 'ppt/charts/chart1.xml' in content:
         content['ppt/charts/chart1.xml'] = fix_chart(
-            content['ppt/charts/chart1.xml'], data['starts_fc'], data['starts_act'])
+            content['ppt/charts/chart1.xml'], data['starts_fc'], data['starts_act'], MS15_SNAP)
     if 'ppt/charts/chart2.xml' in content:
         content['ppt/charts/chart2.xml'] = fix_chart(
-            content['ppt/charts/chart2.xml'], data['compl_fc'], data['compl_act'])
+            content['ppt/charts/chart2.xml'], data['compl_fc'], data['compl_act'], MS16_SNAP)
 
-    # Update embedded workbooks
-    labels = ['Jan/26+','Feb/26','Mar/26','Apr/26','May/26','Jun/26',
-              'Jul/26','Aug/26','Sep/26','Oct/26']
-    for embed_path, fc_vals, act_vals in [
-        ('ppt/embeddings/Microsoft_Excel_Worksheet.xlsx', data['starts_fc'], data['starts_act']),
-        ('ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx', data['compl_fc'], data['compl_act'])
+    # Update embedded workbooks (add column D = Snap Plan)
+    for embed_path, fc_vals, act_vals, snap_vals in [
+        ('ppt/embeddings/Microsoft_Excel_Worksheet.xlsx',
+         data['starts_fc'], data['starts_act'], MS15_SNAP),
+        ('ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx',
+         data['compl_fc'], data['compl_act'], MS16_SNAP)
     ]:
         if embed_path in content:
             wb = openpyxl.load_workbook(io.BytesIO(content[embed_path]))
             ws = wb.active
             for ri in range(2, ws.max_row + 2):
-                for ci in range(1, 4): ws.cell(row=ri, column=ci).value = None
-            for ri, (lbl, fc, act) in enumerate(zip(labels, fc_vals, act_vals), 2):
+                for ci in range(1, 5): ws.cell(row=ri, column=ci).value = None
+            ws.cell(row=1, column=4).value = 'Snap Plan'
+            for ri, (lbl, fc, act, sp) in enumerate(
+                    zip(labels, fc_vals, act_vals, snap_vals), 2):
                 ws.cell(row=ri, column=1).value = lbl
                 ws.cell(row=ri, column=2).value = fc
                 ws.cell(row=ri, column=3).value = act if act > 0 else None
+                ws.cell(row=ri, column=4).value = sp if sp > 0 else None
             out = io.BytesIO(); wb.save(out)
             content[embed_path] = out.getvalue()
 
@@ -375,6 +466,39 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     prs = Presentation(tmp_path)
     d = data  # shorthand
 
+    # ── Delete content slide (slide 3, index 2) ──────────────────────────────
+    sldIdLst = prs.slides._sldIdLst
+    sld_el = sldIdLst[2]
+    r_id = sld_el.get(
+        '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+    sldIdLst.remove(sld_el)
+    try:
+        # python-pptx stores parts in the package's part_related_by mapping
+        slide_part = prs.part.part_related_by(r_id) if r_id else None
+        if slide_part and r_id:
+            prs.part.drop_rel(r_id)
+    except Exception:
+        pass
+    # All subsequent slides shifted down by 1 — indices reflect post-deletion positions
+
+    # ── Slide 2: Agenda — remove May POR / SCOP Review / Crew Pipeline ───────
+    slide2 = prs.slides[1]
+    agenda_updates = {
+        'Text 26': '',    # 06 number (May POR) → blank
+        'Text 27': '',    # May POR label → blank
+        'Text 30': '06',  # June POR 07 → 06
+        'Text 34': '07',  # July POR 08 → 07
+        'Text 38': '08',  # August POR 09 → 08
+        'Text 42': '',    # 10 number (SCOP Review) → blank
+        'Text 43': '',    # SCOP Review → blank
+        'Text 46': '09',  # Action Items Log 11 → 09
+        'Text 50': '',    # 12 number (Crew Pipeline) → blank
+        'Text 51': '',    # Crew Pipeline → blank
+    }
+    for shape in slide2.shapes:
+        if shape.name in agenda_updates:
+            set_shape_text(shape, agenda_updates[shape.name])
+
     # Global date sweep
     old_date_str = OLD_DATE if OLD_DATE else ''
     for slide in prs.slides:
@@ -382,8 +506,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             if old_date_str:
                 replace_text_in_shape(shape, old_date_str, NEW_DATE)
 
-    # Slide 4: Delta
-    shapes4 = list(prs.slides[3].shapes)
+    # Slide 4: Delta (index 2 after slide 3 deletion)
+    shapes4 = list(prs.slides[2].shapes)
     snap = d['snap']
     delta_starts = d['started_count'] - snap.get('total_starts', 0)
     delta_complete = d['complete_count'] - snap.get('total_complete', 0)
@@ -425,21 +549,83 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     set_shape_text(shapes4[45], nd('Jun', por['jun']['ntp'], por['jun']['total'], jun_delta))
     set_shape_text(shapes4[47], nd('Jul', por['jul']['ntp'], por['jul']['total'], jul_delta))
 
-    # Slide 5: Materials & NTP
-    shapes5 = list(prs.slides[4].shapes)
-    set_shape_text(shapes5[8], str(d['mat_count']))
-    set_shape_text(shapes5[13], str(d['ntp_count']))
+    # Slide 5: Materials & NTP (index 3 after deletion)
+    shapes5 = list(prs.slides[3].shapes)
+    set_shape_text(shapes5[8], d['mat_display_str'])
+    set_shape_text(shapes5[13], d['ntp_display_str'])
+    set_shape_text(shapes5[16],
+        f'{d["mat_display_str"]} HOPs have material in warehouse  ·  '
+        f'{d["ntp_display_str"]} HOPs with NTP issued  ·  NTP Forecast based on Cage Match')
 
-    # Slide 8: Look-ahead table
-    shapes8 = list(prs.slides[7].shapes)
+    # Slide 6: Cx Charts — update bottom bullet points (index 4 after deletion)
+    shapes6 = list(prs.slides[4].shapes)
+    delta_starts_s6 = d['started_count'] - snap.get('total_starts', 0)
+    bullet_shape = shapes6[11]  # Text 9
+    set_shape_text(bullet_shape,
+        f'▲  {d["started_count"]} total starts actualized — {ds(delta_starts_s6, snap_date)}.',
+        para_idx=0)
+    set_shape_text(bullet_shape,
+        f'▲  {d["ip_count"]} HOPs actively in progress — '
+        f'June forecast of {por["jun"]["total"]} starts builds on momentum.',
+        para_idx=3)
+    set_shape_text(bullet_shape,
+        f'▲  {d["complete_count"]} completions total.',
+        para_idx=4)
+
+    # Slide 7: MSS Readiness (index 5 after deletion)
+    shapes7 = list(prs.slides[5].shapes)
+    mss_sorted = d['mss'].sort_values('MS15 Implementation Start A', ascending=False)
+    la_for_mss = d['la'].sort_values('MS15 Implementation Start F')
+    mss_count = len(mss_sorted)
+    la_count = len(la_for_mss)
+    set_shape_text(shapes7[2],
+        f'{mss_count} started (last 5 days)  ·  {la_count} forecast (next 7 days)'
+        f'  ·  MSS Readiness = Start + 3 days')
+    set_shape_text(shapes7[6], f'Sites Started — MSS Ready or Ready Soon ({mss_count})')
+    mss_tbl = shapes7[7]   # Table 0
+    expand_table_rows(mss_tbl, mss_count)
+    for ri in range(1, len(mss_tbl.table.rows)):
+        if ri - 1 < mss_count:
+            r = mss_sorted.iloc[ri - 1]; hop = r['HOP']
+            ms15a = r.get('MS15 Implementation Start A')
+            mss_ready = (pd.Timestamp(ms15a) + timedelta(days=3)).strftime('%m/%d/%Y') if pd.notna(ms15a) else ''
+            set_table_cell(mss_tbl, ri, 0, hop)
+            set_table_cell(mss_tbl, ri, 1, d['hop_pm'].get(hop, ''))
+            set_table_cell(mss_tbl, ri, 2, gv(r, 'General Contractor'))
+            set_table_cell(mss_tbl, ri, 3, d['hop_ops'].get(hop, ''))
+            set_table_cell(mss_tbl, ri, 4, r.get('Readiness', ''))
+            set_table_cell(mss_tbl, ri, 5, fmt_d(ms15a))
+            set_table_cell(mss_tbl, ri, 6, mss_ready)
+        else:
+            for ci in range(7): set_table_cell(mss_tbl, ri, ci, '')
+    set_shape_text(shapes7[9],
+        f'Forecast Starts — Next 7 Days, Not Yet Started ({la_count})')
+    la_tbl_mss = shapes7[10]  # Table 1
+    expand_table_rows(la_tbl_mss, la_count)
+    for ri in range(1, len(la_tbl_mss.table.rows)):
+        if ri - 1 < la_count:
+            r = la_for_mss.iloc[ri - 1]; hop = r['HOP']
+            ms15f = r.get('MS15 Implementation Start F')
+            mss_ready = (pd.Timestamp(ms15f) + timedelta(days=3)).strftime('%m/%d/%Y') if pd.notna(ms15f) else ''
+            set_table_cell(la_tbl_mss, ri, 0, hop)
+            set_table_cell(la_tbl_mss, ri, 1, d['hop_pm'].get(hop, ''))
+            set_table_cell(la_tbl_mss, ri, 2, gv(r, 'General Contractor'))
+            set_table_cell(la_tbl_mss, ri, 3, d['hop_ops'].get(hop, ''))
+            set_table_cell(la_tbl_mss, ri, 4, r.get('Readiness', ''))
+            set_table_cell(la_tbl_mss, ri, 5, fmt_d(ms15f))
+            set_table_cell(la_tbl_mss, ri, 6, mss_ready)
+        else:
+            for ci in range(7): set_table_cell(la_tbl_mss, ri, ci, '')
+
+    # Slide 8: Look-ahead table (index 6 after deletion)
+    shapes8 = list(prs.slides[6].shapes)
     la_tbl = shapes8[7]
     la_sorted = d['la'].sort_values('MS15 Implementation Start F')
     for ri in range(1, 11):
         if ri - 1 < len(la_sorted):
             r = la_sorted.iloc[ri - 1]; hop = r['HOP']
             ntp_sym = '✓' if r.get('has_ntp', False) else '✗'
-            nw = gv(r, 'NTP is waiting on')
-            if not nw: nw = 'NTP complete' if r.get('has_ntp', False) else ''
+            nw = gv(r, 'NTP is waiting on') or gv(r, 'CX Notes:')
             set_table_cell(la_tbl, ri, 0, hop)
             set_table_cell(la_tbl, ri, 1, d['hop_gc_pm'].get(hop, ''))
             set_table_cell(la_tbl, ri, 2, gv(r, 'General Contractor'))
@@ -449,12 +635,14 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             set_table_cell(la_tbl, ri, 5, d['hop_site_cm'].get(hop, ''))
             set_table_cell(la_tbl, ri, 6, d['hop_ops'].get(hop, ''))
             set_table_cell(la_tbl, ri, 7, nw[:50])
-            set_table_cell(la_tbl, ri, 8, '')
+            cx = gv(r, 'CX Notes:')
+            set_table_cell(la_tbl, ri, 8, cx[:50] if cx else '')
         else:
             for ci in range(9): set_table_cell(la_tbl, ri, ci, '')
 
-    # Slide 9: In progress table
-    shapes9 = list(prs.slides[8].shapes)
+    # Slide 9: In progress table (index 7 after deletion)
+    shapes9 = list(prs.slides[7].shapes)
+    set_shape_text(shapes9[2], f'{d["ip_count"]} HOPs started · Green=On Track · Yellow=At Risk · Red=Escalation · ⚑=Needs Attention')
     ip_tbl = shapes9[5]
     ip_sorted = d['ip_df'].sort_values('MS16 Implementation Ends F', na_position='last')
     new_starts_set = set(d['new_starts'])
@@ -470,7 +658,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             set_table_cell(ip_tbl, ri, 3, fmt_dm(r.get('MS15 Implementation Start A')))
             set_table_cell(ip_tbl, ri, 4, fmt_ds(r.get('MS16 Implementation Ends F')))
             set_table_cell(ip_tbl, ri, 5, risk)
-            set_table_cell(ip_tbl, ri, 6, '')
+            cx = gv(r, 'CX Notes:')
+            set_table_cell(ip_tbl, ri, 6, cx[:55] if cx else '')
         else:
             for ci in range(7): set_table_cell(ip_tbl, ri, ci, '')
 
@@ -502,6 +691,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 comment_col = len(hdrs) - 1
                 ntp_hops = sorted(p['ntp_hops'], key=lambda h: d['hop_ms16f'].get(h['HOP'],
                                   pd.Timestamp('2099-01-01')) or pd.Timestamp('2099-01-01'))
+                expand_table_rows(shape, len(ntp_hops))
                 for ri in range(1, len(tbl.rows)):
                     if ri - 1 < len(ntp_hops):
                         h = ntp_hops[ri - 1]; hop = str(h['HOP'])
@@ -513,12 +703,15 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                             for k, v in comments.items():
                                 if k.strip().upper() == hop.strip().upper():
                                     comment = v; break
+                        ntp_wait = str(h.get('_ntp_wait', '')).strip()
+                        cx = str(h.get('_cx', '')).strip()
+                        cell_note = comment or ntp_wait or cx
                         set_table_cell(shape, ri, hop_col, hop)
                         set_table_cell(shape, ri, gc_col, gc)
                         if mat_col < len(hdrs):
                             set_table_cell(shape, ri, mat_col, mat_sym,
                                            color=GREEN_C if mat_sym == '✓' else RED_C, bold=True)
-                        if comment: set_table_cell(shape, ri, comment_col, comment[:55])
+                        set_table_cell(shape, ri, comment_col, cell_note[:55] if cell_note else '')
                     else:
                         for ci in range(len(hdrs)): set_table_cell(shape, ri, ci, '')
 
@@ -539,9 +732,11 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
         tables = [(i, shape) for i, shape in enumerate(shapes) if shape.shape_type == 19]
         for tbl_idx, (_, shape) in enumerate(tables):
+            rows_to_fill = ext if tbl_idx == 0 else prog
+            # Expand table if we have more rows than the template provides
+            expand_table_rows(shape, len(rows_to_fill))
             tbl = shape.table; ncols = len(tbl.columns); nrows = len(tbl.rows)
             comment_col = ncols - 1
-            rows_to_fill = ext if tbl_idx == 0 else prog
             for ri in range(1, nrows):
                 if ri - 1 < len(rows_to_fill):
                     h = rows_to_fill[ri - 1]; hop = h['HOP']
@@ -557,25 +752,35 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                     set_table_cell(shape, ri, 1, h['GC'])
                     set_table_cell(shape, ri, 2, fc_s)
                     set_table_cell(shape, ri, 3, fc_e)
+                    blocker = h['waiting'] or h.get('cx', '')
                     set_table_cell(shape, ri, 4, h['owner'][:25])
-                    set_table_cell(shape, ri, 5, h['waiting'][:45])
-                    set_table_cell(shape, ri, comment_col, comment[:55] if comment else '')
+                    set_table_cell(shape, ri, 5, blocker[:45])
+                    cx_note = h.get('cx', '')
+                    cell_comment = comment or cx_note
+                    set_table_cell(shape, ri, comment_col, cell_comment[:55] if cell_comment else '')
                 else:
                     for ci in range(ncols): set_table_cell(shape, ri, ci, '')
 
+        ext_label = f'External Blockers ({len(ext)})  —  ITW · Samsung · Viaero'
         for shape in shapes:
-            if shape.has_text_frame and 'Program Team Actions' in shape.text_frame.text:
+            if not shape.has_text_frame:
+                continue
+            txt = shape.text_frame.text
+            if 'Program Team Actions' in txt:
                 set_shape_text(shape, f'Program Team Actions ({len(prog)})')
+            elif 'External Blockers' in txt:
+                set_shape_text(shape, ext_label)
 
-    update_por_overview(9, 'June', 'jun')
-    update_por_overview(12, 'July', 'jul')
-    update_por_overview(15, 'August', 'aug')
-    update_por_confirmed(10, 'June', 'jun', 'Jun Pending NTP')
-    update_por_confirmed(13, 'July', 'jul', 'Jul Pending NTP')
-    update_por_confirmed(16, 'August', 'aug', 'Aug Pending NTP')
-    update_por_pending(11, 'June', 'jun', 'Jun Pending NTP')
-    update_por_pending(14, 'July', 'jul', 'Jul Pending NTP')
-    update_por_pending(17, 'August', 'aug', 'Aug Pending NTP')
+    # POR slides — all indices shifted -1 after content slide deletion
+    update_por_overview(8, 'June', 'jun')
+    update_por_overview(11, 'July', 'jul')
+    update_por_overview(14, 'August', 'aug')
+    update_por_confirmed(9, 'June', 'jun', 'Jun Pending NTP')
+    update_por_confirmed(12, 'July', 'jul', 'Jul Pending NTP')
+    update_por_confirmed(15, 'August', 'aug', 'Aug Pending NTP')
+    update_por_pending(10, 'June', 'jun', 'Jun Pending NTP')
+    update_por_pending(13, 'July', 'jul', 'Jul Pending NTP')
+    update_por_pending(16, 'August', 'aug', 'Aug Pending NTP')
 
     # Final date sweep — catch anything missed
     for slide in prs.slides:
@@ -693,8 +898,9 @@ def generate_ntp_comments(data: dict, output_path: str):
             status = 'In Progress' if existing_comment else 'Pending'
             fc_s = fmt_dm_local(h.get('ms15f'))
             fc_e = fmt_dm_local(hop_ms16f.get(h['HOP']))
+            blocker = h['waiting'] or h.get('cx', '')
             vals = [h['HOP'],cat,h['owner'],h['GC'],fc_s,fc_e,
-                    h['waiting'],existing_comment,status]
+                    blocker,existing_comment,status]
             for ci, val in enumerate(vals, 1):
                 c = ws.cell(row=data_row, column=ci, value=val)
                 c.fill = PatternFill('solid', fgColor=bg_fill)
