@@ -318,7 +318,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     # POR data
     ms15f_col = 'MS15 Implementation Start F'
     por = {}
-    for mo, name in [(5, 'may'), (6, 'jun'), (7, 'jul'), (8, 'aug')]:
+    for mo, name in [(5, 'may'), (6, 'jun'), (7, 'jul'), (8, 'aug'), (9, 'sep')]:
         grp = df[(df[ms15f_col].dt.month == mo) & (df[ms15f_col].dt.year == 2026)]
         with_ntp = grp[grp['has_ntp']]
         pending = grp[~grp['has_ntp']]
@@ -605,53 +605,6 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                                     _ct_root, xml_declaration=True,
                                     encoding='UTF-8', standalone=True)
                                 break
-
-    # ── Delete last 2 slides (Invoice & SCOP review — no longer needed) ─────────
-    for _del_offset in [1, 0]:
-        _d_prs_bytes = content.get('ppt/presentation.xml', b'')
-        _d_rels_bytes = content.get('ppt/_rels/presentation.xml.rels', b'')
-        if not _d_prs_bytes or not _d_rels_bytes:
-            continue
-        _d_prs_root = etree.fromstring(_d_prs_bytes)
-        _d_sld_lst  = _d_prs_root.find(f'.//{{{_P_NS}}}sldIdLst')
-        _d_ids      = _d_sld_lst.findall(f'{{{_P_NS}}}sldId') if _d_sld_lst is not None else []
-        _d_idx      = len(_d_ids) - 1 - _del_offset  # last or second-to-last
-        if _d_idx < 0:
-            continue
-        _d_tgt = _d_ids[_d_idx]
-        _d_rid = _d_tgt.get(f'{{{_R_NS}}}id')
-        _d_rels_root = etree.fromstring(_d_rels_bytes)
-        _d_zip_path  = None
-        for _rel in _d_rels_root.findall(f'{{{_PKG_NS}}}Relationship'):
-            if _rel.get('Id') == _d_rid:
-                _d_zip_path = 'ppt/slides/' + _rel.get('Target', '').split('/')[-1]
-                break
-        if not _d_zip_path or _d_zip_path not in content:
-            continue
-        # 1. Remove from sldIdLst
-        _d_sld_lst.remove(_d_tgt)
-        content['ppt/presentation.xml'] = etree.tostring(
-            _d_prs_root, xml_declaration=True, encoding='UTF-8', standalone=True)
-        # 2. Remove from rels
-        for _rel in _d_rels_root.findall(f'{{{_PKG_NS}}}Relationship'):
-            if _rel.get('Id') == _d_rid:
-                _d_rels_root.remove(_rel)
-                break
-        content['ppt/_rels/presentation.xml.rels'] = etree.tostring(
-            _d_rels_root, xml_declaration=True, encoding='UTF-8', standalone=True)
-        # 3. Remove slide XML and its rels file
-        del content[_d_zip_path]
-        content.pop(_d_zip_path.replace('ppt/slides/', 'ppt/slides/_rels/') + '.rels', None)
-        # 4. Remove Override from [Content_Types].xml
-        _d_ct = content.get('[Content_Types].xml', b'')
-        if _d_ct:
-            _d_ct_root = etree.fromstring(_d_ct)
-            for _ov in _d_ct_root.findall(f'{{{_CT_NS}}}Override'):
-                if _ov.get('PartName') == '/' + _d_zip_path:
-                    _d_ct_root.remove(_ov)
-                    content['[Content_Types].xml'] = etree.tostring(
-                        _d_ct_root, xml_declaration=True, encoding='UTF-8', standalone=True)
-                    break
 
     # Save temp file for pptx manipulation
     tmp_path = output_path + '.tmp.pptx'
@@ -1004,12 +957,15 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     update_por_overview(8, 'June', 'jun')
     update_por_overview(11, 'July', 'jul')
     update_por_overview(14, 'August', 'aug')
+    update_por_overview(17, 'September', 'sep')
     update_por_confirmed(9, 'June', 'jun', 'Jun Pending NTP')
     update_por_confirmed(12, 'July', 'jul', 'Jul Pending NTP')
     update_por_confirmed(15, 'August', 'aug', 'Aug Pending NTP')
+    update_por_confirmed(18, 'September', 'sep', 'Sep Pending NTP')
     update_por_pending(10, 'June', 'jun', 'Jun Pending NTP')
     update_por_pending(13, 'July', 'jul', 'Jul Pending NTP')
     update_por_pending(16, 'August', 'aug', 'Aug Pending NTP')
+    update_por_pending(19, 'September', 'sep', 'Sep Pending NTP')
 
     # Final date sweep — catch anything missed
     for slide in prs.slides:
@@ -1040,6 +996,7 @@ def generate_snapshot(data: dict, output_path: str):
         "jun_por_total": por['jun']['total'], "jun_por_ntp": por['jun']['ntp'],
         "jul_por_total": por['jul']['total'], "jul_por_ntp": por['jul']['ntp'],
         "aug_por_total": por['aug']['total'], "aug_por_ntp": por['aug']['ntp'],
+        "sep_por_total": por['sep']['total'], "sep_por_ntp": por['sep']['ntp'],
         "ip_hops": df[df['in_progress']]['HOP'].tolist(),
         "la_hops": la['HOP'].tolist(),
         "scop_accepted": data.get('scop_accepted', 0),
@@ -1077,7 +1034,8 @@ def generate_ntp_comments(data: dict, output_path: str):
     for mo_name, mo_key, sheet_key in [
         ('Jun Pending NTP', 'jun', 'Jun Pending NTP'),
         ('Jul Pending NTP', 'jul', 'Jul Pending NTP'),
-        ('Aug Pending NTP', 'aug', 'Aug Pending NTP')
+        ('Aug Pending NTP', 'aug', 'Aug Pending NTP'),
+        ('Sep Pending NTP', 'sep', 'Sep Pending NTP'),
     ]:
         ws = wb.create_sheet(mo_name)
         p = por[mo_key]; comments = ntp_comments.get(sheet_key, {})
@@ -1151,7 +1109,8 @@ def generate_ntp_comments(data: dict, output_path: str):
     ri = 3
     for sheet_key, mo_label, mo_key in [('Jun Pending NTP','Jun','jun'),
                                          ('Jul Pending NTP','Jul','jul'),
-                                         ('Aug Pending NTP','Aug','aug')]:
+                                         ('Aug Pending NTP','Aug','aug'),
+                                         ('Sep Pending NTP','Sep','sep')]:
         comments = ntp_comments.get(sheet_key, {})
         row_lookup = {h['HOP']: h for h in por[mo_key]['pending_rows']}
         for hop, comment in comments.items():
