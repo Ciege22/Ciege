@@ -723,7 +723,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             set_table_cell(ip_tbl, ri, 3, fmt_dm(r.get('MS15 Implementation Start A')))
             set_table_cell(ip_tbl, ri, 4, fmt_ds(r.get('MS16 Implementation Ends F')))
             set_table_cell(ip_tbl, ri, 5, risk)
-            set_table_cell(ip_tbl, ri, 6, cx_val[:120])
+            set_table_cell(ip_tbl, ri, 6, gv(r, '_cx')[:120])
         else:
             for ci in range(7): set_table_cell(ip_tbl, ri, ci, '')
 
