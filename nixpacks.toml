@@ -1,7 +1,7 @@
 providers = ["python"]
 
 [phases.install]
-cmds = ["python -m pip install -r backend/requirements.txt"]
+cmds = ["python -m ensurepip --upgrade", "python -m pip install -r backend/requirements.txt"]
 
 [start]
 cmd = "python backend/api.py"
