@@ -417,24 +417,28 @@ def extract_data(tracker_path: str, snapshot_path: str,
     cx_starts_act   = [_mcount(df,      ms15a_col,  m, y) for m, y in starts_months]
     cx_complete_fc  = [_mcount(cx_qual, ms16f_col2, m, y) for m, y in complete_months]
     cx_complete_act = [_mcount(df,      ms16a_col,  m, y) for m, y in complete_months]
+    # Unfiltered schedule counts for plan fallback: all DON 444 regardless of NTP/material
+    all_starts_fc_raw   = [_mcount(df, ms15f_col,  m, y) for m, y in starts_months]
+    all_complete_fc_raw = [_mcount(df, ms16f_col2, m, y) for m, y in complete_months]
 
-    def _consolidate(months, labels, fc, act):
+    def _consolidate(months, labels, *arrays):
         """Collapse all months up through Jan/2026 into a single 'Jan/26+' bucket."""
         pre  = [i for i, (m, y) in enumerate(months) if y < 2026 or (y == 2026 and m == 1)]
         post = [i for i in range(len(months)) if i not in pre]
         if not pre:
-            return months, labels, fc, act
-        return (
-            [(1, 2026)] + [months[i] for i in post],
-            ['Jan/26+']  + [labels[i] for i in post],
-            [sum(fc[i]  for i in pre)] + [fc[i]  for i in post],
-            [sum(act[i] for i in pre)] + [act[i] for i in post],
+            return (months, labels) + arrays
+        new_months = [(1, 2026)] + [months[i] for i in post]
+        new_labels = ['Jan/26+']  + [labels[i] for i in post]
+        new_arrays = tuple(
+            [sum(arr[i] for i in pre)] + [arr[i] for i in post]
+            for arr in arrays
         )
+        return (new_months, new_labels) + new_arrays
 
-    starts_months,   starts_labels,   cx_starts_fc,   cx_starts_act   = _consolidate(
-        starts_months,   starts_labels,   cx_starts_fc,   cx_starts_act)
-    complete_months, complete_labels, cx_complete_fc, cx_complete_act = _consolidate(
-        complete_months, complete_labels, cx_complete_fc, cx_complete_act)
+    starts_months,   starts_labels,   cx_starts_fc,   cx_starts_act,   all_starts_fc   = _consolidate(
+        starts_months,   starts_labels,   cx_starts_fc,   cx_starts_act,   all_starts_fc_raw)
+    complete_months, complete_labels, cx_complete_fc, cx_complete_act, all_complete_fc = _consolidate(
+        complete_months, complete_labels, cx_complete_fc, cx_complete_act, all_complete_fc_raw)
 
     # Lookups
     hop_gc_pm = {}; hop_ops = {}; hop_site_cm = {}; hop_pm = {}
@@ -459,6 +463,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
         'snap': snap, 'ntp_comments': ntp_comments,
         'cx_starts_fc': cx_starts_fc, 'cx_starts_act': cx_starts_act,
         'cx_complete_fc': cx_complete_fc, 'cx_complete_act': cx_complete_act,
+        'all_starts_fc': all_starts_fc, 'all_complete_fc': all_complete_fc,
         'starts_labels': starts_labels, 'complete_labels': complete_labels,
         'starts_months': starts_months, 'complete_months': complete_months,
         'hop_gc_pm': hop_gc_pm, 'hop_ops': hop_ops, 'hop_site_cm': hop_site_cm,
@@ -490,11 +495,11 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     _BOSS_STARTS   = {(1,2026):30, (2,2026):15, (3,2026):21, (4,2026):50, (5,2026):48, (6,2026):42}
     _BOSS_COMPLETE = {(1,2026):30, (2,2026):10, (3,2026):18, (4,2026):28, (5,2026):40, (6,2026):30}
     starts_plan = [
-        _BOSS_STARTS.get((m, y), data['cx_starts_fc'][i])
+        _BOSS_STARTS.get((m, y), data['all_starts_fc'][i])
         for i, (m, y) in enumerate(data['starts_months'])
     ]
     complete_plan = [
-        _BOSS_COMPLETE.get((m, y), data['cx_complete_fc'][i])
+        _BOSS_COMPLETE.get((m, y), data['all_complete_fc'][i])
         for i, (m, y) in enumerate(data['complete_months'])
     ]
 
