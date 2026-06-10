@@ -418,6 +418,24 @@ def extract_data(tracker_path: str, snapshot_path: str,
     cx_complete_fc  = [_mcount(cx_qual, ms16f_col2, m, y) for m, y in complete_months]
     cx_complete_act = [_mcount(df,      ms16a_col,  m, y) for m, y in complete_months]
 
+    def _consolidate(months, labels, fc, act):
+        """Collapse all months up through Jan/2026 into a single 'Jan/26+' bucket."""
+        pre  = [i for i, (m, y) in enumerate(months) if y < 2026 or (y == 2026 and m == 1)]
+        post = [i for i in range(len(months)) if i not in pre]
+        if not pre:
+            return months, labels, fc, act
+        return (
+            [(1, 2026)] + [months[i] for i in post],
+            ['Jan/26+']  + [labels[i] for i in post],
+            [sum(fc[i]  for i in pre)] + [fc[i]  for i in post],
+            [sum(act[i] for i in pre)] + [act[i] for i in post],
+        )
+
+    starts_months,   starts_labels,   cx_starts_fc,   cx_starts_act   = _consolidate(
+        starts_months,   starts_labels,   cx_starts_fc,   cx_starts_act)
+    complete_months, complete_labels, cx_complete_fc, cx_complete_act = _consolidate(
+        complete_months, complete_labels, cx_complete_fc, cx_complete_act)
+
     # Lookups
     hop_gc_pm = {}; hop_ops = {}; hop_site_cm = {}; hop_pm = {}
     hop_mat = {}; hop_ntp = {}; hop_ms16f = {}
