@@ -485,11 +485,18 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     with zipfile.ZipFile(previous_deck_path, 'r') as z:
         content = {n: z.read(n) for n in z.namelist()}
 
-    # Plan values by (month, year) — populate when boss provides program baseline numbers
-    _STARTS_PLAN_MAP   = {}  # e.g. {(3, 2026): 21, (4, 2026): 35, ...}
-    _COMPLETE_PLAN_MAP = {}  # e.g. {(5, 2026): 18, (6, 2026): 28, ...}
-    starts_plan   = [_STARTS_PLAN_MAP.get((m, y),   0) for m, y in data['starts_months']]
-    complete_plan = [_COMPLETE_PLAN_MAP.get((m, y), 0) for m, y in data['complete_months']]
+    # Boss-provided plan values through June 2026.
+    # July+ falls back to the tracker forecast count so it auto-updates each build.
+    _BOSS_STARTS   = {(1,2026):30, (2,2026):15, (3,2026):21, (4,2026):50, (5,2026):48, (6,2026):42}
+    _BOSS_COMPLETE = {(1,2026):30, (2,2026):10, (3,2026):18, (4,2026):28, (5,2026):40, (6,2026):30}
+    starts_plan = [
+        _BOSS_STARTS.get((m, y), data['cx_starts_fc'][i])
+        for i, (m, y) in enumerate(data['starts_months'])
+    ]
+    complete_plan = [
+        _BOSS_COMPLETE.get((m, y), data['cx_complete_fc'][i])
+        for i, (m, y) in enumerate(data['complete_months'])
+    ]
 
     # Fix chart XML cache
     def build_cache(vals):
