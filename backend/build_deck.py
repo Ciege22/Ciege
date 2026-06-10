@@ -76,9 +76,23 @@ def set_shape_text(shape, text, para_idx=0, run_idx=0):
                 if t is not None: t.text = str(text)
             else:
                 NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
-                r_new = etree.SubElement(para._p, f'{{{NS}}}r')
+                r_new = etree.Element(f'{{{NS}}}r')
+                end_rpr = para._p.find(qn('a:endParaRPr'))
+                if end_rpr is not None:
+                    # Clone endParaRPr attrs/children as rPr so the new run
+                    # inherits the correct font size instead of the slide default.
+                    rPr = etree.Element(f'{{{NS}}}rPr')
+                    for attr, val in end_rpr.attrib.items():
+                        rPr.set(attr, val)
+                    for child in end_rpr:
+                        rPr.append(copy.deepcopy(child))
+                    r_new.append(rPr)
                 t_new = etree.SubElement(r_new, f'{{{NS}}}t')
                 t_new.text = str(text)
+                if end_rpr is not None:
+                    end_rpr.addprevious(r_new)
+                else:
+                    para._p.append(r_new)
     except: pass
 
 def replace_text_in_shape(shape, old, new):
@@ -346,7 +360,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     la = df[(df[ms15f_col] >= today) &
             (df[ms15f_col] <= today + timedelta(days=7)) &
             ~df['started']].copy()
-    mss = df[(df['MS15 Implementation Start A'] >= today - timedelta(days=5)) &
+    mss = df[(df['MS15 Implementation Start A'] >= today - timedelta(days=7)) &
              df['in_progress']].copy()
     ip_df = df[df['in_progress']].copy()
     ip_df['days_elapsed'] = (today - ip_df['MS15 Implementation Start A']).dt.days
@@ -713,7 +727,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     mss_count = len(mss_sorted)
     la_count = len(la_for_mss)
     set_shape_text(shapes7[2],
-        f'{mss_count} started (last 5 days)  ·  {la_count} forecast (next 7 days)')
+        f'{mss_count} started (last 7 days)  ·  {la_count} forecast (next 7 days)')
     set_shape_text(shapes7[6], f'Sites Started — MSS Ready or Ready Soon ({mss_count})')
     mss_tbl = shapes7[7]   # Table 0
     set_table_cell(mss_tbl, 0, 6, 'CX Notes / Live Status')
@@ -823,6 +837,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             for ci in range(7): set_table_cell(ip_tbl, ri, ci, '')
 
     # POR slides
+    _POR_COLORS = {6: RGBColor(0x12,0x41,0x91), 9: RGBColor(0x21,0x73,0x46), 12: RGBColor(0xD4,0x86,0x0A)}
+
     def update_por_overview(slide_idx, mo_name, mo_key):
         s = prs.slides[slide_idx]; p = por[mo_key]
         shapes = list(s.shapes)
@@ -830,9 +846,19 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         for idx, val in [(6, p['total']), (9, p['ntp']), (12, p['pending']),
                          (18, p['ntp']), (22, len(p['prog_team']) + len(p['other'])),
                          (26, len(p['external']))]:
-            if idx < len(shapes): set_shape_text(shapes[idx], str(val))
+            if idx < len(shapes):
+                set_shape_text(shapes[idx], str(val))
+                if idx in _POR_COLORS:
+                    try: shapes[idx].text_frame.paragraphs[0].runs[0].font.color.rgb = _POR_COLORS[idx]
+                    except: pass
         if 29 < len(shapes):
             set_shape_text(shapes[29], f'{p["ntp"]} with NTP of {p["total"]} POR  ·  {p["pending"]} pending NTP')
+        # Replace any stale month name in labels (e.g. "August POR" → "September POR")
+        for _other_mo in ['January','February','March','April','May','June',
+                          'July','August','September','October','November','December']:
+            if _other_mo != mo_name:
+                for _sh in shapes:
+                    replace_text_in_shape(_sh, f'{_other_mo} POR', f'{mo_name} POR')
 
     def update_por_confirmed(slide_idx, mo_name, mo_key, sheet_key):
         s = prs.slides[slide_idx]; p = por[mo_key]
