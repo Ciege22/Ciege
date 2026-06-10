@@ -711,15 +711,12 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     ip_tbl = shapes9[5]
     ip_sorted = d['ip_df'].sort_values('MS16 Implementation Ends F', na_position='last')
     new_starts_set = set(d['new_starts'])
-    print(f'[DEBUG ip_tbl] {len(ip_sorted)} in-progress HOPs, cx_col={d.get("_cx_col","?")}')
     for ri in range(1, 26):
         if ri - 1 < len(ip_sorted):
             r = ip_sorted.iloc[ri - 1]; hop = r['HOP']
             is_new = hop in new_starts_set
             o18 = bool(r.get('over_18d', False))
             risk = '🔴 Over 18d' if o18 else ('★ NEW' if is_new else 'G')
-            cx_val = gv(r, '_cx')
-            print(f'[DEBUG ip_tbl] row {ri}: {hop[:30]} | cx={cx_val[:60]!r}')
             set_table_cell(ip_tbl, ri, 0, f'★ {hop}' if is_new else hop)
             set_table_cell(ip_tbl, ri, 1, d['hop_gc_pm'].get(hop, ''))
             set_table_cell(ip_tbl, ri, 2, gv(r, 'General Contractor'))
