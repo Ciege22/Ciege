@@ -383,18 +383,40 @@ def extract_data(tracker_path: str, snapshot_path: str,
                     comments[hop] = comment
             ntp_comments[sheet] = comments
 
-    # Chart data
-    pre_months = [(8,2025),(9,2025),(10,2025),(11,2025),(12,2025),(1,2026)]
-    after_months = [(2,2026),(3,2026),(4,2026),(5,2026),(6,2026),(7,2026),(8,2026),(9,2026),(10,2026)]
-    ms15a = 'MS15 Implementation Start A'
-    ms16a = 'MS16 Implementation Ends A'
+    # CX chart data — qualified HOPs only: DON 444 + NTP A issued + Material Received A
+    cx_qual = df[df['has_ntp'] & df['has_mat']]
     ms16f_col2 = 'MS16 Implementation Ends F'
-    def msum(col, mo, yr):
-        return int(((df[col].dt.month == mo) & (df[col].dt.year == yr)).sum())
-    starts_fc = [sum(msum(ms15f_col,m,y) for m,y in pre_months)] + [msum(ms15f_col,m,y) for m,y in after_months]
-    starts_act = [sum(msum(ms15a,m,y) for m,y in pre_months)] + [msum(ms15a,m,y) for m,y in after_months]
-    compl_fc = [sum(msum(ms16f_col2,m,y) for m,y in pre_months)] + [msum(ms16f_col2,m,y) for m,y in after_months]
-    compl_act = [sum(msum(ms16a,m,y) for m,y in pre_months)] + [msum(ms16a,m,y) for m,y in after_months]
+    ms15a_col  = 'MS15 Implementation Start A'
+    ms16a_col  = 'MS16 Implementation Ends A'
+
+    def _mo_range(min_dt, max_dt):
+        months = []
+        y, m = int(min_dt.year), int(min_dt.month)
+        ey, em = int(max_dt.year), int(max_dt.month)
+        while (y, m) <= (ey, em):
+            months.append((m, y))
+            m += 1
+            if m > 12: m, y = 1, y + 1
+        return months
+
+    def _mo_label(mo, yr):
+        return ['Jan','Feb','Mar','Apr','May','Jun',
+                'Jul','Aug','Sep','Oct','Nov','Dec'][mo - 1] + '/' + str(yr)[2:]
+
+    _sf = cx_qual[ms15f_col].dropna()
+    _cf = cx_qual[ms16f_col2].dropna()
+    starts_months   = _mo_range(_sf.min(), _sf.max()) if len(_sf) > 0 else [(m, 2026) for m in range(3, 11)]
+    complete_months = _mo_range(_cf.min(), _cf.max()) if len(_cf) > 0 else [(m, 2026) for m in range(5, 13)]
+    starts_labels   = [_mo_label(m, y) for m, y in starts_months]
+    complete_labels = [_mo_label(m, y) for m, y in complete_months]
+
+    def _mcount(src, col, m, y):
+        return int(((src[col].dt.month == m) & (src[col].dt.year == y)).sum())
+
+    cx_starts_fc    = [_mcount(cx_qual, ms15f_col,  m, y) for m, y in starts_months]
+    cx_starts_act   = [_mcount(df,      ms15a_col,  m, y) for m, y in starts_months]
+    cx_complete_fc  = [_mcount(cx_qual, ms16f_col2, m, y) for m, y in complete_months]
+    cx_complete_act = [_mcount(df,      ms16a_col,  m, y) for m, y in complete_months]
 
     # Lookups
     hop_gc_pm = {}; hop_ops = {}; hop_site_cm = {}; hop_pm = {}
@@ -417,8 +439,10 @@ def extract_data(tracker_path: str, snapshot_path: str,
         'started_count': started_count, 'complete_count': complete_count,
         'ip_count': ip_count, 'new_starts': new_starts, 'completions': completions,
         'snap': snap, 'ntp_comments': ntp_comments,
-        'starts_fc': starts_fc, 'starts_act': starts_act,
-        'compl_fc': compl_fc, 'compl_act': compl_act,
+        'cx_starts_fc': cx_starts_fc, 'cx_starts_act': cx_starts_act,
+        'cx_complete_fc': cx_complete_fc, 'cx_complete_act': cx_complete_act,
+        'starts_labels': starts_labels, 'complete_labels': complete_labels,
+        'starts_months': starts_months, 'complete_months': complete_months,
         'hop_gc_pm': hop_gc_pm, 'hop_ops': hop_ops, 'hop_site_cm': hop_site_cm,
         'hop_pm': hop_pm, 'hop_mat': hop_mat, 'hop_ntp': hop_ntp,
         'hop_ms16f': hop_ms16f, 'today': today, 'deck_date': deck_date
@@ -443,11 +467,11 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     with zipfile.ZipFile(previous_deck_path, 'r') as z:
         content = {n: z.read(n) for n in z.namelist()}
 
-    # Fixed snap plan values (monthly counts, bars 1-10 = Jan/26+ through Oct/26)
-    MS15_SNAP = [0, 0, 21, 35, 45, 49, 51, 50, 51, 49]
-    MS16_SNAP = [0, 0, 18, 28, 40, 47, 50, 51, 49, 50]
-    labels = ['Jan/26+','Feb/26','Mar/26','Apr/26','May/26','Jun/26',
-              'Jul/26','Aug/26','Sep/26','Oct/26']
+    # Plan values by (month, year) — populate when boss provides program baseline numbers
+    _STARTS_PLAN_MAP   = {}  # e.g. {(3, 2026): 21, (4, 2026): 35, ...}
+    _COMPLETE_PLAN_MAP = {}  # e.g. {(5, 2026): 18, (6, 2026): 28, ...}
+    starts_plan   = [_STARTS_PLAN_MAP.get((m, y),   0) for m, y in data['starts_months']]
+    complete_plan = [_COMPLETE_PLAN_MAP.get((m, y), 0) for m, y in data['complete_months']]
 
     # Fix chart XML cache
     def build_cache(vals):
@@ -456,20 +480,37 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         return (f'<c:numCache><c:formatCode>General</c:formatCode>'
                 f'<c:ptCount val="{len(vals)}"/>{pts}</c:numCache>')
 
-    def fix_chart(xml_bytes, fc_vals, act_vals, snap_vals):
+    def fix_chart(xml_bytes, fc_vals, act_vals, plan_vals, month_labels):
         xml = xml_bytes.decode('utf-8')
-        has_snap = '<c:v>Snap Plan</c:v>' in xml
-        caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
+        n = len(month_labels)
+        end_row = n + 1
 
-        if has_snap and len(caches) >= 3:
-            # Snap Plan was already added and reordered to position 0 by a previous run.
-            # XML series order: [0]=Snap Plan, [1]=Forecast, [2]=Actual
-            # Replace back-to-front so offsets stay valid after each substitution.
+        # Rename any legacy "Snap Plan" label to "Plan"
+        xml = xml.replace('<c:v>Snap Plan</c:v>', '<c:v>Plan</c:v>')
+        has_plan = '<c:v>Plan</c:v>' in xml
+
+        # Update category strCache (month labels) — replace all multi-point strCaches
+        def build_str_cache(labels):
+            pts = ''.join(f'<c:pt idx="{i}"><c:v>{l}</c:v></c:pt>' for i, l in enumerate(labels))
+            return f'<c:strCache><c:ptCount val="{len(labels)}"/>{pts}</c:strCache>'
+
+        str_caches = list(re.finditer(r'<c:strCache>.*?</c:strCache>', xml, re.DOTALL))
+        for sc in reversed(str_caches):
+            if len(re.findall(r'<c:pt ', sc.group())) > 1:
+                xml = xml[:sc.start()] + build_str_cache(month_labels) + xml[sc.end():]
+
+        # Update Excel formula row references to match the new month count
+        xml = re.sub(r'(\$[A-Z]\$2:\$[A-Z]\$)\d+',
+                     lambda m: m.group(1) + str(end_row), xml)
+
+        caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
+        if has_plan and len(caches) >= 3:
+            # XML series order after previous run: [0]=Plan, [1]=Forecast, [2]=Actual
             xml = xml[:caches[2].start()] + build_cache(act_vals) + xml[caches[2].end():]
             caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
             xml = xml[:caches[1].start()] + build_cache(fc_vals) + xml[caches[1].end():]
             caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
-            xml = xml[:caches[0].start()] + build_cache(snap_vals) + xml[caches[0].end():]
+            xml = xml[:caches[0].start()] + build_cache(plan_vals) + xml[caches[0].end():]
         else:
             # Fresh template: 2 series — [0]=Forecast, [1]=Actual
             if len(caches) >= 2:
@@ -477,10 +518,11 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
                 xml = xml[:caches[1].start()] + build_cache(act_vals) + xml[caches[1].end():]
 
-        # Add Snap Plan series if not already present
-        if snap_vals is not None and not has_snap:
-            cat_pts = ''.join(f'<c:pt idx="{i}"><c:v>{l}</c:v></c:pt>' for i, l in enumerate(labels))
-            cat_cache = f'<c:strCache><c:ptCount val="{len(labels)}"/>{cat_pts}</c:strCache>'
+        # Add Plan series if not already present
+        if plan_vals is not None and not has_plan:
+            cat_pts = ''.join(f'<c:pt idx="{i}"><c:v>{l}</c:v></c:pt>'
+                              for i, l in enumerate(month_labels))
+            cat_cache = f'<c:strCache><c:ptCount val="{n}"/>{cat_pts}</c:strCache>'
             dlbls = (
                 '<c:dLbls>'
                 '<c:numFmt formatCode="#,##0" sourceLinked="0"/>'
@@ -495,36 +537,36 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 '<c:showPercent val="0"/><c:showBubbleSize val="0"/>'
                 '<c:showLeaderLines val="0"/></c:dLbls>'
             )
-            snap_ser = (
+            plan_ser = (
                 '<c:ser>'
                 '<c:idx val="2"/><c:order val="0"/>'
                 '<c:tx><c:strRef><c:f>Sheet1!$D$1</c:f>'
                 '<c:strCache><c:ptCount val="1"/>'
-                '<c:pt idx="0"><c:v>Snap Plan</c:v></c:pt>'
+                '<c:pt idx="0"><c:v>Plan</c:v></c:pt>'
                 '</c:strCache></c:strRef></c:tx>'
                 '<c:spPr><a:solidFill><a:srgbClr val="A6A6A6"/></a:solidFill>'
                 '<a:effectLst/></c:spPr>'
                 '<c:invertIfNegative val="0"/>'
                 f'{dlbls}'
-                f'<c:cat><c:strRef><c:f>Sheet1!$A$2:$A$11</c:f>{cat_cache}</c:strRef></c:cat>'
-                f'<c:val><c:numRef><c:f>Sheet1!$D$2:$D$11</c:f>'
-                f'{build_cache(snap_vals)}</c:numRef></c:val>'
+                f'<c:cat><c:strRef><c:f>Sheet1!$A$2:$A${end_row}</c:f>'
+                f'{cat_cache}</c:strRef></c:cat>'
+                f'<c:val><c:numRef><c:f>Sheet1!$D$2:$D${end_row}</c:f>'
+                f'{build_cache(plan_vals)}</c:numRef></c:val>'
                 '</c:ser>'
             )
             pos = xml.rfind('</c:ser>')
             if pos != -1:
                 pos += len('</c:ser>')
-                xml = xml[:pos] + snap_ser + xml[pos:]
-        # Physically reorder series in XML: snap plan first (leftmost bar),
-        # then fc (middle), then act (right).  In clustered bar charts the XML
-        # position of <c:ser> elements — not <c:order> — controls visual bar order.
+                xml = xml[:pos] + plan_ser + xml[pos:]
+
+        # Reorder series in XML: Plan first (leftmost bar), then Forecast, then Actual
         all_sers = list(re.finditer(r'<c:ser>.*?</c:ser>', xml, re.DOTALL))
         if len(all_sers) >= 2:
-            snap_idx = next((i for i, m in enumerate(all_sers)
-                             if '<c:v>Snap Plan</c:v>' in m.group()), None)
-            if snap_idx is not None and snap_idx != 0:
-                ordered = [all_sers[snap_idx].group()]
-                ordered += [m.group() for i, m in enumerate(all_sers) if i != snap_idx]
+            plan_idx = next((i for i, m in enumerate(all_sers)
+                             if '<c:v>Plan</c:v>' in m.group()), None)
+            if plan_idx is not None and plan_idx != 0:
+                ordered = [all_sers[plan_idx].group()]
+                ordered += [m.group() for i, m in enumerate(all_sers) if i != plan_idx]
                 fixed_ordered = []
                 for j, ser_xml in enumerate(ordered):
                     fixed = re.sub(r'<c:order val="\d+"/>', f'<c:order val="{j}"/>', ser_xml, count=1)
@@ -536,26 +578,28 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     if 'ppt/charts/chart1.xml' in content:
         content['ppt/charts/chart1.xml'] = fix_chart(
-            content['ppt/charts/chart1.xml'], data['starts_fc'], data['starts_act'], MS15_SNAP)
+            content['ppt/charts/chart1.xml'],
+            data['cx_starts_fc'], data['cx_starts_act'], starts_plan, data['starts_labels'])
     if 'ppt/charts/chart2.xml' in content:
         content['ppt/charts/chart2.xml'] = fix_chart(
-            content['ppt/charts/chart2.xml'], data['compl_fc'], data['compl_act'], MS16_SNAP)
+            content['ppt/charts/chart2.xml'],
+            data['cx_complete_fc'], data['cx_complete_act'], complete_plan, data['complete_labels'])
 
-    # Update embedded workbooks (add column D = Snap Plan)
-    for embed_path, fc_vals, act_vals, snap_vals in [
+    # Update embedded workbooks (column D = Plan)
+    for embed_path, fc_vals, act_vals, plan_vals, month_labels in [
         ('ppt/embeddings/Microsoft_Excel_Worksheet.xlsx',
-         data['starts_fc'], data['starts_act'], MS15_SNAP),
+         data['cx_starts_fc'], data['cx_starts_act'], starts_plan, data['starts_labels']),
         ('ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx',
-         data['compl_fc'], data['compl_act'], MS16_SNAP)
+         data['cx_complete_fc'], data['cx_complete_act'], complete_plan, data['complete_labels'])
     ]:
         if embed_path in content:
             wb = openpyxl.load_workbook(io.BytesIO(content[embed_path]))
             ws = wb.active
             for ri in range(2, ws.max_row + 2):
                 for ci in range(1, 5): ws.cell(row=ri, column=ci).value = None
-            ws.cell(row=1, column=4).value = 'Snap Plan'
+            ws.cell(row=1, column=4).value = 'Plan'
             for ri, (lbl, fc, act, sp) in enumerate(
-                    zip(labels, fc_vals, act_vals, snap_vals), 2):
+                    zip(month_labels, fc_vals, act_vals, plan_vals), 2):
                 ws.cell(row=ri, column=1).value = lbl
                 ws.cell(row=ri, column=2).value = fc
                 ws.cell(row=ri, column=3).value = act if act > 0 else None
@@ -705,23 +749,38 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         f'{d["mat_display_str"]} HOPs have material in warehouse  ·  '
         f'{d["ntp_display_str"]} HOPs with NTP issued  ·  NTP Forecast based on Cage Match')
 
-    # Slide 6: Cx Charts — update bottom bullet points (index 4 after deletion)
-    shapes6 = list(prs.slides[4].shapes)
-    delta_starts_s6 = d['started_count'] - snap.get('total_starts', 0)
-    bullet_shape = shapes6[11]  # Text 9
-    set_shape_text(bullet_shape,
-        f'▲  {d["started_count"]} total starts actualized — {ds(delta_starts_s6, snap_date)}.',
-        para_idx=0)
-    set_shape_text(bullet_shape,
-        f'▲  {d["ip_count"]} HOPs actively in progress — '
-        f'June forecast of {por["jun"]["total"]} starts builds on momentum.',
-        para_idx=3)
-    set_shape_text(bullet_shape,
-        f'▲  {d["complete_count"]} completions total.',
-        para_idx=4)
+    # Slide 5: Cx Starts chart (index 4)
+    shapes_cs = list(prs.slides[4].shapes)
+    _cs_bullet = next((s for s in shapes_cs if s.has_text_frame
+                       and len(s.text_frame.paragraphs) > 1
+                       and s.name not in ('Title 1', 'Title 2')), None)
+    if _cs_bullet:
+        set_shape_text(_cs_bullet,
+            'Monthly construction start activity for qualified DON 444 HOPs '
+            'with NTP issued and materials received.',
+            para_idx=0)
+        set_shape_text(_cs_bullet,
+            'Plan reflects the program baseline; forecast reflects the current schedule; '
+            'actuals reflect confirmed construction start dates.',
+            para_idx=1)
 
-    # Slide 7: MSS Readiness (index 5 after deletion)
-    shapes7 = list(prs.slides[5].shapes)
+    # Slide 6: Construction Complete chart (index 5)
+    shapes_cc = list(prs.slides[5].shapes)
+    _cc_bullet = next((s for s in shapes_cc if s.has_text_frame
+                       and len(s.text_frame.paragraphs) > 1
+                       and s.name not in ('Title 1', 'Title 2')), None)
+    if _cc_bullet:
+        set_shape_text(_cc_bullet,
+            'Monthly construction completion activity for qualified DON 444 HOPs '
+            'with NTP issued and materials received.',
+            para_idx=0)
+        set_shape_text(_cc_bullet,
+            'Plan reflects the program baseline; forecast reflects the current schedule; '
+            'actuals reflect confirmed completion dates regardless of construction start status.',
+            para_idx=1)
+
+    # Slide 7: MSS Readiness (index 6 after cx split)
+    shapes7 = list(prs.slides[6].shapes)
     mss_sorted = d['mss'].sort_values('MS15 Implementation Start A', ascending=False)
     la_for_mss = d['la'].sort_values('MS15 Implementation Start F')
     mss_count = len(mss_sorted)
@@ -764,8 +823,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         else:
             for ci in range(7): set_table_cell(la_tbl_mss, ri, ci, '')
 
-    # Slide 8: Look-ahead table (index 6 after deletion)
-    shapes8 = list(prs.slides[6].shapes)
+    # Slide 8: Look-ahead table (index 7 after cx split)
+    shapes8 = list(prs.slides[7].shapes)
     la_tbl = shapes8[7]
     la_sorted = d['la'].sort_values('MS15 Implementation Start F')
     _la_cx_col = d.get('_cx_col')
@@ -813,8 +872,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         else:
             for ci in range(9): set_table_cell(la_tbl, ri, ci, '', fill_rgb=row_fill)
 
-    # Slide 9: In progress table (index 7 after deletion)
-    shapes9 = list(prs.slides[7].shapes)
+    # Slide 9: In progress table (index 8 after cx split)
+    shapes9 = list(prs.slides[8].shapes)
     set_shape_text(shapes9[2], f'{d["ip_count"]} HOPs started · Green=On Track · Yellow=At Risk · Red=Escalation · ⚑=Needs Attention')
     ip_tbl = shapes9[5]
     ip_sorted = d['ip_df'].sort_values('MS16 Implementation Ends F', na_position='last')
@@ -979,19 +1038,19 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             elif 'External Blockers' in txt:
                 set_shape_text(shape, ext_label)
 
-    # POR slides — all indices shifted -1 after content slide deletion
-    update_por_overview(8, 'June', 'jun')
-    update_por_overview(11, 'July', 'jul')
-    update_por_overview(14, 'August', 'aug')
-    update_por_overview(17, 'September', 'sep')
-    update_por_confirmed(9, 'June', 'jun', 'Jun Pending NTP')
-    update_por_confirmed(12, 'July', 'jul', 'Jul Pending NTP')
-    update_por_confirmed(15, 'August', 'aug', 'Aug Pending NTP')
-    update_por_confirmed(18, 'September', 'sep', 'Sep Pending NTP')
-    update_por_pending(10, 'June', 'jun', 'Jun Pending NTP')
-    update_por_pending(13, 'July', 'jul', 'Jul Pending NTP')
-    update_por_pending(16, 'August', 'aug', 'Aug Pending NTP')
-    update_por_pending(19, 'September', 'sep', 'Sep Pending NTP')
+    # POR slides — indices shifted +1 again after cx chart split into two slides
+    update_por_overview(9,  'June',      'jun')
+    update_por_overview(12, 'July',      'jul')
+    update_por_overview(15, 'August',    'aug')
+    update_por_overview(18, 'September', 'sep')
+    update_por_confirmed(10, 'June',      'jun', 'Jun Pending NTP')
+    update_por_confirmed(13, 'July',      'jul', 'Jul Pending NTP')
+    update_por_confirmed(16, 'August',    'aug', 'Aug Pending NTP')
+    update_por_confirmed(19, 'September', 'sep', 'Sep Pending NTP')
+    update_por_pending(11, 'June',      'jun', 'Jun Pending NTP')
+    update_por_pending(14, 'July',      'jul', 'Jul Pending NTP')
+    update_por_pending(17, 'August',    'aug', 'Aug Pending NTP')
+    update_por_pending(20, 'September', 'sep', 'Sep Pending NTP')
 
     # Final date sweep — catch anything missed
     for slide in prs.slides:
