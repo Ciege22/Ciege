@@ -632,36 +632,112 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 xml = xml[:first_start] + ''.join(fixed_ordered) + xml[last_end:]
         return xml.encode('utf-8')
 
-    if 'ppt/charts/chart1.xml' in content:
-        content['ppt/charts/chart1.xml'] = fix_chart(
-            content['ppt/charts/chart1.xml'],
+    # ── Identify Cx Starts and Construction Complete charts via slide relationships ──
+    # We read the actual OOXML relationship files so the chart↔workbook assignment is
+    # correct regardless of file naming conventions (chart1 vs chart2, Worksheet vs Worksheet1).
+    _CX_P_NS = 'http://schemas.openxmlformats.org/presentationml/2006/main'
+    _CX_R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+
+    def _cx_parse_rels(rels_bytes):
+        try:
+            root = etree.fromstring(rels_bytes)
+            return [(r.get('Type', ''), r.get('Id', ''), r.get('Target', '')) for r in root]
+        except Exception:
+            return []
+
+    def _cx_rid_map(rels_bytes):
+        return {rid: tgt for _, rid, tgt in _cx_parse_rels(rels_bytes)}
+
+    def _cx_slide_chart(slide_path):
+        slide_name = slide_path.split('/')[-1]
+        for _type, _rid, _tgt in _cx_parse_rels(content.get(f'ppt/slides/_rels/{slide_name}.rels', b'')):
+            if '/chart' in _tgt or 'chart' in _type.lower():
+                chart_name = _tgt.split('/')[-1]
+                return f'ppt/charts/{chart_name}'
+        return None
+
+    def _cx_chart_embed(chart_path):
+        chart_name = chart_path.split('/')[-1]
+        for _type, _rid, _tgt in _cx_parse_rels(content.get(f'ppt/charts/_rels/{chart_name}.rels', b'')):
+            if '/embeddings/' in _tgt:
+                return f'ppt/embeddings/{_tgt.split("/")[-1]}'
+        return None
+
+    # Get ordered slide paths from presentation.xml
+    _cx_prs_rid = _cx_rid_map(content.get('ppt/_rels/presentation.xml.rels', b''))
+    _cx_ordered_slides = []
+    try:
+        _cx_prs_root = etree.fromstring(content.get('ppt/presentation.xml', b'<x/>'))
+        _cx_sld_lst = _cx_prs_root.find(f'.//{{{_CX_P_NS}}}sldIdLst')
+        if _cx_sld_lst is not None:
+            for _cx_sid in _cx_sld_lst.findall(f'{{{_CX_P_NS}}}sldId'):
+                _cx_rid = _cx_sid.get(f'{{{_CX_R_NS}}}id', '')
+                _cx_tgt = _cx_prs_rid.get(_cx_rid, '')
+                if _cx_tgt:
+                    if not _cx_tgt.startswith('ppt/'):
+                        _cx_tgt = 'ppt/slides/' + _cx_tgt.split('/')[-1]
+                    _cx_ordered_slides.append(_cx_tgt)
+    except Exception:
+        pass
+
+    # Identify which slide has "Cx Starts" and which has "Construction Complete"
+    _starts_chart_path = None
+    _complete_chart_path = None
+    for _cx_sp in _cx_ordered_slides:
+        _cx_sb = content.get(_cx_sp, b'')
+        _cx_cp = _cx_slide_chart(_cx_sp)
+        if _cx_cp is None:
+            continue
+        if _starts_chart_path is None and b'Cx Starts' in _cx_sb:
+            _starts_chart_path = _cx_cp
+        if _complete_chart_path is None and (b'Construction Complete' in _cx_sb or b'Cx Complete' in _cx_sb):
+            _complete_chart_path = _cx_cp
+
+    # Fallback: use first two chart-bearing slides if text search missed
+    if _starts_chart_path is None or _complete_chart_path is None:
+        _cx_chart_list = list(dict.fromkeys(
+            c for p in _cx_ordered_slides for c in [_cx_slide_chart(p)] if c))
+        if len(_cx_chart_list) >= 2:
+            _starts_chart_path  = _starts_chart_path  or _cx_chart_list[0]
+            _complete_chart_path = _complete_chart_path or _cx_chart_list[1]
+
+    _starts_chart_path  = _starts_chart_path  or 'ppt/charts/chart1.xml'
+    _complete_chart_path = _complete_chart_path or 'ppt/charts/chart2.xml'
+
+    _starts_embed_path  = _cx_chart_embed(_starts_chart_path)  or 'ppt/embeddings/Microsoft_Excel_Worksheet.xlsx'
+    _complete_embed_path = _cx_chart_embed(_complete_chart_path) or 'ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx'
+
+    print(f"[CX] starts  chart={_starts_chart_path}  embed={_starts_embed_path}", flush=True)
+    print(f"[CX] complete chart={_complete_chart_path} embed={_complete_embed_path}", flush=True)
+
+    # Fix chart XML numCaches and labels
+    if _starts_chart_path in content:
+        content[_starts_chart_path] = fix_chart(
+            content[_starts_chart_path],
             data['cx_starts_fc'], data['cx_starts_act'], starts_plan, data['starts_labels'])
-    if 'ppt/charts/chart2.xml' in content:
-        content['ppt/charts/chart2.xml'] = fix_chart(
-            content['ppt/charts/chart2.xml'],
+    if _complete_chart_path in content:
+        content[_complete_chart_path] = fix_chart(
+            content[_complete_chart_path],
             data['cx_complete_fc'], data['cx_complete_act'], complete_plan, data['complete_labels'])
 
-    # Update embedded workbooks (column D = Plan)
-    for embed_path, fc_vals, act_vals, plan_vals, month_labels in [
-        ('ppt/embeddings/Microsoft_Excel_Worksheet.xlsx',
-         data['cx_starts_fc'], data['cx_starts_act'], starts_plan, data['starts_labels']),
-        ('ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx',
-         data['cx_complete_fc'], data['cx_complete_act'], complete_plan, data['complete_labels'])
+    # Update embedded workbooks (correct workbook per chart, not hardcoded names)
+    for _ep, _fc_v, _act_v, _plan_v, _mo_lbl in [
+        (_starts_embed_path,   data['cx_starts_fc'],  data['cx_starts_act'],  starts_plan,   data['starts_labels']),
+        (_complete_embed_path, data['cx_complete_fc'], data['cx_complete_act'], complete_plan, data['complete_labels']),
     ]:
-        if embed_path in content:
-            wb = openpyxl.load_workbook(io.BytesIO(content[embed_path]))
-            ws = wb.active
-            for ri in range(2, ws.max_row + 2):
-                for ci in range(1, 5): ws.cell(row=ri, column=ci).value = None
-            ws.cell(row=1, column=4).value = 'Plan'
-            for ri, (lbl, fc, act, sp) in enumerate(
-                    zip(month_labels, fc_vals, act_vals, plan_vals), 2):
-                ws.cell(row=ri, column=1).value = lbl
-                ws.cell(row=ri, column=2).value = fc
-                ws.cell(row=ri, column=3).value = act if act > 0 else None
-                ws.cell(row=ri, column=4).value = sp if sp > 0 else None
-            out = io.BytesIO(); wb.save(out)
-            content[embed_path] = out.getvalue()
+        if _ep in content:
+            _wb = openpyxl.load_workbook(io.BytesIO(content[_ep]))
+            _ws = _wb.active
+            for _ri in range(2, _ws.max_row + 2):
+                for _ci in range(1, 5): _ws.cell(row=_ri, column=_ci).value = None
+            _ws.cell(row=1, column=4).value = 'Plan'
+            for _ri, (_lbl, _fc, _act, _sp) in enumerate(zip(_mo_lbl, _fc_v, _act_v, _plan_v), 2):
+                _ws.cell(row=_ri, column=1).value = _lbl
+                _ws.cell(row=_ri, column=2).value = _fc
+                _ws.cell(row=_ri, column=3).value = _act if _act > 0 else None
+                _ws.cell(row=_ri, column=4).value = _sp  if _sp  > 0 else None
+            _out = io.BytesIO(); _wb.save(_out)
+            content[_ep] = _out.getvalue()
 
     # ── Delete content slide (index 2) at zip level before loading pptx ──────
     # Zip-level deletion is required: python-pptx's drop_rel() fails silently,
