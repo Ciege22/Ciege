@@ -549,20 +549,30 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         xml = re.sub(r'(\$[A-Z]\$2:\$[A-Z]\$)\d+',
                      lambda m: m.group(1) + str(end_row), xml)
 
-        caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
-        if has_plan and len(caches) >= 3:
-            # XML series order after previous run: [0]=Plan, [1]=Forecast, [2]=Actual
-            xml = xml[:caches[2].start()] + build_cache(act_vals) + xml[caches[2].end():]
-            caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
-            xml = xml[:caches[1].start()] + build_cache(fc_vals) + xml[caches[1].end():]
-            caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
-            xml = xml[:caches[0].start()] + build_cache(plan_vals) + xml[caches[0].end():]
-        else:
-            # Fresh template: 2 series — [0]=Forecast, [1]=Actual
-            if len(caches) >= 2:
-                xml = xml[:caches[0].start()] + build_cache(fc_vals) + xml[caches[0].end():]
-                caches = list(re.finditer(r'<c:numCache>.*?</c:numCache>', xml, re.DOTALL))
-                xml = xml[:caches[1].start()] + build_cache(act_vals) + xml[caches[1].end():]
+        # Update numCache per series identified by val-formula column (B=Forecast,C=Actual,D=Plan)
+        # This is robust regardless of series XML order.
+        _SER_RE = re.compile(r'<c:ser>.*?</c:ser>', re.DOTALL)
+        _NC_RE  = re.compile(r'<c:numCache>.*?</c:numCache>', re.DOTALL)
+        _updates = []
+        for _sm in _SER_RE.finditer(xml):
+            _ser = _sm.group()
+            _val_part = _ser.split('<c:val>', 1)[1] if '<c:val>' in _ser else ''
+            _col_m = re.search(r'\$([A-Z])\$2:', _val_part)
+            _col = _col_m.group(1) if _col_m else None
+            if '<c:v>Plan</c:v>' in _ser or _col == 'D':
+                _new_vals = plan_vals
+            elif _col == 'B':
+                _new_vals = fc_vals
+            elif _col == 'C':
+                _new_vals = act_vals
+            else:
+                continue
+            _nc_m = _NC_RE.search(_ser)
+            if _nc_m:
+                _updates.append((_sm.start(), _sm.end(),
+                                 _ser[:_nc_m.start()] + build_cache(_new_vals) + _ser[_nc_m.end():]))
+        for _start, _end, _new_ser in reversed(_updates):
+            xml = xml[:_start] + _new_ser + xml[_end:]
 
         # Add Plan series if not already present
         if plan_vals is not None and not has_plan:
@@ -578,7 +588,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 '<a:solidFill><a:srgbClr val="000000"/></a:solidFill>'
                 '<a:latin typeface="Arial"/>'
                 '</a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>'
-                '<c:showLegendKey val="0"/><c:showVal val="0"/>'
+                '<c:showLegendKey val="0"/><c:showVal val="1"/>'
                 '<c:showCatName val="0"/><c:showSerName val="0"/>'
                 '<c:showPercent val="0"/><c:showBubbleSize val="0"/>'
                 '<c:showLeaderLines val="0"/></c:dLbls>'
@@ -604,14 +614,6 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             if pos != -1:
                 pos += len('</c:ser>')
                 xml = xml[:pos] + plan_ser + xml[pos:]
-
-        # Suppress data labels on Plan series (Plan is baseline context, not a precision figure)
-        for _sm in re.finditer(r'<c:ser>.*?</c:ser>', xml, re.DOTALL):
-            if '<c:v>Plan</c:v>' in _sm.group():
-                _upd = re.sub(r'<c:showVal val="1"/>', '<c:showVal val="0"/>', _sm.group())
-                if _upd != _sm.group():
-                    xml = xml[:_sm.start()] + _upd + xml[_sm.end():]
-                break
 
         # Reorder series in XML: Plan first (leftmost bar), then Forecast, then Actual
         all_sers = list(re.finditer(r'<c:ser>.*?</c:ser>', xml, re.DOTALL))
