@@ -630,6 +630,14 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 first_start = all_sers[0].start()
                 last_end = all_sers[-1].end()
                 xml = xml[:first_start] + ''.join(fixed_ordered) + xml[last_end:]
+
+        # Remove the embedded-workbook link so PowerPoint renders from numCache, not from the
+        # Excel file.  The Excel file association is hard to remap reliably across PPTX templates
+        # because chart1.xml may link to Worksheet1.xlsx (not Worksheet.xlsx as assumed).
+        # Removing <c:externalData> makes PowerPoint use our correctly-set numCache values.
+        xml = re.sub(r'<c:externalData\b[^/]*/>', '', xml)
+        xml = re.sub(r'<c:externalData\b[^>]*>.*?</c:externalData>', '', xml, flags=re.DOTALL)
+
         return xml.encode('utf-8')
 
     # ── Identify Cx Starts and Construction Complete charts via slide relationships ──
