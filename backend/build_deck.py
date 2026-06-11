@@ -599,6 +599,19 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 _con = _ref if _ref is not None else _lit
                 if _con is not None:
                     _set_numdata(_con, _nv, n, 'numCache' if _ref is not None else 'numLit')
+                # Remove per-point <c:dLbl> overrides — they cache stale text values
+                # independently of numCache and will show the old value (e.g. 44) even
+                # after numCache is updated.  Removing them makes labels fall back to
+                # the series-level <c:showVal val="1"/> which reads from numCache.
+                if not _is_plan:
+                    _dlbls_el = _ser.find(f'{{{_C}}}dLbls')
+                    if _dlbls_el is not None:
+                        _removed = 0
+                        for _dlbl in list(_dlbls_el.findall(f'{{{_C}}}dLbl')):
+                            _dlbls_el.remove(_dlbl)
+                            _removed += 1
+                        if _removed:
+                            print(f"[FIX] removed {_removed} dLbl overrides from col={_col}", flush=True)
                 print(f"[FIX] col={_col} plan={_is_plan} vals[:3]={_nv[:3]}", flush=True)
 
             # Positional fallback: first unresolved non-plan series = Forecast, second = Actual
