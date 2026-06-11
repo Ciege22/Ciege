@@ -1117,9 +1117,15 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         if _mo_key and _mo_key in d['cycle_times']:
             _avg_val = d['cycle_times'][_mo_key]
             if _avg_val is not None:
+                _ct_color = (GREEN_C if _avg_val <= 18
+                             else RGBColor(0xD4, 0x86, 0x0A) if _avg_val <= 29
+                             else RED_C)
                 for _sh in _slide.shapes:
                     if _sh.has_text_frame and 'Days' in _sh.text_frame.text:
                         set_shape_text(_sh, f'{_avg_val} Days')
+                        try:
+                            _sh.text_frame.paragraphs[0].runs[0].font.color.rgb = _ct_color
+                        except: pass
                         break
 
     # Final date sweep — catch anything missed
