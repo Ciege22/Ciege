@@ -1099,42 +1099,50 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     update_por_pending(20, 'September', 'sep', 'Sep Pending NTP')
 
     # Cycle time slides — auto-detected by "YYYY Mon. Average" label, any position in deck
+    import sys as _sys
     _MO_SHORT = {1:'Jan',2:'Feb',3:'Mar',4:'Apr',5:'May',6:'Jun',
                  7:'Jul',8:'Aug',9:'Sep',10:'Oct',11:'Nov',12:'Dec'}
-    for _slide in prs.slides:
+    for _si, _slide in enumerate(prs.slides):
         _avg_shape = None; _mo_key = None
         for _sh in _slide.shapes:
             if not _sh.has_text_frame: continue
-            _match = re.match(r'(\d{4})\s+(\w{3})\.\s+Average',
-                              _sh.text_frame.text.strip())
+            _raw = _sh.text_frame.text.strip()
+            _match = re.search(r'(\d{4})\s+(\w{3})\.\s+Average', _raw)
             if _match:
                 _yr  = int(_match.group(1))
                 _ms  = _match.group(2)
                 _mon = next((k for k, v in _MO_SHORT.items() if v == _ms), None)
                 if _mon:
                     _avg_shape = _sh; _mo_key = (_mon, _yr)
+                print(f'[cycle] slide={_si} found label={_raw!r} mo_key={_mo_key}', file=_sys.stderr, flush=True)
                 break
-        if _mo_key and _mo_key in d['cycle_times'] and _avg_shape is not None:
-            _avg_val = d['cycle_times'][_mo_key]
-            if _avg_val is not None:
-                _ct_color = (GREEN_C if _avg_val <= 18
-                             else RGBColor(0xD4, 0x86, 0x0A) if _avg_val <= 29
-                             else RED_C)
-                # Find number box by position: has text frame, below title bar
-                # (top > 1in = 914400 EMU), and above the Average label
-                _days_shape = next(
-                    (_sh for _sh in _slide.shapes
-                     if _sh.has_text_frame
-                     and _sh is not _avg_shape
-                     and _sh.top > 914400
-                     and _sh.top < _avg_shape.top),
-                    None
-                )
-                if _days_shape:
-                    set_shape_text(_days_shape, f'{_avg_val} Days')
-                    try:
-                        _days_shape.text_frame.paragraphs[0].runs[0].font.color.rgb = _ct_color
-                    except: pass
+        if _mo_key is None:
+            continue
+        _avg_val = d['cycle_times'].get(_mo_key)
+        print(f'[cycle] mo_key={_mo_key} avg_val={_avg_val}', file=_sys.stderr, flush=True)
+        _ct_color = (GREEN_C if (_avg_val or 0) <= 18
+                     else RGBColor(0xD4, 0x86, 0x0A) if (_avg_val or 0) <= 29
+                     else RED_C)
+        # Find number box: has text frame, below title bar (>1in), above the Average label
+        _all_tf = [(s.top, s) for s in _slide.shapes
+                   if s.has_text_frame and s is not _avg_shape and s.top > 914400]
+        print(f'[cycle] candidate shapes tops={[t for t,_ in _all_tf]}  avg_top={_avg_shape.top}', file=_sys.stderr, flush=True)
+        _days_shape = next(
+            (s for _, s in sorted(_all_tf) if s.top < _avg_shape.top), None
+        )
+        if _days_shape is None:
+            # Fallback: closest shape above average label regardless of title bar cutoff
+            _days_shape = next(
+                (s for _, s in sorted(_all_tf, reverse=True) if s.top < _avg_shape.top), None
+            )
+        print(f'[cycle] days_shape found={_days_shape is not None}', file=_sys.stderr, flush=True)
+        if _days_shape:
+            _disp = f'{_avg_val} Days' if _avg_val is not None else '— Days'
+            set_shape_text(_days_shape, _disp)
+            try:
+                if _avg_val is not None:
+                    _days_shape.text_frame.paragraphs[0].runs[0].font.color.rgb = _ct_color
+            except: pass
 
     # Final date sweep — catch anything missed
     for slide in prs.slides:
