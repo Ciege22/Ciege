@@ -1114,19 +1114,27 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 if _mon:
                     _avg_shape = _sh; _mo_key = (_mon, _yr)
                 break
-        if _mo_key and _mo_key in d['cycle_times']:
+        if _mo_key and _mo_key in d['cycle_times'] and _avg_shape is not None:
             _avg_val = d['cycle_times'][_mo_key]
             if _avg_val is not None:
                 _ct_color = (GREEN_C if _avg_val <= 18
                              else RGBColor(0xD4, 0x86, 0x0A) if _avg_val <= 29
                              else RED_C)
-                for _sh in _slide.shapes:
-                    if _sh.has_text_frame and 'Days' in _sh.text_frame.text:
-                        set_shape_text(_sh, f'{_avg_val} Days')
-                        try:
-                            _sh.text_frame.paragraphs[0].runs[0].font.color.rgb = _ct_color
-                        except: pass
-                        break
+                # Find number box by position: has text frame, below title bar
+                # (top > 1in = 914400 EMU), and above the Average label
+                _days_shape = next(
+                    (_sh for _sh in _slide.shapes
+                     if _sh.has_text_frame
+                     and _sh is not _avg_shape
+                     and _sh.top > 914400
+                     and _sh.top < _avg_shape.top),
+                    None
+                )
+                if _days_shape:
+                    set_shape_text(_days_shape, f'{_avg_val} Days')
+                    try:
+                        _days_shape.text_frame.paragraphs[0].runs[0].font.color.rgb = _ct_color
+                    except: pass
 
     # Final date sweep — catch anything missed
     for slide in prs.slides:
