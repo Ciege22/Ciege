@@ -578,7 +578,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 '<a:solidFill><a:srgbClr val="000000"/></a:solidFill>'
                 '<a:latin typeface="Arial"/>'
                 '</a:defRPr></a:pPr><a:endParaRPr lang="en-US"/></a:p></c:txPr>'
-                '<c:showLegendKey val="0"/><c:showVal val="1"/>'
+                '<c:showLegendKey val="0"/><c:showVal val="0"/>'
                 '<c:showCatName val="0"/><c:showSerName val="0"/>'
                 '<c:showPercent val="0"/><c:showBubbleSize val="0"/>'
                 '<c:showLeaderLines val="0"/></c:dLbls>'
@@ -604,6 +604,14 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             if pos != -1:
                 pos += len('</c:ser>')
                 xml = xml[:pos] + plan_ser + xml[pos:]
+
+        # Suppress data labels on Plan series (Plan is baseline context, not a precision figure)
+        for _sm in re.finditer(r'<c:ser>.*?</c:ser>', xml, re.DOTALL):
+            if '<c:v>Plan</c:v>' in _sm.group():
+                _upd = re.sub(r'<c:showVal val="1"/>', '<c:showVal val="0"/>', _sm.group())
+                if _upd != _sm.group():
+                    xml = xml[:_sm.start()] + _upd + xml[_sm.end():]
+                break
 
         # Reorder series in XML: Plan first (leftmost bar), then Forecast, then Actual
         all_sers = list(re.finditer(r'<c:ser>.*?</c:ser>', xml, re.DOTALL))
