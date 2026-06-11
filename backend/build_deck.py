@@ -549,30 +549,73 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         xml = re.sub(r'(\$[A-Z]\$2:\$[A-Z]\$)\d+',
                      lambda m: m.group(1) + str(end_row), xml)
 
-        # Update numCache per series identified by val-formula column (B=Forecast,C=Actual,D=Plan)
-        # This is robust regardless of series XML order.
-        _SER_RE = re.compile(r'<c:ser>.*?</c:ser>', re.DOTALL)
-        _NC_RE  = re.compile(r'<c:numCache>.*?</c:numCache>', re.DOTALL)
-        _updates = []
-        for _sm in _SER_RE.finditer(xml):
-            _ser = _sm.group()
-            _val_part = _ser.split('<c:val>', 1)[1] if '<c:val>' in _ser else ''
-            _col_m = re.search(r'\$([A-Z])\$2:', _val_part)
-            _col = _col_m.group(1) if _col_m else None
-            if '<c:v>Plan</c:v>' in _ser or _col == 'D':
-                _new_vals = plan_vals
-            elif _col == 'B':
-                _new_vals = fc_vals
-            elif _col == 'C':
-                _new_vals = act_vals
-            else:
-                continue
-            _nc_m = _NC_RE.search(_ser)
-            if _nc_m:
-                _updates.append((_sm.start(), _sm.end(),
-                                 _ser[:_nc_m.start()] + build_cache(_new_vals) + _ser[_nc_m.end():]))
-        for _start, _end, _new_ser in reversed(_updates):
-            xml = xml[:_start] + _new_ser + xml[_end:]
+        # Update numCache per series using lxml for reliable XML manipulation.
+        # Handles <c:numCache> (referenced data) and <c:numLit> (literal values),
+        # identifies by formula column letter, falls back to series-index order.
+        try:
+            from lxml import etree as _et
+            _C = 'http://schemas.openxmlformats.org/drawingml/2006/chart'
+            _lroot = _et.fromstring(xml.encode('utf-8'))
+
+            def _set_numdata(_container, _vals, _n, _tag):
+                _old = _container.find(f'{{{_C}}}{_tag}')
+                if _old is not None:
+                    _container.remove(_old)
+                _el = _et.SubElement(_container, f'{{{_C}}}{_tag}')
+                _fce = _et.SubElement(_el, f'{{{_C}}}formatCode'); _fce.text = 'General'
+                _pce = _et.SubElement(_el, f'{{{_C}}}ptCount'); _pce.set('val', str(_n))
+                for _i, _v in enumerate(_vals):
+                    if _v is not None and _v > 0:
+                        _pt = _et.SubElement(_el, f'{{{_C}}}pt'); _pt.set('idx', str(_i))
+                        _ve = _et.SubElement(_pt, f'{{{_C}}}v'); _ve.text = str(_v)
+
+            _unresolved = []
+            for _ser in _lroot.findall(f'.//{{{_C}}}ser'):
+                _tx_vs = [e.text for e in _ser.findall(f'.//{{{_C}}}tx//{{{_C}}}v') if e.text]
+                _is_plan = 'Plan' in _tx_vs
+                _val_el = _ser.find(f'{{{_C}}}val')
+                if _val_el is None:
+                    continue
+                _ref = _val_el.find(f'{{{_C}}}numRef')
+                _lit = _val_el.find(f'{{{_C}}}numLit')
+                _col = None
+                if _ref is not None:
+                    _fe = _ref.find(f'{{{_C}}}f')
+                    if _fe is not None and _fe.text:
+                        _cm = re.search(r'\$([A-Z])\$', _fe.text)
+                        _col = _cm.group(1) if _cm else None
+                if _is_plan or _col == 'D':
+                    _nv = plan_vals
+                elif _col == 'B':
+                    _nv = fc_vals
+                elif _col == 'C':
+                    _nv = act_vals
+                else:
+                    if not _is_plan:
+                        _idx_el = _ser.find(f'{{{_C}}}idx')
+                        _oi = int(_idx_el.get('val', '99')) if _idx_el is not None else 99
+                        _unresolved.append((_oi, _ser, _ref, _lit))
+                    continue
+                _con = _ref if _ref is not None else _lit
+                if _con is not None:
+                    _set_numdata(_con, _nv, n, 'numCache' if _ref is not None else 'numLit')
+                print(f"[FIX] col={_col} plan={_is_plan} vals[:3]={_nv[:3]}", flush=True)
+
+            # Positional fallback: first unresolved non-plan series = Forecast, second = Actual
+            _unresolved.sort(key=lambda x: x[0])
+            for _fi, (_oi, _ser, _ref, _lit) in enumerate(_unresolved[:2]):
+                _fv = fc_vals if _fi == 0 else act_vals
+                _con = _ref if _ref is not None else _lit
+                if _con is not None:
+                    _set_numdata(_con, _fv, n, 'numCache' if _ref is not None else 'numLit')
+                print(f"[FIX] fallback idx={_oi} -> {'fc' if _fi==0 else 'act'} vals[:3]={_fv[:3]}", flush=True)
+
+            _decl = xml[:xml.index('?>') + 2] if xml.startswith('<?xml') else ''
+            xml = _et.tostring(_lroot, encoding='unicode')
+            if _decl and not xml.startswith('<?xml'):
+                xml = _decl + xml
+        except Exception as _lxml_err:
+            print(f"[FIX] lxml numCache update failed: {_lxml_err}", flush=True)
 
         # Add Plan series if not already present
         if plan_vals is not None and not has_plan:
@@ -717,6 +760,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     print(f"[CX] starts  chart={_starts_chart_path}  embed={_starts_embed_path}", flush=True)
     print(f"[CX] complete chart={_complete_chart_path} embed={_complete_embed_path}", flush=True)
+    print(f"[CX] starts_fc  = {list(zip(data['starts_labels'], data['cx_starts_fc']))}", flush=True)
+    print(f"[CX] starts_act = {list(zip(data['starts_labels'], data['cx_starts_act']))}", flush=True)
 
     # Fix chart XML numCaches and labels
     if _starts_chart_path in content:
