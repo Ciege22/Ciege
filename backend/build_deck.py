@@ -635,7 +635,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         # Excel file.  The Excel file association is hard to remap reliably across PPTX templates
         # because chart1.xml may link to Worksheet1.xlsx (not Worksheet.xlsx as assumed).
         # Removing <c:externalData> makes PowerPoint use our correctly-set numCache values.
-        xml = re.sub(r'<c:externalData\b[^/]*/>', '', xml)
+        xml = re.sub(r'<c:externalData\b[^>]*/>', '', xml)
         xml = re.sub(r'<c:externalData\b[^>]*>.*?</c:externalData>', '', xml, flags=re.DOTALL)
 
         return xml.encode('utf-8')
