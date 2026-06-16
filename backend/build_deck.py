@@ -247,16 +247,32 @@ def extract_data(tracker_path: str, snapshot_path: str,
         (c for c in df.columns if c.strip().rstrip(':').strip().lower() == 'cx notes'),
         None
     )
-    # Find 'NTP is waiting on' column — tolerate case/whitespace variations
-    _ntp_wait_col = next(
-        (c for c in df.columns if c.strip().lower() == 'ntp is waiting on'),
-        next((c for c in df.columns if 'waiting' in c.lower()), None)
-    )
+    # Find 'NTP is waiting on' column — multi-level fallback:
+    # 1. Exact case-insensitive match
+    # 2. Any column with 'waiting' in the name
+    # 3. Any column with 'ntp' + ('block'|'hold'|'pend') in the name
+    # 4. Column index 53 (0-based) per the known tracker structure
+    def _find_ntp_wait_col():
+        cols = list(df.columns)
+        for c in cols:
+            if c.strip().lower() == 'ntp is waiting on':
+                return c
+        for c in cols:
+            if 'waiting' in c.lower():
+                return c
+        for c in cols:
+            cl = c.lower()
+            if 'ntp' in cl and any(k in cl for k in ('block', 'hold', 'pend')):
+                return c
+        if len(cols) > 53:
+            return cols[53]
+        return None
+    _ntp_wait_col = _find_ntp_wait_col()
     import sys
     cx_candidates = [c for c in df.columns if 'cx' in c.lower()]
-    ntp_wait_candidates = [c for c in df.columns if 'waiting' in c.lower() or ('ntp' in c.lower() and 'wait' in c.lower())]
     print(f'[extract_data] _cx_col={_cx_col!r}  cx_candidates={cx_candidates}', file=sys.stderr, flush=True)
-    print(f'[extract_data] _ntp_wait_col={_ntp_wait_col!r}  ntp_wait_candidates={ntp_wait_candidates}', file=sys.stderr, flush=True)
+    print(f'[extract_data] _ntp_wait_col={_ntp_wait_col!r}', file=sys.stderr, flush=True)
+    print(f'[extract_data] ALL HOPs columns: {list(df.columns)}', file=sys.stderr, flush=True)
 
     # String columns
     str_cols = {
