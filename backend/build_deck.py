@@ -1002,7 +1002,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     # Slide 7: MSS Readiness (index 6 after cx split)
     shapes7 = list(prs.slides[6].shapes)
-    mss_sorted = d['mss'].sort_values('MS15 Implementation Start A', ascending=False)
+    mss_sorted = d['mss'].sort_values('MS15 Implementation Start A', ascending=True)
     la_for_mss = d['la'].sort_values('MS15 Implementation Start F')
     mss_count = len(mss_sorted)
     la_count = len(la_for_mss)
@@ -1159,8 +1159,10 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 end_col   = next((i for i, h in enumerate(hdrs) if 'End' in h and 'Start' not in h), None)
                 owner_col = next((i for i, h in enumerate(hdrs) if 'Owner' in h or 'Action' in h), None)
                 comment_col = len(hdrs) - 1
-                ntp_hops = sorted(p['ntp_hops'], key=lambda h: d['hop_ms16f'].get(h['HOP'],
-                                  pd.Timestamp('2099-01-01')) or pd.Timestamp('2099-01-01'))
+                ntp_hops = sorted(p['ntp_hops'], key=lambda h: (
+                    pd.Timestamp(h['MS15 Implementation Start F'])
+                    if h.get('MS15 Implementation Start F') and pd.notna(h.get('MS15 Implementation Start F'))
+                    else pd.Timestamp('2099-01-01')))
                 expand_table_rows(shape, len(ntp_hops))
                 # Detect alternating-row grey from template row 2 (same approach as look-ahead table)
                 _alt_grey = 'EDEDED'
@@ -1232,10 +1234,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         comments = d['ntp_comments'].get(sheet_key, {})
 
         def sort_key(h):
-            cat_order = 0 if h['cat'] == 'External' else (1 if h['cat'] == 'Other' else 2)
-            ms16 = d['hop_ms16f'].get(h['HOP'])
-            ts = ms16 if ms16 and pd.notna(ms16) else pd.Timestamp('2099-01-01')
-            return (cat_order, ts)
+            ms15 = h.get('ms15f')
+            return pd.Timestamp(ms15) if ms15 and pd.notna(ms15) else pd.Timestamp('2099-01-01')
 
         ext = sorted(p['external'], key=sort_key)
         prog = sorted(p['prog_team'] + p['other'], key=sort_key)
