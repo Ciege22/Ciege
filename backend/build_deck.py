@@ -1190,7 +1190,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                                     comment = v; break
                         ntp_wait = str(h.get('_ntp_wait', '')).strip()
                         cx = str(h.get('_cx', '')).strip()
-                        cell_note = comment or ntp_wait
+                        cell_note = ntp_wait
                         pm_val = str(h.get('_pm', '')).strip()
                         pm_val = '' if pm_val.lower() == 'nan' else pm_val
                         owner_val = str(h.get('_ntp_owner', '')).strip()
