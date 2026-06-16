@@ -1098,6 +1098,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     set_shape_text(shapes9[2], f'{d["ip_count"]} HOPs started · Green=On Track · Yellow=At Risk · Red=Escalation · ⚑=Needs Attention')
     ip_tbl = shapes9[5]
     ip_sorted = d['ip_df'].sort_values('MS16 Implementation Ends F', na_position='last')
+    expand_table_rows(ip_tbl, min(len(ip_sorted), 25))
     new_starts_set = set(d['new_starts'])
     for ri in range(1, 26):
         if ri - 1 < len(ip_sorted):
