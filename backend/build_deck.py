@@ -1205,7 +1205,14 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     def update_por_pending(slide_idx, mo_name, mo_key, sheet_key):
         s = prs.slides[slide_idx]; p = por[mo_key]
         shapes = list(s.shapes)
-        set_shape_text(shapes[1], f'{p["pending"]} of {p["total"]} pending NTP')
+        # Find subtitle by previous-build text pattern; fallback to shapes[1].
+        # shapes[1] is wrong on some month slides where the shape order differs.
+        _subtitle_shape = next(
+            (sh for sh in shapes if sh.has_text_frame and
+             re.search(r'\d+\s+of\s+\d+\s+pending', sh.text_frame.text, re.IGNORECASE)),
+            shapes[1]
+        )
+        set_shape_text(_subtitle_shape, f'{p["pending"]} of {p["total"]} pending NTP')
         comments = d['ntp_comments'].get(sheet_key, {})
 
         def sort_key(h):
@@ -1248,15 +1255,32 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 else:
                     for ci in range(ncols): set_table_cell(shape, ri, ci, '')
 
-        ext_label = f'External Blockers ({len(ext)})  —  ITW · Samsung · Viaero'
+        _ext_label_str  = f'External Blockers ({len(ext)})  —  ITW · Samsung · Viaero'
+        _prog_label_str = f'Program Team Actions ({len(prog)})'
+        _found_prog = _found_ext = False
         for shape in shapes:
-            if not shape.has_text_frame:
-                continue
+            if not shape.has_text_frame: continue
             txt = shape.text_frame.text
             if 'Program Team Actions' in txt:
-                set_shape_text(shape, f'Program Team Actions ({len(prog)})')
+                set_shape_text(shape, _prog_label_str); _found_prog = True
             elif 'External Blockers' in txt:
-                set_shape_text(shape, ext_label)
+                set_shape_text(shape, _ext_label_str); _found_ext = True
+        # Positional fallback: if text search missed a label (shape text was previously
+        # corrupted), find the label shape by its position relative to the two tables.
+        if not _found_prog or not _found_ext:
+            _tbls = sorted([s for s in shapes if s.shape_type == 19], key=lambda s: s.top)
+            _txts = sorted([s for s in shapes if s.has_text_frame and s.shape_type != 19],
+                           key=lambda s: s.top)
+            if len(_tbls) >= 2:
+                _t1_top, _t2_top = _tbls[0].top, _tbls[1].top
+                if not _found_ext:
+                    _sh = max((s for s in _txts if s.top < _t1_top),
+                              key=lambda s: s.top, default=None)
+                    if _sh: set_shape_text(_sh, _ext_label_str)
+                if not _found_prog:
+                    _sh = max((s for s in _txts if _t1_top <= s.top < _t2_top),
+                              key=lambda s: s.top, default=None)
+                    if _sh: set_shape_text(_sh, _prog_label_str)
 
     # POR slides — indices shifted +1 again after cx chart split into two slides
     update_por_overview(9,  'June',      'jun')
