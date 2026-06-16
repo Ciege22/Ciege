@@ -1146,7 +1146,22 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 ntp_hops = sorted(p['ntp_hops'], key=lambda h: d['hop_ms16f'].get(h['HOP'],
                                   pd.Timestamp('2099-01-01')) or pd.Timestamp('2099-01-01'))
                 expand_table_rows(shape, len(ntp_hops))
+                # Detect alternating-row grey from template row 2 (same approach as look-ahead table)
+                _alt_grey = 'EDEDED'
+                try:
+                    if len(tbl.rows) > 2:
+                        _ev_tc = tbl.cell(2, 0)._tc
+                        _ev_tcPr = _ev_tc.find(qn('a:tcPr'))
+                        if _ev_tcPr is not None:
+                            _ev_solid = _ev_tcPr.find(qn('a:solidFill'))
+                            if _ev_solid is not None:
+                                _ev_srgb = _ev_solid.find(qn('a:srgbClr'))
+                                if _ev_srgb is not None and _ev_srgb.get('val'):
+                                    _alt_grey = _ev_srgb.get('val')
+                except Exception:
+                    pass
                 for ri in range(1, len(tbl.rows)):
+                    row_fill = 'FFFFFF' if ri % 2 != 0 else _alt_grey
                     if ri - 1 < len(ntp_hops):
                         h = ntp_hops[ri - 1]; hop = str(h['HOP'])
                         gc = str(h.get('General Contractor', '')).strip()
@@ -1166,26 +1181,26 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                         owner_val = '' if owner_val.lower() == 'nan' else owner_val
                         ms15f_val = h.get('MS15 Implementation Start F')
                         ms16f_val = h.get('MS16 Implementation Ends F')
-                        set_table_cell(shape, ri, hop_col, hop)
+                        set_table_cell(shape, ri, hop_col, hop, fill_rgb=row_fill)
                         if pm_col is not None:
-                            set_table_cell(shape, ri, pm_col, pm_val)
-                        set_table_cell(shape, ri, gc_col, gc)
+                            set_table_cell(shape, ri, pm_col, pm_val, fill_rgb=row_fill)
+                        set_table_cell(shape, ri, gc_col, gc, fill_rgb=row_fill)
                         if mat_col is not None:
                             set_table_cell(shape, ri, mat_col, mat_sym,
-                                           color=GREEN_C if mat_sym == '✓' else RED_C, bold=True)
+                                           color=GREEN_C if mat_sym == '✓' else RED_C, bold=True, fill_rgb=row_fill)
                         if ntp_col is not None:
-                            set_table_cell(shape, ri, ntp_col, '✓', color=GREEN_C, bold=True)
+                            set_table_cell(shape, ri, ntp_col, '✓', color=GREEN_C, bold=True, fill_rgb=row_fill)
                         if start_col is not None:
                             set_table_cell(shape, ri, start_col,
-                                           fmt_dm(ms15f_val) if pd.notna(ms15f_val) else '')
+                                           fmt_dm(ms15f_val) if pd.notna(ms15f_val) else '', fill_rgb=row_fill)
                         if end_col is not None:
                             set_table_cell(shape, ri, end_col,
-                                           fmt_dm(ms16f_val) if pd.notna(ms16f_val) else '')
+                                           fmt_dm(ms16f_val) if pd.notna(ms16f_val) else '', fill_rgb=row_fill)
                         if owner_col is not None:
-                            set_table_cell(shape, ri, owner_col, owner_val)
-                        set_table_cell(shape, ri, comment_col, cell_note[:55] if cell_note else '')
+                            set_table_cell(shape, ri, owner_col, owner_val, fill_rgb=row_fill)
+                        set_table_cell(shape, ri, comment_col, cell_note[:55] if cell_note else '', fill_rgb=row_fill)
                     else:
-                        for ci in range(len(hdrs)): set_table_cell(shape, ri, ci, '')
+                        for ci in range(len(hdrs)): set_table_cell(shape, ri, ci, '', fill_rgb=row_fill)
 
     def update_por_pending(slide_idx, mo_name, mo_key, sheet_key):
         s = prs.slides[slide_idx]; p = por[mo_key]
