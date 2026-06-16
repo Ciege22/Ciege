@@ -1099,6 +1099,20 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     ip_tbl = shapes9[5]
     ip_sorted = d['ip_df'].sort_values('MS16 Implementation Ends F', na_position='last')
     expand_table_rows(ip_tbl, len(ip_sorted))
+    # Scale data row heights so the table never overflows its shape boundary.
+    # The shape height is fixed on the slide; deep-copied rows keep the template
+    # row height, pushing the table off-slide when count exceeds the template size.
+    try:
+        _ip_trs = ip_tbl.table._tbl.findall(qn('a:tr'))
+        _hdr_h  = int(_ip_trs[0].get('h', 0))
+        _avail  = ip_tbl.height - _hdr_h
+        _ndata  = len(_ip_trs) - 1
+        if _ndata > 0 and _avail > 0:
+            _per_row = max(int(_avail / _ndata), 180000)  # 180k EMU ≈ 5 mm min
+            for _tr in _ip_trs[1:]:
+                _tr.set('h', str(_per_row))
+    except Exception:
+        pass
     new_starts_set = set(d['new_starts'])
     for ri in range(1, len(ip_tbl.table.rows)):
         if ri - 1 < len(ip_sorted):
