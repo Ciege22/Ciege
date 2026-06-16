@@ -247,15 +247,22 @@ def extract_data(tracker_path: str, snapshot_path: str,
         (c for c in df.columns if c.strip().rstrip(':').strip().lower() == 'cx notes'),
         None
     )
+    # Find 'NTP is waiting on' column — tolerate case/whitespace variations
+    _ntp_wait_col = next(
+        (c for c in df.columns if c.strip().lower() == 'ntp is waiting on'),
+        next((c for c in df.columns if 'waiting' in c.lower()), None)
+    )
     import sys
     cx_candidates = [c for c in df.columns if 'cx' in c.lower()]
+    ntp_wait_candidates = [c for c in df.columns if 'waiting' in c.lower() or ('ntp' in c.lower() and 'wait' in c.lower())]
     print(f'[extract_data] _cx_col={_cx_col!r}  cx_candidates={cx_candidates}', file=sys.stderr, flush=True)
+    print(f'[extract_data] _ntp_wait_col={_ntp_wait_col!r}  ntp_wait_candidates={ntp_wait_candidates}', file=sys.stderr, flush=True)
 
     # String columns
     str_cols = {
         '_pm': 'Nokia PM', '_gc': 'General Contractor', '_new_cm': 'New CM',
         '_gc_pm': 'GC PM', '_ops': 'Viaero Ops Field Ops', '_site_cm': 'Site CM',
-        '_ntp_wait': 'NTP is waiting on', '_ntp_owner': 'NTP Action Owner'
+        '_ntp_wait': _ntp_wait_col or 'NTP is waiting on', '_ntp_owner': 'NTP Action Owner'
     }
     for attr, col in str_cols.items():
         df[attr] = df.apply(lambda r, k=col: gv(r, k), axis=1)
