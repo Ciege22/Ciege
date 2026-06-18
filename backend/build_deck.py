@@ -162,6 +162,17 @@ def set_table_cell(shape, row, col, text, color=None, bold=None, clear_fill=Fals
         for para in tf.paragraphs:
             for r_el in list(para._p.findall(qn('a:r'))):
                 para._p.remove(r_el)
+        # Apply color and bold directly to rPr_copy via XML before building the run.
+        # Do NOT use para0.runs[0].font.* — cells added by expand_table_rows are raw
+        # lxml elements without python-pptx mixins, causing get_or_add_rPr AttributeError.
+        if bold is not None:
+            rPr_copy.set('b', '1' if bold else '0')
+        if color:
+            for _sf in rPr_copy.findall(f'{{{NS}}}solidFill'):
+                rPr_copy.remove(_sf)
+            _sf_el = etree.SubElement(rPr_copy, f'{{{NS}}}solidFill')
+            _sc_el = etree.SubElement(_sf_el, f'{{{NS}}}srgbClr')
+            _sc_el.set('val', str(color))
         # Build a fresh run with preserved properties and insert BEFORE <a:endParaRPr>.
         r_new = etree.Element(f'{{{NS}}}r')
         if rPr_copy is not None:
@@ -173,12 +184,6 @@ def set_table_cell(shape, row, col, text, color=None, bold=None, clear_fill=Fals
             end_rpr.addprevious(r_new)
         else:
             para0._p.append(r_new)
-        # Apply color/bold through the python-pptx run API
-        if para0.runs:
-            if color:
-                para0.runs[0].font.color.rgb = color
-            if bold is not None:
-                para0.runs[0].font.bold = bold
     except Exception as _e:
         import sys as _s
         print(f'[set_table_cell] row={row} col={col} err={_e!r}', file=_s.stderr, flush=True)
@@ -608,12 +613,15 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                     if _fe is not None and _fe.text:
                         _cm = re.search(r'\$([A-Z])\$', _fe.text)
                         _col = _cm.group(1) if _cm else None
-                if _is_plan or _col == 'D':
-                    _nv = plan_vals
-                elif _col == 'B':
+                # Column letter is ground truth (B=forecast, C=actuals, D=plan in embedded workbook).
+                # Prioritise col over _is_plan so a series titled "Plan" that references col B
+                # still gets forecast values (the chart template has Plan pointing at col B).
+                if _col == 'B':
                     _nv = fc_vals
                 elif _col == 'C':
                     _nv = act_vals
+                elif _col == 'D' or _is_plan:
+                    _nv = plan_vals
                 else:
                     if not _is_plan:
                         _idx_el = _ser.find(f'{{{_C}}}idx')
