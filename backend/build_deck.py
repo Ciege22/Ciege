@@ -1275,7 +1275,9 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             # Expand table if we have more rows than the template provides
             expand_table_rows(shape, len(rows_to_fill))
             tbl = shape.table; ncols = len(tbl.columns); nrows = len(tbl.rows)
-            comment_col = ncols - 1
+            # Columns 0-5 are explicitly written; only write NTP call comment to a
+            # dedicated column beyond that — avoids overwriting the blocker column.
+            comment_col = ncols - 1 if ncols > 6 else None
             for ri in range(1, nrows):
                 if ri - 1 < len(rows_to_fill):
                     h = rows_to_fill[ri - 1]; hop = h['HOP']
@@ -1294,9 +1296,10 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                     blocker = h['waiting'] or h.get('cx', '')
                     set_table_cell(shape, ri, 4, h['owner'][:25])
                     set_table_cell(shape, ri, 5, blocker[:45])
-                    cx_note = h.get('cx', '')
-                    cell_comment = comment or cx_note
-                    set_table_cell(shape, ri, comment_col, cell_comment[:55] if cell_comment else '')
+                    if comment_col is not None:
+                        cx_note = h.get('cx', '')
+                        cell_comment = comment or cx_note
+                        set_table_cell(shape, ri, comment_col, cell_comment[:55] if cell_comment else '')
                 else:
                     for ci in range(ncols): set_table_cell(shape, ri, ci, '')
 
