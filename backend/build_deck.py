@@ -1272,12 +1272,26 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         tables = [(i, shape) for i, shape in enumerate(shapes) if shape.shape_type == 19]
         for tbl_idx, (_, shape) in enumerate(tables):
             rows_to_fill = ext if tbl_idx == 0 else prog
-            # Expand table if we have more rows than the template provides
             expand_table_rows(shape, len(rows_to_fill))
             tbl = shape.table; ncols = len(tbl.columns); nrows = len(tbl.rows)
-            # Columns 0-5 are explicitly written; only write NTP call comment to a
-            # dedicated column beyond that — avoids overwriting the blocker column.
-            comment_col = ncols - 1 if ncols > 6 else None
+            hdrs = [tbl.cell(0, ci).text.strip() for ci in range(ncols)]
+            # Detect columns by header text so the code is resilient to template column additions
+            hop_col    = next((i for i, h in enumerate(hdrs) if h.upper() == 'HOP'), 0)
+            gc_col     = next((i for i, h in enumerate(hdrs) if h.upper() == 'GC'), 1)
+            pm_col     = next((i for i, h in enumerate(hdrs) if h.upper() == 'PM'), None)
+            start_col  = next((i for i, h in enumerate(hdrs) if 'Start' in h), 2)
+            end_col    = next((i for i, h in enumerate(hdrs) if 'End' in h and 'Start' not in h), 3)
+            owner_col  = next((i for i, h in enumerate(hdrs) if 'Owner' in h or 'Action' in h), 4)
+            blocker_col= next((i for i, h in enumerate(hdrs)
+                               if any(w in h for w in ('Block', 'Wait', 'NTP B', 'Blocker'))), None)
+            if blocker_col is None:
+                # fallback: first unassigned column after owner
+                assigned = {hop_col, gc_col, start_col, end_col, owner_col}
+                if pm_col is not None: assigned.add(pm_col)
+                blocker_col = next((i for i in range(ncols) if i not in assigned), owner_col + 1)
+            comment_col = next((i for i, h in enumerate(hdrs)
+                                if any(w in h for w in ('Note', 'Comment', 'Status'))), None)
+            print(f'[pending {mo_name} tbl={tbl_idx}] hdrs={hdrs} blocker_col={blocker_col} comment_col={comment_col}', flush=True)
             for ri in range(1, nrows):
                 if ri - 1 < len(rows_to_fill):
                     h = rows_to_fill[ri - 1]; hop = h['HOP']
@@ -1289,16 +1303,17 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                         for k, v in comments.items():
                             if k.strip().upper() == hop.strip().upper():
                                 comment = v; break
-                    set_table_cell(shape, ri, 0, hop)
-                    set_table_cell(shape, ri, 1, h['GC'])
-                    set_table_cell(shape, ri, 2, fc_s)
-                    set_table_cell(shape, ri, 3, fc_e)
+                    set_table_cell(shape, ri, hop_col, hop)
+                    set_table_cell(shape, ri, gc_col, h['GC'])
+                    if pm_col is not None:
+                        set_table_cell(shape, ri, pm_col, d['hop_pm'].get(hop, ''))
+                    set_table_cell(shape, ri, start_col, fc_s)
+                    set_table_cell(shape, ri, end_col, fc_e)
+                    set_table_cell(shape, ri, owner_col, h['owner'][:25])
                     blocker = h['waiting'] or h.get('cx', '')
-                    set_table_cell(shape, ri, 4, h['owner'][:25])
-                    set_table_cell(shape, ri, 5, blocker[:45])
+                    set_table_cell(shape, ri, blocker_col, blocker[:45])
                     if comment_col is not None:
-                        cx_note = h.get('cx', '')
-                        cell_comment = comment or cx_note
+                        cell_comment = comment or h.get('cx', '')
                         set_table_cell(shape, ri, comment_col, cell_comment[:55] if cell_comment else '')
                 else:
                     for ci in range(ncols): set_table_cell(shape, ri, ci, '')
