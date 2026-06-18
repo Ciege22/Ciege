@@ -1181,7 +1181,12 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 start_col = next((i for i, h in enumerate(hdrs) if 'Start' in h), None)
                 end_col   = next((i for i, h in enumerate(hdrs) if 'End' in h and 'Start' not in h), None)
                 owner_col = next((i for i, h in enumerate(hdrs) if 'Owner' in h or 'Action' in h), None)
-                comment_col = len(hdrs) - 1
+                # Detect notes column by header; fall back to last only if it won't collide with owner_col
+                comment_col = next((i for i, h in enumerate(hdrs)
+                                    if any(w in h for w in ('Note', 'Status', 'Comment', 'Wait'))), None)
+                if comment_col is None:
+                    comment_col = len(hdrs) - 1 if owner_col != len(hdrs) - 1 else None
+                print(f'[confirmed {mo_name}] hdrs={hdrs} owner_col={owner_col} comment_col={comment_col}', flush=True)
                 ntp_hops = sorted(p['ntp_hops'], key=lambda h: (
                     pd.Timestamp(h['MS15 Implementation Start F'])
                     if h.get('MS15 Implementation Start F') and pd.notna(h.get('MS15 Implementation Start F'))
@@ -1239,7 +1244,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                                            fmt_dm(ms16f_val) if pd.notna(ms16f_val) else '', fill_rgb=row_fill)
                         if owner_col is not None:
                             set_table_cell(shape, ri, owner_col, owner_val, fill_rgb=row_fill)
-                        set_table_cell(shape, ri, comment_col, cell_note[:55] if cell_note else '', fill_rgb=row_fill)
+                        if comment_col is not None:
+                            set_table_cell(shape, ri, comment_col, cell_note[:55] if cell_note else '', fill_rgb=row_fill)
                     else:
                         for ci in range(len(hdrs)): set_table_cell(shape, ri, ci, '', fill_rgb=row_fill)
 
