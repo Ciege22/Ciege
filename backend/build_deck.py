@@ -618,10 +618,10 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 # still gets forecast values (the chart template has Plan pointing at col B).
                 if _col == 'B':
                     _nv = fc_vals
-                elif _col == 'C':
-                    _nv = act_vals
-                elif _col == 'D' or _is_plan:
+                elif _col == 'C' or _is_plan:
                     _nv = plan_vals
+                elif _col == 'D':
+                    _nv = act_vals
                 else:
                     if not _is_plan:
                         _idx_el = _ser.find(f'{{{_C}}}idx')
@@ -832,8 +832,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             for _ri, (_lbl, _fc, _act, _sp) in enumerate(zip(_mo_lbl, _fc_v, _act_v, _plan_v), 2):
                 _ws.cell(row=_ri, column=1).value = _lbl
                 _ws.cell(row=_ri, column=2).value = _fc
-                _ws.cell(row=_ri, column=3).value = _act if _act > 0 else None
-                _ws.cell(row=_ri, column=4).value = _sp  if _sp  > 0 else None
+                _ws.cell(row=_ri, column=3).value = _sp  if _sp  > 0 else None
+                _ws.cell(row=_ri, column=4).value = _act if _act > 0 else None
             _out = io.BytesIO(); _wb.save(_out)
             content[_ep] = _out.getvalue()
 
