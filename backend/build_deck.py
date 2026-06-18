@@ -1074,7 +1074,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 cx_val = gv(r, _la_cx_col)
             print(f'  HOP={hop} _cx={cx_val[:40]!r}', file=_sys.stderr, flush=True)
             set_table_cell(la_tbl, ri, 0, hop, fill_rgb=row_fill)
-            set_table_cell(la_tbl, ri, 1, d['hop_gc_pm'].get(hop, ''), fill_rgb=row_fill)
+            set_table_cell(la_tbl, ri, 1, d['hop_pm'].get(hop, ''), fill_rgb=row_fill)
             set_table_cell(la_tbl, ri, 2, gv(r, 'General Contractor'), fill_rgb=row_fill)
             set_table_cell(la_tbl, ri, 3, ntp_sym,
                            color=GREEN_C if ntp_sym == '✓' else RED_C, bold=True, fill_rgb=row_fill)
@@ -1114,7 +1114,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             o18 = bool(r.get('over_18d', False))
             risk = '🔴 Over 18d' if o18 else ('★ NEW' if is_new else 'G')
             set_table_cell(ip_tbl, ri, 0, f'★ {hop}' if is_new else hop)
-            set_table_cell(ip_tbl, ri, 1, d['hop_gc_pm'].get(hop, ''))
+            set_table_cell(ip_tbl, ri, 1, d['hop_pm'].get(hop, ''))
             set_table_cell(ip_tbl, ri, 2, gv(r, 'General Contractor'))
             set_table_cell(ip_tbl, ri, 3, fmt_dm(r.get('MS15 Implementation Start A')))
             set_table_cell(ip_tbl, ri, 4, fmt_ds(r.get('MS16 Implementation Ends F')))
