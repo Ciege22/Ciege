@@ -364,7 +364,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
             cat = ntp_cat(r)
             pending_rows.append({
                 'HOP': r['HOP'], 'GC': gv(r, 'General Contractor'),
-                'CM': gv(r, 'Site CM'), 'owner': gv(r, 'NTP Action Owner'),
+                'CM': gv(r, 'New CM'), 'owner': gv(r, 'NTP Action Owner'),
                 'waiting': gv(r, '_ntp_wait'), 'cx': gv(r, '_cx'), 'cat': cat,
                 'ms15f': r.get(ms15f_col), 'has_mat': bool(r['has_mat'])
             })
@@ -372,7 +372,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
                          else (2 if x['cat'] == 'Program Team' else 1))
         por[name] = {
             'total': len(grp), 'ntp': len(with_ntp), 'pending': len(pending),
-            'ntp_hops': with_ntp[[c for c in ['HOP', 'General Contractor', 'Site CM', 'has_mat', '_ntp_wait', '_cx', '_pm', '_ntp_owner', 'MS15 Implementation Start F', 'MS16 Implementation Ends F'] if c in with_ntp.columns]].to_dict('records'),
+            'ntp_hops': with_ntp[[c for c in ['HOP', 'General Contractor', 'New CM', 'has_mat', '_ntp_wait', '_cx', '_pm', '_ntp_owner', 'MS15 Implementation Start F', 'MS16 Implementation Ends F'] if c in with_ntp.columns]].to_dict('records'),
             'pending_rows': pending_rows,
             'external': [r for r in pending_rows if r['cat'] == 'External'],
             'prog_team': [r for r in pending_rows if r['cat'] == 'Program Team'],
@@ -485,7 +485,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
         hop = r['HOP']
         hop_gc_pm[hop] = gv(r, 'GC PM')
         hop_ops[hop] = gv(r, 'Viaero Ops Field Ops')
-        hop_site_cm[hop] = gv(r, 'Site CM')
+        hop_site_cm[hop] = gv(r, 'New CM')
         hop_pm[hop] = gv(r, 'Nokia PM')
         hop_mat[hop] = '✓' if r['has_mat'] else '✗'
         hop_ntp[hop] = '✓' if r['has_ntp'] else '✗'
