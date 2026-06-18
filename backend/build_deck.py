@@ -1082,7 +1082,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         if ri - 1 < len(la_sorted):
             r = la_sorted.iloc[ri - 1]; hop = r['HOP']
             ntp_sym = '✓' if r.get('has_ntp', False) else '✗'
-            nw = gv(r, '_ntp_wait') or gv(r, '_cx')
+            nw = gv(r, '_ntp_wait')
             cx_val = gv(r, '_cx')
             # Fallback: read directly from cx column if _cx is empty
             if not cx_val and _la_cx_col:
