@@ -1041,6 +1041,13 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     shapes8 = list(prs.slides[7].shapes)
     la_tbl = shapes8[7]
     la_sorted = d['la'].sort_values('MS15 Implementation Start F')
+    # Update any title/subtitle shape whose text contains a digit + "start" with the live count
+    _la_count = len(la_sorted)
+    for _s8 in shapes8:
+        if _s8.has_text_frame and re.search(r'\d+.*start', _s8.text_frame.text, re.I):
+            _new_txt = re.sub(r'\d+', str(_la_count), _s8.text_frame.text, count=1)
+            set_shape_text(_s8, _new_txt)
+            break
     _la_cx_col = d.get('_cx_col')
     import sys as _sys
     try:
