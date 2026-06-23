@@ -1,7 +1,8 @@
 'use client'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
+import { supabase } from '../lib/supabase'
 
 
 const GC_CM_MAP: Record<string, string> = {
@@ -173,10 +174,38 @@ export default function GCCallPage() {
   const [fileName, setFileName] = useState('')
   const [gcList, setGcList] = useState<string[]>([])
   const [notes, setNotes] = useState<Record<string, string>>({})
+  const [notesLoaded, setNotesLoaded] = useState(false)
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
   const [showPmUpdates, setShowPmUpdates] = useState(false)
   const today = new Date()
+
+  useEffect(() => {
+    const loadNotes = async () => {
+      const { data, error } = await supabase
+        .from('hop_notes')
+        .select('hop_name, note')
+      if (error) { console.error('Error loading notes:', error); return }
+      if (data) {
+        const notesMap: Record<string, string> = {}
+        data.forEach((row: { hop_name: string, note: string }) => {
+          notesMap[row.hop_name] = row.note
+        })
+        setNotes(notesMap)
+        setNotesLoaded(true)
+      }
+    }
+    loadNotes()
+  }, [])
+
+  const saveNote = async (hop: string, note: string) => {
+    setNotes(n => ({ ...n, [hop]: note }))
+    const { error } = await supabase
+      .from('hop_notes')
+      .upsert({ hop_name: hop, note, updated_at: new Date().toISOString() },
+               { onConflict: 'hop_name' })
+    if (error) console.error('Error saving note:', error)
+  }
 
   const handleFile = useCallback((file: File) => {
     setFileName(file.name)
@@ -666,7 +695,7 @@ export default function GCCallPage() {
                       </td>
                       <td className="p-2">
                         <input type="text" placeholder="Notes..." value={notes[h.hop] || ''}
-                          onChange={(e) => setNotes(n => ({ ...n, [h.hop]: e.target.value }))}
+                          onChange={(e) => saveNote(h.hop, e.target.value)}
                           className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
                       </td>
                     </tr>
@@ -857,7 +886,7 @@ export default function GCCallPage() {
                                 </td>
                                 <td className="p-2">
                                   <input type="text" placeholder="Notes..." value={notes[h.hop] || ''}
-                                    onChange={(e) => setNotes(n => ({ ...n, [h.hop]: e.target.value }))}
+                                    onChange={(e) => saveNote(h.hop, e.target.value)}
                                     className="w-40 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
                                 </td>
                               </tr>
