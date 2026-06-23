@@ -1,8 +1,9 @@
 const navItems = [
-  { label: "Deck Builder", active: true },
-  { label: "Action Board", active: false },
-  { label: "NTP Tracker", active: false },
-  { label: "SCOP Invoice", active: false },
+  { label: "Deck Builder", href: null, active: true },
+  { label: "GC Call View", href: "/gc-call", active: false },
+  { label: "Action Board", href: null, active: false },
+  { label: "NTP Tracker", href: null, active: false },
+  { label: "SCOP Invoice", href: null, active: false },
 ];
 
 const stats = [
@@ -27,17 +28,29 @@ export default function Home() {
             </div>
 
             <nav className="space-y-2">
-              {navItems.map((item) => (
-                <button
-                  key={item.label}
-                  className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition hover:bg-white/10 ${
-                    item.active ? "bg-emerald-400/10 text-emerald-300" : "text-zinc-300"
-                  }`}
-                  type="button"
-                >
-                  {item.label}
-                </button>
-              ))}
+              {navItems.map((item) =>
+                item.href ? (
+                  <a
+                    key={item.label}
+                    href={item.href}
+                    className={`block w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition hover:bg-white/10 ${
+                      item.active ? "bg-emerald-400/10 text-emerald-300" : "text-zinc-300"
+                    }`}
+                  >
+                    {item.label}
+                  </a>
+                ) : (
+                  <button
+                    key={item.label}
+                    className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition hover:bg-white/10 ${
+                      item.active ? "bg-emerald-400/10 text-emerald-300" : "text-zinc-300"
+                    }`}
+                    type="button"
+                  >
+                    {item.label}
+                  </button>
+                )
+              )}
             </nav>
 
             <div className="mt-10 rounded-3xl border border-white/10 bg-zinc-900/70 p-4 text-sm text-zinc-400">
