@@ -162,10 +162,25 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="rounded-3xl bg-zinc-900/90 px-5 py-4 text-sm text-zinc-300 ring-1 ring-white/10">
-                  <p className="text-zinc-400">Next sync</p>
-                  <p className="mt-1 text-xl font-semibold text-white">Thursday · 10:00 AM</p>
-                </div>
+                <svg viewBox="0 0 100 80" className="w-24 h-20" fill="#00A0B0" xmlns="http://www.w3.org/2000/svg">
+                  {/* Triforce triangles */}
+                  <polygon points="50,5 62,26 38,26" />
+                  <polygon points="38,26 50,47 26,47" />
+                  <polygon points="62,26 74,47 50,47" />
+                  {/* Wings - left */}
+                  <polygon points="38,35 5,20 15,38" />
+                  <polygon points="38,38 8,30 18,45" />
+                  <polygon points="38,41 12,42 20,52" />
+                  <polygon points="38,44 18,55 24,60" />
+                  {/* Wings - right */}
+                  <polygon points="62,35 95,20 85,38" />
+                  <polygon points="62,38 92,30 82,45" />
+                  <polygon points="62,41 88,42 80,52" />
+                  <polygon points="62,44 82,55 76,60" />
+                  {/* Center body */}
+                  <polygon points="44,47 50,72 56,47" />
+                  <polygon points="46,65 42,75 50,80 58,75 54,65" />
+                </svg>
               </div>
             </section>
 
