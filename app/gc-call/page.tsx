@@ -1,3 +1,4 @@
+// v2.0 - GC Call View with Supabase persistence
 export const dynamic = 'force-dynamic'
 'use client'
 
