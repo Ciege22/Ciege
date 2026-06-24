@@ -353,22 +353,25 @@ export default function GCCallPage() {
           if (!rMs15f) return
           if (!rSsS && !rSsE && !rItwS && !rItwE) return
 
+          const siteName = String(r[siteNameCol] || '').trim()
+          const siteLabel = siteName ? ` (${siteName})` : ''
+
           const checkV = (name: string, start: Date | null, end: Date | null) => {
             if (!start || !end) return
             const ms15fTime = rMs15f.getTime()
             const startTime = start.getTime()
             const endTime   = end.getTime()
             if (startTime <= ms15fTime && ms15fTime <= endTime) {
-              allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}`)
+              allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}${siteLabel}`)
             } else if (endTime < ms15fTime) {
               const buf = Math.round((ms15fTime - endTime) / (1000 * 60 * 60 * 24))
-              if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d before start`)
-              else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer`)
-              else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)} — ${buf}d buffer`)
+              if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d before start${siteLabel}`)
+              else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
+              else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
             } else {
               const buf = Math.round((startTime - ms15fTime) / (1000 * 60 * 60 * 24))
-              if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start`)
-              else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)} — ${buf}d after start`)
+              if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
+              else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
             }
           }
           checkV('ITW', rItwS, rItwE)
