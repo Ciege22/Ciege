@@ -166,7 +166,7 @@ export default function Home() {
                   src="/hylian-crest.png"
                   alt="Hylian Crest"
                   className="w-64 h-auto"
-                  style={{ filter: 'brightness(0) saturate(100%) invert(74%) sepia(54%) saturate(401%) hue-rotate(106deg) brightness(101%) contrast(88%)', opacity: 0.9 }}
+                  style={{ filter: 'brightness(0) invert(1) sepia(1) saturate(2) hue-rotate(100deg)', opacity: 0.9 }}
                 />
               </div>
             </section>
