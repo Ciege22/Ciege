@@ -351,6 +351,7 @@ export default function GCCallPage() {
           const rMs15f = parseDateAny(r[ms15fCol]) || ms15f
 
           if (!rMs15f) return
+          if (!rSsS && !rSsE && !rItwS && !rItwE) return
 
           const checkV = (name: string, start: Date | null, end: Date | null) => {
             if (!start || !end) return
