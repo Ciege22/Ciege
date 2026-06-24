@@ -777,7 +777,7 @@ export default function GCCallPage() {
               <button
                 onClick={() => setPmSortAsc(prev => !prev)}
                 className="bg-yellow-800 hover:bg-yellow-700 text-yellow-200 text-xs px-3 py-1 rounded font-semibold">
-                Sort by HOP {pmSortAsc ? '↑ A→Z' : '↓ Z→A'}
+                Sort by Field {pmSortAsc ? '↑ A→Z' : '↓ Z→A'}
               </button>
             </div>
             <table className="w-full text-sm">
@@ -792,7 +792,7 @@ export default function GCCallPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...pmUpdates].sort((a, b) => pmSortAsc ? a.hop.localeCompare(b.hop) : b.hop.localeCompare(a.hop)).map((u, i) => (
+                {[...pmUpdates].sort((a, b) => pmSortAsc ? a.field.localeCompare(b.field) : b.field.localeCompare(a.field)).map((u, i) => (
                   <tr key={i} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
                     <td className="p-2">
                       <input
