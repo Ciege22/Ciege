@@ -203,15 +203,11 @@ export default function CMViewPage() {
       return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
     }
 
-    // If tracker already has a date — show it read only in green, no picker
+    // If tracker already has a date — show read only in green
     if (value && value !== 'N/A' && !edited) {
-      return (
-        <span className="text-green-400 text-xs font-semibold">{value}</span>
-      )
+      return <span className="text-green-400 text-xs font-semibold">{value}</span>
     }
 
-    // If edited show yellow with picker to change
-    // If blank show picker to enter
     const display = edited || ''
 
     if (display === 'N/A') {
@@ -229,14 +225,25 @@ export default function CMViewPage() {
         {display && (
           <span className="text-yellow-300 text-xs font-semibold">📝 {display}</span>
         )}
-        <input
-          type="date"
-          value={toInputFormat(display)}
-          onChange={(e) => logDateEdit(hop, field, value, toDisplayFormat(e.target.value))}
-          className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer"
-        />
-        <button onClick={() => logNA(hop, field)}
-          className="text-gray-500 hover:text-gray-300 text-xs text-left">N/A</button>
+        <div className="flex items-center gap-1">
+          <input
+            type="date"
+            value={toInputFormat(display)}
+            onChange={(e) => {
+              const val = e.target.value
+              if (val) {
+                logDateEdit(hop, field, value, toDisplayFormat(val))
+              }
+            }}
+            className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer"
+          />
+          <button
+            onClick={() => logDateEdit(hop, field, value, 'N/A')}
+            title="Mark as N/A"
+            className="text-gray-500 hover:text-red-400 text-xs px-1 py-1 rounded border border-gray-700 hover:border-red-500 transition-colors">
+            N/A
+          </button>
+        </div>
       </div>
     )
   }
