@@ -24,7 +24,7 @@ export default function Home() {
               <p className="text-xs uppercase tracking-[0.4em] text-emerald-300/80">Ciege</p>
               <h1 className="mt-3 text-3xl font-semibold text-white">PM Dashboard</h1>
               <p className="mt-2 text-sm leading-6 text-zinc-400">
-                Navigate your planning platform and keep every delivery aligned.
+                Plan Execute Conquer
               </p>
             </div>
 
