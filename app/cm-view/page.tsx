@@ -189,18 +189,21 @@ export default function CMViewPage() {
   const EditableDate = ({ hop, field, value }: { hop: string, field: string, value: string }) => {
     const edited = editedDates[hop]?.[field]
     const display = edited || value
+
     const toInputFormat = (dateStr: string) => {
       if (!dateStr || dateStr === 'N/A') return ''
       const parts = dateStr.split('/')
       if (parts.length !== 3) return ''
       return `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`
     }
+
     const toDisplayFormat = (dateStr: string) => {
       if (!dateStr) return ''
       const parts = dateStr.split('-')
       if (parts.length !== 3) return ''
       return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
     }
+
     if (display === 'N/A') {
       return (
         <div className="flex items-center gap-1">
@@ -210,20 +213,19 @@ export default function CMViewPage() {
         </div>
       )
     }
-    if (display) {
-      return (
-        <div className="flex flex-col gap-1">
-          <span className={`text-xs ${edited ? 'text-yellow-300' : 'text-green-400'}`}>
-            {edited ? `📝 ${display}` : `✓ ${display}`}
-          </span>
-        </div>
-      )
-    }
+
     return (
       <div className="flex flex-col gap-1">
-        <input type="date" value={toInputFormat(display)}
+        {display && (
+          <span className={`text-xs font-semibold ${edited ? 'text-yellow-300' : 'text-green-400'}`}>
+            {edited ? `📝 ${display}` : display}
+          </span>
+        )}
+        <input
+          type="date"
+          value={toInputFormat(display)}
           onChange={(e) => logDateEdit(hop, field, value, toDisplayFormat(e.target.value))}
-          className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer"
+          className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-500 focus:outline-none focus:border-blue-500 cursor-pointer"
         />
         <button onClick={() => logNA(hop, field)}
           className="text-gray-500 hover:text-gray-300 text-xs text-left">N/A</button>
@@ -727,7 +729,6 @@ export default function CMViewPage() {
                               <th className="text-left p-2">Main Cutover</th>
                               <th className="text-left p-2">Diversity Cutover</th>
                               <th className="text-left p-2">MS16 Fc</th>
-                              <th className="text-left p-2">Edit MS16 Fc</th>
                               <th className="text-left p-2">MS16 Act</th>
                               <th className="text-left p-2">Decom</th>
                               <th className="text-left p-2">Call Notes</th>
@@ -765,7 +766,6 @@ export default function CMViewPage() {
                                 <td className="p-2">
                                   <EditableDate hop={h.hop} field="Diversity Cutover Completed" value={h.divCutover} />
                                 </td>
-                                <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
                                 <td className="p-2">
                                   <EditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} />
                                 </td>
