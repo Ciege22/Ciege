@@ -1,6 +1,7 @@
 const navItems = [
   { label: "Deck Builder", href: "/deck-builder", active: true },
   { label: "GC Call View", href: "/gc-call", active: false },
+  { label: "CM View", href: "/cm-view", active: false },
   { label: "Action Board", href: null, active: false },
   { label: "NTP Tracker", href: null, active: false },
   { label: "SCOP Invoice", href: null, active: false },
