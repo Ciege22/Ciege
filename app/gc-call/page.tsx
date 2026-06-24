@@ -375,16 +375,21 @@ export default function GCCallPage() {
           checkV('Samsung', rSsS, rSsE)
         })
 
-        const itwParts = allVendorParts.filter(p => p.includes('ITW'))
-        const ssParts  = allVendorParts.filter(p => p.includes('Samsung'))
+        const itwParts = Array.from(new Set(allVendorParts.filter(p => p.includes('ITW'))))
+        const ssParts  = Array.from(new Set(allVendorParts.filter(p => p.includes('Samsung'))))
 
-        const worstPart = (parts: string[]) => {
-          if (parts.some(p => p.includes('🔴'))) return parts.find(p => p.includes('🔴')) || ''
-          if (parts.some(p => p.includes('⚠️'))) return parts.find(p => p.includes('⚠️')) || ''
-          return parts[0] || ''
+        const sortParts = (parts: string[]) => {
+          const red    = parts.filter(p => p.includes('🔴'))
+          const yellow = parts.filter(p => p.includes('⚠️'))
+          const green  = parts.filter(p => p.includes('✅'))
+          return [...red, ...yellow, ...green]
         }
 
-        const vendorWindow = [worstPart(itwParts), worstPart(ssParts)].filter(Boolean).join(' | ') || '✅ No conflicts'
+        const itwSorted = sortParts(itwParts)
+        const ssSorted  = sortParts(ssParts)
+
+        const allParts = [...itwSorted, ...ssSorted].filter(Boolean)
+        const vendorWindow = allParts.length > 0 ? allParts.join(' | ') : '✅ No conflicts'
 
         // Check internal conflicts at site level
         let siteAConflict = ''
