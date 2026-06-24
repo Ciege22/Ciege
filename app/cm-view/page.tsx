@@ -138,6 +138,7 @@ export default function CMViewPage() {
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
   const [showPmUpdates, setShowPmUpdates] = useState(false)
+  const [pmSortAsc, setPmSortAsc] = useState(true)
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
   const today = new Date()
 
@@ -634,7 +635,14 @@ export default function CMViewPage() {
         {/* PM Daily Updates Panel */}
         {showPmUpdates && pmUpdates.length > 0 && (
           <div className="mb-6 bg-yellow-950 border border-yellow-600 rounded-xl p-5">
-            <h2 className="text-yellow-300 font-bold text-lg mb-3">📋 PM Daily Updates — Update These in Your Tracker</h2>
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-yellow-300 font-bold text-lg">📋 PM Daily Updates — Update These in Your Tracker</h2>
+              <button
+                onClick={() => setPmSortAsc(prev => !prev)}
+                className="bg-yellow-800 hover:bg-yellow-700 text-yellow-200 text-xs px-3 py-1 rounded font-semibold">
+                Sort by HOP {pmSortAsc ? '↑ A→Z' : '↓ Z→A'}
+              </button>
+            </div>
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-yellow-400 text-xs">
@@ -647,7 +655,7 @@ export default function CMViewPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...pmUpdates].sort((a, b) => a.hop.localeCompare(b.hop)).map((u, i) => (
+                {[...pmUpdates].sort((a, b) => pmSortAsc ? a.hop.localeCompare(b.hop) : b.hop.localeCompare(a.hop)).map((u, i) => (
                   <tr key={i} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
                     <td className="p-2">
                       <input type="checkbox" checked={u.completed || false}
