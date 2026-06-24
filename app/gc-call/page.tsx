@@ -784,7 +784,7 @@ export default function GCCallPage() {
                 </tr>
               </thead>
               <tbody>
-                {pmUpdates.map((u, i) => (
+                {[...pmUpdates].sort((a, b) => a.hop.localeCompare(b.hop)).map((u, i) => (
                   <tr key={i} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
                     <td className="p-2">
                       <input
