@@ -61,6 +61,13 @@ interface PmUpdate {
   completed?: boolean
 }
 
+interface CallNote {
+  id: string
+  hop_name: string
+  note: string
+  logged_at: string
+}
+
 function parseDate(val: unknown): Date | null {
   if (!val) return null
   if (val instanceof Date) {
@@ -175,38 +182,46 @@ export default function GCCallPage() {
   const [loaded, setLoaded] = useState(false)
   const [fileName, setFileName] = useState('')
   const [gcList, setGcList] = useState<string[]>([])
-  const [notes, setNotes] = useState<Record<string, string>>({})
-  const [notesLoaded, setNotesLoaded] = useState(false)
+  const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
+  const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
   const [showPmUpdates, setShowPmUpdates] = useState(false)
   const today = new Date()
 
   useEffect(() => {
-    const loadNotes = async () => {
+    const loadNoteHistory = async () => {
       const { data, error } = await supabase
-        .from('hop_notes')
-        .select('hop_name, note')
-      if (error) { console.error('Error loading notes:', error); return }
+        .from('hop_call_notes')
+        .select('id, hop_name, note, logged_at')
+        .order('logged_at', { ascending: false })
+      if (error) { console.error('Error loading note history:', error); return }
       if (data) {
-        const notesMap: Record<string, string> = {}
-        data.forEach((row: { hop_name: string, note: string }) => {
-          notesMap[row.hop_name] = row.note
+        const historyMap: Record<string, CallNote[]> = {}
+        data.forEach((row: CallNote) => {
+          if (!historyMap[row.hop_name]) historyMap[row.hop_name] = []
+          historyMap[row.hop_name].push(row)
         })
-        setNotes(notesMap)
-        setNotesLoaded(true)
+        setNoteHistory(historyMap)
       }
     }
-    loadNotes()
+    loadNoteHistory()
   }, [])
 
-  const saveNote = async (hop: string, note: string) => {
-    setNotes(n => ({ ...n, [hop]: note }))
-    const { error } = await supabase
-      .from('hop_notes')
-      .upsert({ hop_name: hop, note, updated_at: new Date().toISOString() },
-               { onConflict: 'hop_name' })
-    if (error) console.error('Error saving note:', error)
+  const saveCallNote = async (hop: string) => {
+    const note = sessionNotes[hop]
+    if (!note?.trim()) return
+    const logged_at = new Date().toISOString()
+    const { data, error } = await supabase
+      .from('hop_call_notes')
+      .insert({ hop_name: hop, note: note.trim(), logged_at })
+      .select()
+      .single()
+    if (error) { console.error('Error saving note:', error); return }
+    if (data) {
+      setNoteHistory(h => ({ ...h, [hop]: [data as CallNote, ...(h[hop] || [])] }))
+      setSessionNotes(s => ({ ...s, [hop]: '' }))
+    }
   }
 
   const handleFile = useCallback((file: File) => {
@@ -479,7 +494,7 @@ export default function GCCallPage() {
         body += `• ${h.hop}\n`
         body += `  Started: ${h.ms15a}  |  FC Complete: ${h.ms16f}\n`
         body += `  Status: ${status}\n`
-        if (notes[h.hop]) body += `  Note: ${notes[h.hop]}\n`
+        if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
       })
     }
@@ -495,7 +510,7 @@ export default function GCCallPage() {
         if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join('  |  ')}\n`
         if (h.ntpWaitingOn) body += `  NTP Waiting On: ${h.ntpWaitingOn}\n`
         if (h.internalConflict) body += `  Internal Conflict: ${h.internalConflict}\n`
-        if (notes[h.hop]) body += `  Note: ${notes[h.hop]}\n`
+        if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
       })
     }
@@ -509,7 +524,7 @@ export default function GCCallPage() {
         body += `  NTP: ${h.hasNtp ? '✓' : '✗ Pending'}  |  Material: ${h.hasMat ? '✓' : '✗ Pending'}  |  GC Pickup: ${h.gcPickupDate ? '✓' : '✗'}\n`
         if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join('  |  ')}\n`
         if (h.internalConflict) body += `  Internal Conflict: ${h.internalConflict}\n`
-        if (notes[h.hop]) body += `  Note: ${notes[h.hop]}\n`
+        if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
       })
     }
@@ -520,7 +535,7 @@ export default function GCCallPage() {
       body += `The following sites are ready to accelerate if schedule allows:\n\n`
       pullInReady.forEach(h => {
         body += `• ${h.hop}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out  |  NTP ✓  |  Mat ✓\n`
-        if (notes[h.hop]) body += `  Note: ${notes[h.hop]}\n`
+        if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
       })
     }
@@ -616,7 +631,8 @@ export default function GCCallPage() {
                   <th className="text-left p-2">Blockers</th>
                   <th className="text-left p-2">Edit MS15 Fc</th>
                   <th className="text-left p-2">Log MS15 Act</th>
-                  <th className="text-left p-2">Call Notes</th>
+                  <th className="text-left p-2">Call Notes (Today)</th>
+                  <th className="text-left p-2">Notes History</th>
                 </tr>
               </thead>
               <tbody>
@@ -696,9 +712,24 @@ export default function GCCallPage() {
                         <EditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} />
                       </td>
                       <td className="p-2">
-                        <input type="text" placeholder="Notes..." value={notes[h.hop] || ''}
-                          onChange={(e) => saveNote(h.hop, e.target.value)}
-                          className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                        <div className="flex gap-1">
+                          <input type="text" placeholder="Note..." value={sessionNotes[h.hop] || ''}
+                            onChange={(e) => setSessionNotes(s => ({ ...s, [h.hop]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') saveCallNote(h.hop) }}
+                            className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                          <button onClick={() => saveCallNote(h.hop)} className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
+                        </div>
+                      </td>
+                      <td className="p-2 max-w-48">
+                        <div className="max-h-20 overflow-y-auto flex flex-col gap-1">
+                          {(noteHistory[h.hop] || []).slice(0, 5).map((n, i) => (
+                            <div key={i} className="text-xs text-gray-300 border-b border-gray-700 pb-1">
+                              <span className="text-gray-500 text-xs">{new Date(n.logged_at).toLocaleDateString()}</span>
+                              <span className="ml-1">{n.note}</span>
+                            </div>
+                          ))}
+                          {!noteHistory[h.hop]?.length && <span className="text-gray-600 text-xs">No history</span>}
+                        </div>
                       </td>
                     </tr>
                   )
@@ -862,7 +893,8 @@ export default function GCCallPage() {
                               <th className="text-left p-2">MS16 Fc</th>
                               <th className="text-left p-2">Edit MS16 Fc</th>
                               <th className="text-left p-2">MS16 Act</th>
-                              <th className="text-left p-2">Call Notes</th>
+                              <th className="text-left p-2">Call Notes (Today)</th>
+                              <th className="text-left p-2">Notes History</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -887,9 +919,24 @@ export default function GCCallPage() {
                                   <EditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} />
                                 </td>
                                 <td className="p-2">
-                                  <input type="text" placeholder="Notes..." value={notes[h.hop] || ''}
-                                    onChange={(e) => saveNote(h.hop, e.target.value)}
-                                    className="w-40 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                                  <div className="flex gap-1">
+                                    <input type="text" placeholder="Note..." value={sessionNotes[h.hop] || ''}
+                                      onChange={(e) => setSessionNotes(s => ({ ...s, [h.hop]: e.target.value }))}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') saveCallNote(h.hop) }}
+                                      className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                                    <button onClick={() => saveCallNote(h.hop)} className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
+                                  </div>
+                                </td>
+                                <td className="p-2 max-w-48">
+                                  <div className="max-h-20 overflow-y-auto flex flex-col gap-1">
+                                    {(noteHistory[h.hop] || []).slice(0, 5).map((n, i) => (
+                                      <div key={i} className="text-xs text-gray-300 border-b border-gray-700 pb-1">
+                                        <span className="text-gray-500 text-xs">{new Date(n.logged_at).toLocaleDateString()}</span>
+                                        <span className="ml-1">{n.note}</span>
+                                      </div>
+                                    ))}
+                                    {!noteHistory[h.hop]?.length && <span className="text-gray-600 text-xs">No history</span>}
+                                  </div>
                                 </td>
                               </tr>
                             ))}
