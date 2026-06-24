@@ -162,24 +162,40 @@ export default function Home() {
                   </div>
                 </div>
 
-                <svg viewBox="0 0 100 80" className="w-48 h-40" fill="#00A0B0" xmlns="http://www.w3.org/2000/svg">
-                  {/* Triforce triangles */}
-                  <polygon points="50,5 62,26 38,26" />
-                  <polygon points="38,26 50,47 26,47" />
-                  <polygon points="62,26 74,47 50,47" />
-                  {/* Wings - left */}
-                  <polygon points="38,35 5,20 15,38" />
-                  <polygon points="38,38 8,30 18,45" />
-                  <polygon points="38,41 12,42 20,52" />
-                  <polygon points="38,44 18,55 24,60" />
-                  {/* Wings - right */}
-                  <polygon points="62,35 95,20 85,38" />
-                  <polygon points="62,38 92,30 82,45" />
-                  <polygon points="62,41 88,42 80,52" />
-                  <polygon points="62,44 82,55 76,60" />
-                  {/* Center body */}
-                  <polygon points="44,47 50,72 56,47" />
-                  <polygon points="46,65 42,75 50,80 58,75 54,65" />
+                <svg viewBox="0 0 200 140" className="w-48 h-36" fill="#6ee7b7" xmlns="http://www.w3.org/2000/svg">
+                  {/* Triforce - top triangle */}
+                  <polygon points="100,8 118,38 82,38" />
+                  {/* Triforce - bottom left */}
+                  <polygon points="82,38 100,68 64,68" />
+                  {/* Triforce - bottom right */}
+                  <polygon points="118,38 136,68 100,68" />
+
+                  {/* Left wing - feathers fanning out */}
+                  <polygon points="80,45 60,25 55,40 75,50" />
+                  <polygon points="78,52 45,35 42,50 72,58" />
+                  <polygon points="76,58 30,50 30,64 70,65" />
+                  <polygon points="75,64 18,65 22,78 72,72" />
+                  <polygon points="76,70 18,80 25,90 74,78" />
+
+                  {/* Right wing - feathers fanning out */}
+                  <polygon points="120,45 140,25 145,40 125,50" />
+                  <polygon points="122,52 155,35 158,50 128,58" />
+                  <polygon points="124,58 170,50 170,64 130,65" />
+                  <polygon points="125,64 182,65 178,78 128,72" />
+                  <polygon points="124,70 182,80 175,90 126,78" />
+
+                  {/* Center body below triforce */}
+                  <polygon points="94,68 106,68 110,90 100,88 90,90" />
+
+                  {/* Left talon */}
+                  <polygon points="90,90 82,100 86,110 92,100 95,110 98,100 100,88" />
+                  {/* Right talon */}
+                  <polygon points="110,90 118,100 114,110 108,100 105,110 102,100 100,88" />
+
+                  {/* Wing curl details - left */}
+                  <polygon points="72,72 60,80 58,92 68,88 70,78" />
+                  {/* Wing curl details - right */}
+                  <polygon points="128,72 140,80 142,92 132,88 130,78" />
                 </svg>
               </div>
             </section>
