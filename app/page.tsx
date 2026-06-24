@@ -168,7 +168,7 @@ export default function Home() {
                   className="w-64 h-auto"
                   style={{
                     filter: 'invert(72%) sepia(98%) saturate(346%) hue-rotate(106deg) brightness(95%) contrast(88%)',
-                    mixBlendMode: 'screen'
+                    mixBlendMode: 'lighten'
                   }}
                 />
               </div>
