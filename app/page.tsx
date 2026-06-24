@@ -167,8 +167,7 @@ export default function Home() {
                   alt="Hylian Crest"
                   className="w-64 h-auto"
                   style={{
-                    filter: 'invert(72%) sepia(98%) saturate(346%) hue-rotate(106deg) brightness(95%) contrast(88%)',
-                    mixBlendMode: 'lighten'
+                    filter: 'invert(72%) sepia(98%) saturate(346%) hue-rotate(106deg) brightness(95%) contrast(88%)'
                   }}
                 />
               </div>
