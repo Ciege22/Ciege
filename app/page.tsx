@@ -20,14 +20,22 @@ function WeatherWidget() {
     time: string
     temp: number
     condition: string
-    hourly: { time: string; temp: number; condition: string }[]
+    wind: number
+    windDir: number
+    precip: number
+    hourly: { time: string; temp: number; condition: string; precip: number; wind: number }[]
   } | null>(null)
+
+  const getWindDir = (deg: number) => {
+    const dirs = ['N','NE','E','SE','S','SW','W','NW']
+    return dirs[Math.round(deg / 45) % 8]
+  }
 
   useEffect(() => {
     const fetchWeather = async () => {
       try {
         const res = await fetch(
-          'https://api.open-meteo.com/v1/forecast?latitude=40.2508&longitude=-103.7996&current=temperature_2m,weathercode&hourly=temperature_2m,weathercode&temperature_unit=fahrenheit&timezone=America%2FDenver&forecast_days=1'
+          'https://api.open-meteo.com/v1/forecast?latitude=40.2508&longitude=-103.7996&current=temperature_2m,weathercode,windspeed_10m,winddirection_10m,precipitation&hourly=temperature_2m,weathercode,precipitation_probability,windspeed_10m&temperature_unit=fahrenheit&timezone=America%2FDenver&forecast_days=1'
         )
         const data = await res.json()
         const now = new Date()
@@ -48,13 +56,18 @@ function WeatherWidget() {
           .map((t: string, i: number) => ({
             time: new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }),
             temp: Math.round(data.hourly.temperature_2m[currentHour + i]),
-            condition: getCondition(data.hourly.weathercode[currentHour + i])
+            condition: getCondition(data.hourly.weathercode[currentHour + i]),
+            precip: data.hourly.precipitation_probability[currentHour + i] ?? 0,
+            wind: Math.round(data.hourly.windspeed_10m[currentHour + i] ?? 0)
           }))
 
         setWeather({
           time: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
           temp: Math.round(data.current.temperature_2m),
           condition: getCondition(data.current.weathercode),
+          wind: Math.round(data.current.windspeed_10m ?? 0),
+          windDir: data.current.winddirection_10m ?? 0,
+          precip: data.current.precipitation ?? 0,
           hourly
         })
       } catch (e) {
@@ -70,18 +83,22 @@ function WeatherWidget() {
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 flex-wrap">
         <span className="text-gray-300 text-sm font-semibold">{weather.time}</span>
         <span className="text-white text-lg font-bold">{weather.temp}°F</span>
         <span className="text-gray-300 text-sm">{weather.condition}</span>
+        <span className="text-gray-400 text-sm">💨 {weather.wind} mph {getWindDir(weather.windDir)}</span>
+        <span className="text-gray-400 text-sm">🌧️ {weather.precip} mm</span>
         <span className="text-gray-500 text-xs">Fort Morgan, CO</span>
       </div>
       <div className="flex gap-4 flex-wrap">
         {weather.hourly.map((h, i) => (
-          <div key={i} className="text-center">
+          <div key={i} className="text-center bg-gray-800 rounded-lg px-3 py-2">
             <p className="text-gray-500 text-xs">{h.time}</p>
             <p className="text-white text-sm font-semibold">{h.temp}°F</p>
             <p className="text-gray-400 text-xs">{h.condition.split(' ')[0]}</p>
+            <p className="text-blue-400 text-xs">💧 {h.precip}%</p>
+            <p className="text-gray-400 text-xs">💨 {h.wind} mph</p>
           </div>
         ))}
       </div>
