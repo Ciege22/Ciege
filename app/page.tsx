@@ -162,7 +162,7 @@ export default function Home() {
                   </div>
                 </div>
 
-                <svg viewBox="0 0 100 80" className="w-24 h-20" fill="#00A0B0" xmlns="http://www.w3.org/2000/svg">
+                <svg viewBox="0 0 100 80" className="w-48 h-40" fill="#00A0B0" xmlns="http://www.w3.org/2000/svg">
                   {/* Triforce triangles */}
                   <polygon points="50,5 62,26 38,26" />
                   <polygon points="38,26 50,47 26,47" />
