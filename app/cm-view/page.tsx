@@ -188,7 +188,6 @@ export default function CMViewPage() {
 
   const EditableDate = ({ hop, field, value }: { hop: string, field: string, value: string }) => {
     const edited = editedDates[hop]?.[field]
-    const display = edited || value
 
     const toInputFormat = (dateStr: string) => {
       if (!dateStr || dateStr === 'N/A') return ''
@@ -204,11 +203,22 @@ export default function CMViewPage() {
       return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
     }
 
+    // If tracker already has a date — show it read only in green, no picker
+    if (value && value !== 'N/A' && !edited) {
+      return (
+        <span className="text-green-400 text-xs font-semibold">{value}</span>
+      )
+    }
+
+    // If edited show yellow with picker to change
+    // If blank show picker to enter
+    const display = edited || ''
+
     if (display === 'N/A') {
       return (
         <div className="flex items-center gap-1">
           <span className="text-gray-500 text-xs">N/A</span>
-          <button onClick={() => logDateEdit(hop, field, 'N/A', '')}
+          <button onClick={() => logDateEdit(hop, field, value, '')}
             className="text-gray-600 hover:text-gray-400 text-xs">✕</button>
         </div>
       )
@@ -217,15 +227,13 @@ export default function CMViewPage() {
     return (
       <div className="flex flex-col gap-1">
         {display && (
-          <span className={`text-xs font-semibold ${edited ? 'text-yellow-300' : 'text-green-400'}`}>
-            {edited ? `📝 ${display}` : display}
-          </span>
+          <span className="text-yellow-300 text-xs font-semibold">📝 {display}</span>
         )}
         <input
           type="date"
           value={toInputFormat(display)}
           onChange={(e) => logDateEdit(hop, field, value, toDisplayFormat(e.target.value))}
-          className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-500 focus:outline-none focus:border-blue-500 cursor-pointer"
+          className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer"
         />
         <button onClick={() => logNA(hop, field)}
           className="text-gray-500 hover:text-gray-300 text-xs text-left">N/A</button>
