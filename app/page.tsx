@@ -162,7 +162,6 @@ export default function Home() {
                   </div>
                 </div>
 
-                <div className="flex justify-center items-center w-full">
                 <svg viewBox="0 0 100 80" className="w-48 h-40" fill="#00A0B0" xmlns="http://www.w3.org/2000/svg">
                   {/* Triforce triangles */}
                   <polygon points="50,5 62,26 38,26" />
@@ -182,7 +181,6 @@ export default function Home() {
                   <polygon points="44,47 50,72 56,47" />
                   <polygon points="46,65 42,75 50,80 58,75 54,65" />
                 </svg>
-                </div>
               </div>
             </section>
 
