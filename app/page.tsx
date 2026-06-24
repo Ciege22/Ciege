@@ -60,7 +60,7 @@ export default function Home() {
                     Welcome back, team
                   </p>
                   <h2 className="mt-4 text-4xl font-semibold text-white">
-                    Run your product operations with confidence.
+                    Let's get to work!
                   </h2>
                   <p className="mt-4 text-base leading-7 text-zinc-400">
                     Ciege brings your Deck Builder, Action Board, NTP Tracker and SCOP Invoice flow together in one polished workspace.
