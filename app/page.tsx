@@ -50,13 +50,6 @@ export default function Home() {
                 )
               )}
             </nav>
-
-            <div className="mt-10 rounded-3xl border border-white/10 bg-zinc-900/70 p-4 text-sm text-zinc-400">
-              <p className="font-medium text-white">Platform insight</p>
-              <p className="mt-3 leading-6">
-                Keep your project teams aligned with a single source of truth for decks, actions, NTPs, and invoices.
-              </p>
-            </div>
           </aside>
 
           <main className="space-y-6">
