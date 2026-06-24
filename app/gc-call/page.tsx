@@ -1,6 +1,6 @@
-// v2.0 - GC Call View with Supabase persistence
-export const dynamic = 'force-dynamic'
 'use client'
+
+export const dynamic = 'force-dynamic'
 
 import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
