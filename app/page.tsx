@@ -1,3 +1,7 @@
+'use client'
+
+import { useEffect, useState } from 'react'
+
 const navItems = [
   { label: "Deck Builder", href: "/deck-builder", active: true },
   { label: "GC Call View", href: "/gc-call", active: false },
@@ -10,6 +14,80 @@ const stats = [
   { label: "NTPs Pending", value: "7", delta: "+14%" },
   { label: "SCOP Invoices", value: "18", delta: "+22%" },
 ];
+
+function WeatherWidget() {
+  const [weather, setWeather] = useState<{
+    time: string
+    temp: number
+    condition: string
+    hourly: { time: string; temp: number; condition: string }[]
+  } | null>(null)
+
+  useEffect(() => {
+    const fetchWeather = async () => {
+      try {
+        const res = await fetch(
+          'https://api.open-meteo.com/v1/forecast?latitude=40.2508&longitude=-103.7996&current=temperature_2m,weathercode&hourly=temperature_2m,weathercode&temperature_unit=fahrenheit&timezone=America%2FDenver&forecast_days=1'
+        )
+        const data = await res.json()
+        const now = new Date()
+        const currentHour = now.getHours()
+
+        const getCondition = (code: number) => {
+          if (code === 0) return '☀️ Clear'
+          if (code <= 3) return '⛅ Partly Cloudy'
+          if (code <= 49) return '🌫️ Foggy'
+          if (code <= 69) return '🌧️ Rain'
+          if (code <= 79) return '🌨️ Snow'
+          if (code <= 99) return '⛈️ Thunderstorm'
+          return '🌤️ Mixed'
+        }
+
+        const hourly = data.hourly.time
+          .slice(currentHour, currentHour + 6)
+          .map((t: string, i: number) => ({
+            time: new Date(t).toLocaleTimeString('en-US', { hour: 'numeric', hour12: true }),
+            temp: Math.round(data.hourly.temperature_2m[currentHour + i]),
+            condition: getCondition(data.hourly.weathercode[currentHour + i])
+          }))
+
+        setWeather({
+          time: now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true }),
+          temp: Math.round(data.current.temperature_2m),
+          condition: getCondition(data.current.weathercode),
+          hourly
+        })
+      } catch (e) {
+        console.error('Weather fetch failed', e)
+      }
+    }
+    fetchWeather()
+    const interval = setInterval(fetchWeather, 300000)
+    return () => clearInterval(interval)
+  }, [])
+
+  if (!weather) return <p className="text-gray-400 text-sm">Loading weather...</p>
+
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-center gap-4">
+        <span className="text-gray-300 text-sm font-semibold">{weather.time}</span>
+        <span className="text-white text-lg font-bold">{weather.temp}°F</span>
+        <span className="text-gray-300 text-sm">{weather.condition}</span>
+        <span className="text-gray-500 text-xs">Fort Morgan, CO</span>
+      </div>
+      <div className="flex gap-4 flex-wrap">
+        {weather.hourly.map((h, i) => (
+          <div key={i} className="text-center">
+            <p className="text-gray-500 text-xs">{h.time}</p>
+            <p className="text-white text-sm font-semibold">{h.temp}°F</p>
+            <p className="text-gray-400 text-xs">{h.condition.split(' ')[0]}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 export default function Home() {
   return (
@@ -62,9 +140,9 @@ export default function Home() {
                   <h2 className="mt-4 text-4xl font-semibold text-white">
                     Let's get to work!
                   </h2>
-                  <p className="mt-4 text-base leading-7 text-zinc-400">
-                    Ciege brings your Deck Builder, Action Board, NTP Tracker and SCOP Invoice flow together in one polished workspace.
-                  </p>
+                  <div className="mt-4">
+                    <WeatherWidget />
+                  </div>
                 </div>
 
                 <div className="rounded-3xl bg-zinc-900/90 px-5 py-4 text-sm text-zinc-300 ring-1 ring-white/10">
