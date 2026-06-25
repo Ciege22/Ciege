@@ -1,4 +1,4 @@
-'use client'
+﻿'use client'
 
 export const dynamic = 'force-dynamic'
 
@@ -217,7 +217,7 @@ export default function SchedulePage() {
         })
       })
 
-      // ── Build crew assignments ──
+      // â”€â”€ Build crew assignments â”€â”€
       const assignments: CrewAssignment[] = []
       const gcList = ['MZI', 'NV Tel', 'Mastec', 'Vikor', 'Tech CX']
 
@@ -260,7 +260,7 @@ export default function SchedulePage() {
         })
       })
 
-      // ── Detect gaps ──
+      // â”€â”€ Detect gaps â”€â”€
       const gapList: GapInfo[] = []
       const crewMap = new Map<string, CrewAssignment[]>()
       assignments.forEach(a => {
@@ -283,7 +283,7 @@ export default function SchedulePage() {
         }
       })
 
-      // ── Generate suggestions ──
+      // â”€â”€ Generate suggestions â”€â”€
       const suggList: ScheduleSuggestion[] = []
 
       parsed.forEach(h => {
@@ -376,7 +376,7 @@ export default function SchedulePage() {
           const suggestedAfterVendor = vendorClearDate || h.ms15f
           allReasons.push(`🔴 Vendor conflict — ${vcConflict}`)
           if (effectiveStart && h.ms15f && effectiveStart > h.ms15f) {
-            allReasons.push(`📅 Crew available ${fmtDate(earliestDate as Date)} | Vendor clears ${vendorClearDate ? fmtDate(vendorClearDate) : '?'}`)
+            allReasons.push(`📅 Crew available ${fmtDate(earliestDate as unknown as Date)} | Vendor clears ${vendorClearDate ? fmtDate(vendorClearDate) : '?'}`)
           }
           if (!suggList.find(s => s.hop === h.hop)) {
             suggList.push({
@@ -474,7 +474,7 @@ export default function SchedulePage() {
     reader.readAsArrayBuffer(file)
   }, [today])
 
-  // ── Gantt helpers ──
+  // â”€â”€ Gantt helpers â”€â”€
   const ganttStart = today
   const ganttWeeks = 16
   const weekStarts = Array.from({ length: ganttWeeks }, (_, i) => addDays(ganttStart, i * 7))
@@ -557,7 +557,7 @@ export default function SchedulePage() {
                   <h2 className="text-lg font-bold">Schedule Recommendations</h2>
                   <button onClick={() => setSortAsc(prev => !prev)}
                     className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-1 rounded font-semibold">
-                    Sort by FC Start {sortAsc ? '↑ Earliest' : '↓ Latest'}
+                    Sort by FC Start {sortAsc ? 'â†‘ Earliest' : 'â†“ Latest'}
                   </button>
                 </div>
                 <div className="overflow-x-auto">
@@ -693,7 +693,7 @@ export default function SchedulePage() {
                       return (
                         <div key={gc} className={`rounded-lg border p-4 ${hasEnoughPipeline && canExpand ? 'border-green-600 bg-green-950' : 'border-gray-700 bg-gray-900'}`}>
                           <h4 className="font-bold text-sm text-white">{gc}</h4>
-                          <p className="text-xs text-gray-400 mt-1">{curCrews} → {maxCrews} crews max</p>
+                          <p className="text-xs text-gray-400 mt-1">{curCrews} â†’ {maxCrews} crews max</p>
                           <p className="text-xs mt-2">
                             <span className={readyHops.length >= 2 ? 'text-green-400' : 'text-yellow-400'}>
                               {readyHops.length} ready HOPs
@@ -702,7 +702,7 @@ export default function SchedulePage() {
                           <p className={`text-xs font-bold mt-1 ${hasEnoughPipeline && canExpand ? 'text-green-400' : 'text-gray-500'}`}>
                             {!canExpand ? '✅ At max crews' :
                              hasEnoughPipeline ? '✅ Ready to expand' :
-                             `⏳ Need ${(curCrews + 1) * 2 - readyHops.length} more ready HOPs`}
+                             `â³ Need ${(curCrews + 1) * 2 - readyHops.length} more ready HOPs`}
                           </p>
                         </div>
                       )
