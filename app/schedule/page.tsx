@@ -120,6 +120,8 @@ export default function SchedulePage() {
   const [gaps, setGaps] = useState<GapInfo[]>([])
   const [crewAssignments, setCrewAssignments] = useState<CrewAssignment[]>([])
   const [activeTab, setActiveTab] = useState<'gantt' | 'suggestions' | 'gaps'>('suggestions')
+  const [selectedGC, setSelectedGC] = useState<string>('ALL')
+  const [sortAsc, setSortAsc] = useState(true)
   const today = new Date()
 
   const handleFile = useCallback((file: File) => {
@@ -466,6 +468,16 @@ export default function SchedulePage() {
               })}
             </div>
 
+            {/* GC Filter */}
+            <div className="flex gap-2 mb-4 flex-wrap">
+              {['ALL', 'MZI', 'NV Tel', 'Mastec', 'Vikor', 'Tech CX'].map(gc => (
+                <button key={gc} onClick={() => setSelectedGC(gc)}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${selectedGC === gc ? 'bg-blue-600 text-white scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                  {gc}
+                </button>
+              ))}
+            </div>
+
             {/* Tabs */}
             <div className="flex gap-2 mb-6">
               {(['suggestions', 'gaps', 'gantt'] as const).map(tab => (
@@ -479,7 +491,13 @@ export default function SchedulePage() {
             {/* SUGGESTIONS TAB */}
             {activeTab === 'suggestions' && (
               <div className="bg-gray-900 rounded-xl border border-gray-700 p-6">
-                <h2 className="text-lg font-bold mb-4">Schedule Recommendations</h2>
+                <div className="flex items-center justify-between mb-4">
+                  <h2 className="text-lg font-bold">Schedule Recommendations</h2>
+                  <button onClick={() => setSortAsc(prev => !prev)}
+                    className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-3 py-1 rounded font-semibold">
+                    Sort by FC Start {sortAsc ? '↑ Earliest' : '↓ Latest'}
+                  </button>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-xs">
                     <thead>
@@ -496,7 +514,14 @@ export default function SchedulePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {suggestions.map((s, i) => {
+                      {[...suggestions]
+                        .filter(s => selectedGC === 'ALL' || s.gc === selectedGC)
+                        .sort((a, b) => {
+                          const aDate = a.currentStart ? new Date(a.currentStart).getTime() : 0
+                          const bDate = b.currentStart ? new Date(b.currentStart).getTime() : 0
+                          return sortAsc ? aDate - bDate : bDate - aDate
+                        })
+                        .map((s, i) => {
                         const rowBg = s.direction === 'unassigned' ? 'bg-purple-950' :
                                       s.direction === 'push-out' ? 'bg-red-950' :
                                       s.direction === 'reassign' ? 'bg-yellow-950' : 'bg-green-950'
@@ -556,7 +581,7 @@ export default function SchedulePage() {
                           </tr>
                         </thead>
                         <tbody>
-                          {gaps.sort((a, b) => b.gapDays - a.gapDays).map((g, i) => (
+                          {gaps.filter(g => selectedGC === 'ALL' || g.gc === selectedGC).sort((a, b) => b.gapDays - a.gapDays).map((g, i) => (
                             <tr key={i} className={`border-t border-gray-800 ${g.gapDays >= 14 ? 'bg-red-950' : g.gapDays >= 7 ? 'bg-yellow-950' : 'bg-gray-900'}`}>
                               <td className="p-2 font-semibold text-white">{g.gc}</td>
                               <td className="p-2 text-gray-300">{g.crewId}</td>
@@ -632,7 +657,7 @@ export default function SchedulePage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {crewIds.map(crewId => {
+                      {crewIds.filter(crewId => selectedGC === 'ALL' || crewId.startsWith(selectedGC)).map(crewId => {
                         const crewJobs = crewAssignments
                           .filter(a => a.crewId === crewId)
                           .sort((a, b) => a.start.getTime() - b.start.getTime())
