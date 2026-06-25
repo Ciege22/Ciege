@@ -7,6 +7,7 @@ const navItems = [
   { label: "GC Call View", href: "/gc-call", active: false },
   { label: "CM Call View", href: "/cm-view", active: false },
   { label: "Schedule Optimizer", href: "/schedule", active: false },
+  { label: "NTP Tracker", href: "/ntp-tracker", active: false },
 ];
 
 const stats = [
