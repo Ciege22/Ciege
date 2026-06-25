@@ -6,6 +6,7 @@ const navItems = [
   { label: "Deck Builder", href: "/deck-builder", active: true },
   { label: "GC Call View", href: "/gc-call", active: false },
   { label: "CM Call View", href: "/cm-view", active: false },
+  { label: "Schedule Optimizer", href: "/schedule", active: false },
 ];
 
 const stats = [
