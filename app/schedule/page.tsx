@@ -312,8 +312,8 @@ export default function SchedulePage() {
         })
 
         // Check if can pull in
-        if (h.hasNtp && h.hasMat && !vcConflict && earliestDate && earliestDate < h.ms15f) {
-          const daysMoved = daysBetween(earliestDate, h.ms15f)
+        if (h.hasNtp && h.hasMat && !vcConflict && earliestDate && h.ms15f && (earliestDate as Date) < h.ms15f) {
+          const daysMoved = daysBetween(earliestDate as Date, h.ms15f!)
           if (daysMoved >= 3) {
             suggList.push({
               hop: h.hop, gc: h.gc,
