@@ -2,9 +2,9 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase } from '../lib/supabase'
+import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
 interface HOP {
   hop: string
@@ -130,6 +130,7 @@ export default function NTPTrackerPage() {
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [expandedBuckets, setExpandedBuckets] = useState<Set<string>>(new Set())
+  const [snapshotTime, setSnapshotTime] = useState<string>('')
   const today = new Date()
 
   const loadNotes = async () => {
@@ -153,6 +154,113 @@ export default function NTPTrackerPage() {
     }
   }
 
+  useEffect(() => {
+    const loadFromSnapshot = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (!snap) return
+      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
+      setFileName(snap.filename)
+      processRows(snap.data, snap.filename)
+    }
+    loadFromSnapshot()
+  }, [])
+
+  const processRows = useCallback(async (rows: unknown[][], _filename: string) => {
+
+    let headerRow = -1
+    for (let i = 0; i < 10; i++) {
+      if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+    }
+    if (headerRow === -1) { alert('Could not find header row'); return }
+
+    const headers = rows[headerRow] as string[]
+    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+
+    const hopCol      = col('HOP')
+    const gcCol       = col('General Contractor')
+    const newCmCol    = col('New CM')
+    const nokiaPmCol  = col('Nokia PM')
+    const don444Col   = col('DON 444')
+    const ms15fCol    = col('MS15 Implementation Start F')
+    const ms16fCol    = col('MS16 Implementation Ends F')
+    const ms16aCol    = col('MS16 Implementation Ends A')
+    const ntpCol      = col('NTP A')
+    const ntpOwnCol   = col('NTP Action Owner')
+    const ntpWaitCol  = col('NTP is waiting on')
+    const matCol      = headers.findIndex(h => String(h).trim() === 'Material Received A ')
+    const matFcCol    = col('Material Forecast +4ish')
+    const itwSCol     = col('ITW Schedule Start')
+    const itwECol     = col('ITW Schedule Complete')
+    const ssSCol      = col('Samsung Schedule Start')
+    const ssECol      = col('Samsung Schedule Complete')
+
+    const hopRows = new Map<string, unknown[][]>()
+    for (let i = headerRow + 1; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      const don = String(row[don444Col] || '').trim().toUpperCase()
+      if (don !== 'DON 444') continue
+      const hop = String(row[hopCol] || '').trim()
+      if (!hop || hop === 'undefined') continue
+      if (!hopRows.has(hop)) hopRows.set(hop, [])
+      hopRows.get(hop)!.push(row)
+    }
+
+    const parsed: HOP[] = []
+    hopRows.forEach((rows2, hop) => {
+      const row   = rows2[0]
+      const ntpDate = parseNtpDate(row[ntpCol])
+      const ms16a   = parseNtpDate(row[ms16aCol])
+      if (ms16a) return // skip complete HOPs
+      const hasNtp  = !!ntpDate
+      if (hasNtp) return // skip NTP complete
+
+      const ms15f    = parseDateAny(row[ms15fCol])
+      const matDate  = parseDateAny(row[matCol])
+      const ntpOwner = String(row[ntpOwnCol] || '').trim()
+      const ntpWait  = String(row[ntpWaitCol] || '').trim()
+
+      // Vendor window
+      const parts: string[] = []
+      rows2.forEach(r => {
+        const itwS = parseDateAny(r[itwSCol]); const itwE = parseDateAny(r[itwECol])
+        const ssS  = parseDateAny(r[ssSCol]);  const ssE  = parseDateAny(r[ssECol])
+        if (ms15f) {
+          if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) parts.push(`🔴 ITW thru ${fmtDM(itwE)}`)
+          if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) parts.push(`🔴 Samsung thru ${fmtDM(ssE)}`)
+        }
+      })
+      const vendorWindow = parts.length > 0 ? parts.join(' | ') : '✅ Clear'
+
+      const monthLabel = ms15f
+        ? ms15f.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
+        : 'No Date'
+
+      parsed.push({
+        hop,
+        gc:            String(row[gcCol] || '').trim(),
+        cm:            String(row[newCmCol] || '').trim(),
+        nokiaPm:       String(row[nokiaPmCol] || '').trim(),
+        ms15f:         fmtDate(ms15f),
+        ms15fDate:     ms15f,
+        ms16f:         fmtDate(parseDateAny(row[ms16fCol])),
+        hasNtp,
+        ntpOwner,
+        ntpWaitingOn:  ntpWait,
+        hasMat:        !!(matDate && matDate.getFullYear() >= 2020),
+        matForecast:   fmtDate(parseDateAny(row[matFcCol])),
+        vendorWindow,
+        month:         monthLabel,
+        daysOut:       ms15f ? daysBetween(today, ms15f) : null,
+        ownerCategory: getOwnerCategory(ntpOwner),
+        waitingOnBucket: getWaitingOnBucket(ntpWait)
+      })
+    })
+
+    setHops(parsed)
+    setLoaded(true)
+    await loadNotes()
+  }, [today])
+
   const handleFile = useCallback((file: File) => {
     setFileName(file.name)
     const reader = new FileReader()
@@ -162,102 +270,10 @@ export default function NTPTrackerPage() {
       const ws = wb.Sheets['HOPs']
       if (!ws) { alert('HOPs tab not found'); return }
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-
-      let headerRow = -1
-      for (let i = 0; i < 10; i++) {
-        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
-      }
-      if (headerRow === -1) { alert('Could not find header row'); return }
-
-      const headers = rows[headerRow] as string[]
-      const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
-
-      const hopCol      = col('HOP')
-      const gcCol       = col('General Contractor')
-      const newCmCol    = col('New CM')
-      const nokiaPmCol  = col('Nokia PM')
-      const don444Col   = col('DON 444')
-      const ms15fCol    = col('MS15 Implementation Start F')
-      const ms16fCol    = col('MS16 Implementation Ends F')
-      const ms16aCol    = col('MS16 Implementation Ends A')
-      const ntpCol      = col('NTP A')
-      const ntpOwnCol   = col('NTP Action Owner')
-      const ntpWaitCol  = col('NTP is waiting on')
-      const matCol      = headers.findIndex(h => String(h).trim() === 'Material Received A ')
-      const matFcCol    = col('Material Forecast +4ish')
-      const itwSCol     = col('ITW Schedule Start')
-      const itwECol     = col('ITW Schedule Complete')
-      const ssSCol      = col('Samsung Schedule Start')
-      const ssECol      = col('Samsung Schedule Complete')
-
-      const hopRows = new Map<string, unknown[][]>()
-      for (let i = headerRow + 1; i < rows.length; i++) {
-        const row = rows[i] as unknown[]
-        const don = String(row[don444Col] || '').trim().toUpperCase()
-        if (don !== 'DON 444') continue
-        const hop = String(row[hopCol] || '').trim()
-        if (!hop || hop === 'undefined') continue
-        if (!hopRows.has(hop)) hopRows.set(hop, [])
-        hopRows.get(hop)!.push(row)
-      }
-
-      const parsed: HOP[] = []
-      hopRows.forEach((rows2, hop) => {
-        const row   = rows2[0]
-        const ntpDate = parseNtpDate(row[ntpCol])
-        const ms16a   = parseNtpDate(row[ms16aCol])
-        if (ms16a) return // skip complete HOPs
-        const hasNtp  = !!ntpDate
-        if (hasNtp) return // skip NTP complete
-
-        const ms15f    = parseDateAny(row[ms15fCol])
-        const matDate  = parseDateAny(row[matCol])
-        const ntpOwner = String(row[ntpOwnCol] || '').trim()
-        const ntpWait  = String(row[ntpWaitCol] || '').trim()
-
-        // Vendor window
-        const parts: string[] = []
-        rows2.forEach(r => {
-          const itwS = parseDateAny(r[itwSCol]); const itwE = parseDateAny(r[itwECol])
-          const ssS  = parseDateAny(r[ssSCol]);  const ssE  = parseDateAny(r[ssECol])
-          if (ms15f) {
-            if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) parts.push(`🔴 ITW thru ${fmtDM(itwE)}`)
-            if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) parts.push(`🔴 Samsung thru ${fmtDM(ssE)}`)
-          }
-        })
-        const vendorWindow = parts.length > 0 ? parts.join(' | ') : '✅ Clear'
-
-        const monthLabel = ms15f
-          ? ms15f.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })
-          : 'No Date'
-
-        parsed.push({
-          hop,
-          gc:            String(row[gcCol] || '').trim(),
-          cm:            String(row[newCmCol] || '').trim(),
-          nokiaPm:       String(row[nokiaPmCol] || '').trim(),
-          ms15f:         fmtDate(ms15f),
-          ms15fDate:     ms15f,
-          ms16f:         fmtDate(parseDateAny(row[ms16fCol])),
-          hasNtp,
-          ntpOwner,
-          ntpWaitingOn:  ntpWait,
-          hasMat:        !!(matDate && matDate.getFullYear() >= 2020),
-          matForecast:   fmtDate(parseDateAny(row[matFcCol])),
-          vendorWindow,
-          month:         monthLabel,
-          daysOut:       ms15f ? daysBetween(today, ms15f) : null,
-          ownerCategory: getOwnerCategory(ntpOwner),
-          waitingOnBucket: getWaitingOnBucket(ntpWait)
-        })
-      })
-
-      setHops(parsed)
-      setLoaded(true)
-      await loadNotes()
+      await processRows(rows, file.name)
     }
     reader.readAsArrayBuffer(file)
-  }, [today])
+  }, [processRows])
 
   // Filtered hops
   const filtered = hops.filter(h => {
@@ -422,19 +438,17 @@ export default function NTPTrackerPage() {
           )}
         </div>
 
-        {/* File Upload */}
-        <div
-          className="mb-6 border-2 border-dashed border-gray-600 rounded-xl p-5 text-center cursor-pointer hover:border-blue-500 transition-colors"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
-          onClick={() => document.getElementById('ntp-upload')?.click()}
-        >
-          <input id="ntp-upload" type="file" accept=".xlsx" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          {loaded
-            ? <p className="text-green-400 font-semibold">✅ {fileName} — {hops.length} pending NTPs loaded</p>
-            : <p className="text-gray-400">📂 Drop your tracker here or click to upload</p>}
-        </div>
+        {snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
+            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
+            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+          </div>
+        )}
+        {!snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+          </div>
+        )}
 
         {loaded && (
           <>

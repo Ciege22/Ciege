@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase } from '../lib/supabase'
+import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
 
 const GC_CM_MAP: Record<string, string> = {
@@ -188,6 +188,7 @@ export default function GCCallPage() {
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
   const [showPmUpdates, setShowPmUpdates] = useState(false)
   const [pmSortAsc, setPmSortAsc] = useState(true)
+  const [snapshotTime, setSnapshotTime] = useState<string>('')
   const today = new Date()
 
   useEffect(() => {
@@ -225,6 +226,249 @@ export default function GCCallPage() {
     }
   }
 
+  useEffect(() => {
+    const loadFromSnapshot = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (!snap) return
+      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
+      setFileName(snap.filename)
+      processRows(snap.data, snap.filename)
+    }
+    loadFromSnapshot()
+  }, [])
+
+  const processRows = useCallback((rows: unknown[][], _filename: string) => {
+
+    let headerRow = -1
+    for (let i = 0; i < 10; i++) {
+      const row = rows[i] as unknown[]
+      if (row && row.some(cell => String(cell).trim() === 'HOP')) {
+        headerRow = i; break
+      }
+    }
+    if (headerRow === -1) { alert('Could not find header row'); return }
+
+    const headers = rows[headerRow] as string[]
+    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+
+    const hopCol    = col('HOP')
+    const gcCol     = col('General Contractor')
+    const nokiaPmCol= col('Nokia PM')
+    const opsCol    = col('Viaero Ops Field Ops')
+    const ms15fCol  = col('MS15 Implementation Start F')
+    const ms15aCol  = col('MS15 Implementation Start A')
+    const ms16fCol  = col('MS16 Implementation Ends F')
+    const ms16aCol  = col('MS16 Implementation Ends A')
+    const ntpCol    = col('NTP A')
+    const matCol    = headers.findIndex(h => String(h).trim() === 'Material Received A')
+    const matFcCol  = col('Material Forecast +4ish')
+    const wpCol     = col('Work Package Approved in QB')
+    const pickupCol = col('GC Material Pick-up (A)')
+    const spoCol    = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const steelCol  = headers.findIndex(h => String(h).trim().toLowerCase().includes('steel from'))
+    const ntpOwnCol = col('NTP Action Owner')
+    const ntpWaitCol= col('NTP is waiting on')
+    const don444Col = col('DON 444')
+    const siteNameCol = col('Site Name')
+    const siteNumCol  = col('Site Number')
+    const itwSCol   = col('ITW Schedule Start')
+    const itwECol   = col('ITW Schedule Complete')
+    const ssSCol    = col('Samsung Schedule Start')
+    const ssECol    = col('Samsung Schedule Complete')
+
+    // First pass — collect all rows per HOP
+    const hopRows = new Map<string, unknown[][]>()
+
+    for (let i = headerRow + 1; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      const don = String(row[don444Col] || '').trim().toUpperCase()
+      if (don !== 'DON 444') continue
+      const nokiaPm = String(row[nokiaPmCol] || '').trim().toUpperCase()
+      if (nokiaPm !== 'CJ') continue
+      const hop = String(row[hopCol] || '').trim()
+      if (!hop || hop === 'undefined') continue
+      if (!hopRows.has(hop)) hopRows.set(hop, [])
+      hopRows.get(hop)!.push(row)
+    }
+
+    // Build site occupancy map from all in-progress HOPs
+    // Maps "SiteName|SiteNumber" -> { gc, hop, ms16f }
+    const siteOccupancy = new Map<string, { gc: string, hop: string, ms16f: string }>()
+
+    hopRows.forEach((rows2, hop) => {
+      rows2.forEach(r => {
+        const ms15a = parseDate(r[ms15aCol])
+        const ms16a = parseDate(r[ms16aCol])
+        const inProg = !!ms15a && !ms16a
+        if (!inProg) return
+        const siteName   = String(r[siteNameCol] || '').trim()
+        const siteNumber = String(r[siteNumCol]  || '').trim()
+        const gc         = String(r[gcCol]        || '').trim()
+        const ms16f      = parseDateAny(r[ms16fCol])
+        if (siteName && siteNumber) {
+          const key = `${siteName}|${siteNumber}`.toLowerCase()
+          siteOccupancy.set(key, { gc, hop, ms16f: fmtDate(ms16f) })
+        }
+      })
+    })
+
+    const parsed: HOP[] = []
+
+    hopRows.forEach((rows2, hop) => {
+      const row  = rows2[0]
+      const row2 = rows2[1] || null
+
+      const gc      = String(row[gcCol] || '').trim()
+      const ms15f   = parseDateAny(row[ms15fCol])
+      const ms15a   = parseDate(row[ms15aCol])
+      const ms16f   = parseDateAny(row[ms16fCol])
+      const ms16a   = parseDate(row[ms16aCol])
+      const ntpDate = parseDate(row[ntpCol])
+      const matDate = parseDateAny(row[matCol])
+      const matFc   = parseDateAny(row[matFcCol])
+      const wpDate  = parseDateAny(row[wpCol])
+      const pickupD = parseDateAny(row[pickupCol])
+      const spoDate  = parseDateAny(row[spoCol]) || (row2 ? parseDateAny(row2[spoCol]) : null)
+      const steelFrom = String(row[steelCol] || row2?.[steelCol] || '').trim()
+      const itwS    = parseDateAny(row[itwSCol]) || (row2 ? parseDateAny(row2[itwSCol]) : null)
+      const itwE    = parseDateAny(row[itwECol]) || (row2 ? parseDateAny(row2[itwECol]) : null)
+      const ssS     = parseDateAny(row[ssSCol])  || (row2 ? parseDateAny(row2[ssSCol])  : null)
+      const ssE     = parseDateAny(row[ssECol])  || (row2 ? parseDateAny(row2[ssECol])  : null)
+
+      const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
+      const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
+      const wpApproved = !!wpDate
+      const gcPickup   = !!pickupD
+      const started    = !!ms15a
+      const complete   = !!ms16a
+      const inProgress = started && !complete
+      const daysOut    = ms15f ? daysBetween(today, ms15f) : null
+      const daysElapsed = inProgress && ms15a ? daysBetween(ms15a, today) : null
+
+      // Build vendor window by checking ALL site rows for worst case conflict
+      const allVendorParts: string[] = []
+
+      rows2.forEach(r => {
+        const rItwS  = parseDateAny(r[itwSCol])
+        const rItwE  = parseDateAny(r[itwECol])
+        const rSsS   = parseDateAny(r[ssSCol])
+        const rSsE   = parseDateAny(r[ssECol])
+        const rMs15f = parseDateAny(r[ms15fCol]) || ms15f
+
+        if (!rMs15f) return
+        if (!rSsS && !rSsE && !rItwS && !rItwE) return
+
+        const siteName = String(r[siteNameCol] || '').trim()
+        const siteLabel = siteName ? ` (${siteName})` : ''
+
+        const checkV = (name: string, start: Date | null, end: Date | null) => {
+          if (!start || !end) return
+          const ms15fTime = rMs15f.getTime()
+          const startTime = start.getTime()
+          const endTime   = end.getTime()
+          if (startTime <= ms15fTime && ms15fTime <= endTime) {
+            allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}${siteLabel}`)
+          } else if (endTime < ms15fTime) {
+            const buf = Math.round((ms15fTime - endTime) / (1000 * 60 * 60 * 24))
+            if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d before start${siteLabel}`)
+            else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
+            else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
+          } else {
+            const buf = Math.round((startTime - ms15fTime) / (1000 * 60 * 60 * 24))
+            if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
+            else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
+          }
+        }
+        checkV('ITW', rItwS, rItwE)
+        checkV('Samsung', rSsS, rSsE)
+      })
+
+      const itwParts = Array.from(new Set(allVendorParts.filter(p => p.includes('ITW'))))
+      const ssParts  = Array.from(new Set(allVendorParts.filter(p => p.includes('Samsung'))))
+
+      const sortParts = (parts: string[]) => {
+        const red    = parts.filter(p => p.includes('🔴'))
+        const yellow = parts.filter(p => p.includes('⚠️'))
+        const green  = parts.filter(p => p.includes('✅'))
+        return [...red, ...yellow, ...green]
+      }
+
+      const itwSorted = sortParts(itwParts)
+      const ssSorted  = sortParts(ssParts)
+
+      const allParts = [...itwSorted, ...ssSorted].filter(Boolean)
+      const vendorWindow = allParts.length > 0 ? allParts.join(' | ') : '✅ No conflicts'
+
+      // Check internal conflicts at site level
+      let siteAConflict = ''
+      let siteBConflict = ''
+
+      rows2.forEach((r, idx) => {
+        const siteName   = String(r[siteNameCol] || '').trim()
+        const siteNumber = String(r[siteNumCol]  || '').trim()
+        const thisGc     = String(r[gcCol] || '').trim()
+        if (!siteName || !siteNumber) return
+        const key = `${siteName}|${siteNumber}`.toLowerCase()
+        const occupant = siteOccupancy.get(key)
+        if (occupant && occupant.gc !== thisGc && occupant.hop !== hop) {
+          const conflictMsg = `⚠️ ${occupant.gc} on site — ${occupant.hop} completing ${occupant.ms16f}`
+          if (idx === 0) siteAConflict = conflictMsg
+          else siteBConflict = conflictMsg
+        }
+      })
+
+      let internalConflict = ''
+      if (siteAConflict && siteBConflict) {
+        internalConflict = `🔴 Both sites occupied — Site A: ${siteAConflict} | Site B: ${siteBConflict}`
+      } else if (siteAConflict) {
+        internalConflict = `⚠️ Site A occupied — ${siteAConflict} | Site B available`
+      } else if (siteBConflict) {
+        internalConflict = `⚠️ Site B occupied — ${siteBConflict} | Site A available`
+      }
+
+      const hopObj: HOP = {
+        hop, gc,
+        ops:          String(row[opsCol] || '').trim(),
+        ms15f:        fmtDate(ms15f),
+        ms15a:        fmtDate(ms15a),
+        ms16f:        fmtDate(ms16f),
+        ms16a:        fmtDate(ms16a),
+        hasNtp, hasMat, wpApproved, gcPickup,
+        ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
+        ntpWaitingOn: String(row[ntpWaitCol] || '').trim() || String(row2?.[ntpWaitCol] || '').trim(),
+        matForecast:  fmtDate(matFc),
+        matReceived:  matDate ? fmtDate(matDate) : '',
+        gcPickupDate: fmtDate(pickupD),
+        hasSpo:       !!(spoDate && spoDate.getFullYear() >= 2020),
+        spoIssued:    spoDate ? fmtDate(spoDate) : '',
+        steelFrom:    steelFrom === 'nan' ? '' : steelFrom,
+        itwStart:     fmtDate(itwS),
+        itwEnd:       fmtDate(itwE),
+        ssStart:      fmtDate(ssS),
+        ssEnd:        fmtDate(ssE),
+        daysOut, daysElapsed, inProgress, complete,
+        vendorWindow,
+        internalConflict,
+        siteAConflict,
+        siteBConflict,
+        blockers: [],
+        pullInReady: hasNtp && hasMat && !vendorWindow.includes('🔴') && !vendorWindow.includes('⚠️') && !inProgress && !complete,
+        pullInStatus: ''
+      }
+      hopObj.blockers    = getBlockers(hopObj)
+      hopObj.pullInStatus = getPullInStatus(hopObj)
+      parsed.push(hopObj)
+    })
+
+    setHops(parsed)
+
+    // Build GC list dynamically from parsed HOPs
+    const uniqueGCs = Array.from(new Set(parsed.map(h => h.gc).filter(Boolean))).sort()
+    setGcList(uniqueGCs)
+    setSelectedGC('')
+    setLoaded(true)
+  }, [today])
+
   const handleFile = useCallback((file: File) => {
     setFileName(file.name)
     const reader = new FileReader()
@@ -234,238 +478,10 @@ export default function GCCallPage() {
       const ws = wb.Sheets['HOPs']
       if (!ws) { alert('HOPs tab not found in tracker'); return }
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-
-      let headerRow = -1
-      for (let i = 0; i < 10; i++) {
-        const row = rows[i] as unknown[]
-        if (row && row.some(cell => String(cell).trim() === 'HOP')) {
-          headerRow = i; break
-        }
-      }
-      if (headerRow === -1) { alert('Could not find header row'); return }
-
-      const headers = rows[headerRow] as string[]
-      const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
-
-      const hopCol    = col('HOP')
-      const gcCol     = col('General Contractor')
-      const nokiaPmCol= col('Nokia PM')
-      const opsCol    = col('Viaero Ops Field Ops')
-      const ms15fCol  = col('MS15 Implementation Start F')
-      const ms15aCol  = col('MS15 Implementation Start A')
-      const ms16fCol  = col('MS16 Implementation Ends F')
-      const ms16aCol  = col('MS16 Implementation Ends A')
-      const ntpCol    = col('NTP A')
-      const matCol    = headers.findIndex(h => String(h).trim() === 'Material Received A')
-      const matFcCol  = col('Material Forecast +4ish')
-      const wpCol     = col('Work Package Approved in QB')
-      const pickupCol = col('GC Material Pick-up (A)')
-      const spoCol    = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
-      const steelCol  = headers.findIndex(h => String(h).trim().toLowerCase().includes('steel from'))
-      const ntpOwnCol = col('NTP Action Owner')
-      const ntpWaitCol= col('NTP is waiting on')
-      const don444Col = col('DON 444')
-      const siteNameCol = col('Site Name')
-      const siteNumCol  = col('Site Number')
-      const itwSCol   = col('ITW Schedule Start')
-      const itwECol   = col('ITW Schedule Complete')
-      const ssSCol    = col('Samsung Schedule Start')
-      const ssECol    = col('Samsung Schedule Complete')
-
-      // First pass — collect all rows per HOP
-      const hopRows = new Map<string, unknown[][]>()
-
-      for (let i = headerRow + 1; i < rows.length; i++) {
-        const row = rows[i] as unknown[]
-        const don = String(row[don444Col] || '').trim().toUpperCase()
-        if (don !== 'DON 444') continue
-        const nokiaPm = String(row[nokiaPmCol] || '').trim().toUpperCase()
-        if (nokiaPm !== 'CJ') continue
-        const hop = String(row[hopCol] || '').trim()
-        if (!hop || hop === 'undefined') continue
-        if (!hopRows.has(hop)) hopRows.set(hop, [])
-        hopRows.get(hop)!.push(row)
-      }
-
-      // Build site occupancy map from all in-progress HOPs
-      // Maps "SiteName|SiteNumber" -> { gc, hop, ms16f }
-      const siteOccupancy = new Map<string, { gc: string, hop: string, ms16f: string }>()
-
-      hopRows.forEach((rows2, hop) => {
-        rows2.forEach(r => {
-          const ms15a = parseDate(r[ms15aCol])
-          const ms16a = parseDate(r[ms16aCol])
-          const inProg = !!ms15a && !ms16a
-          if (!inProg) return
-          const siteName   = String(r[siteNameCol] || '').trim()
-          const siteNumber = String(r[siteNumCol]  || '').trim()
-          const gc         = String(r[gcCol]        || '').trim()
-          const ms16f      = parseDateAny(r[ms16fCol])
-          if (siteName && siteNumber) {
-            const key = `${siteName}|${siteNumber}`.toLowerCase()
-            siteOccupancy.set(key, { gc, hop, ms16f: fmtDate(ms16f) })
-          }
-        })
-      })
-
-      const parsed: HOP[] = []
-
-      hopRows.forEach((rows2, hop) => {
-        const row  = rows2[0]
-        const row2 = rows2[1] || null
-
-        const gc      = String(row[gcCol] || '').trim()
-        const ms15f   = parseDateAny(row[ms15fCol])
-        const ms15a   = parseDate(row[ms15aCol])
-        const ms16f   = parseDateAny(row[ms16fCol])
-        const ms16a   = parseDate(row[ms16aCol])
-        const ntpDate = parseDate(row[ntpCol])
-        const matDate = parseDateAny(row[matCol])
-        const matFc   = parseDateAny(row[matFcCol])
-        const wpDate  = parseDateAny(row[wpCol])
-        const pickupD = parseDateAny(row[pickupCol])
-        const spoDate  = parseDateAny(row[spoCol]) || (row2 ? parseDateAny(row2[spoCol]) : null)
-        const steelFrom = String(row[steelCol] || row2?.[steelCol] || '').trim()
-        const itwS    = parseDateAny(row[itwSCol]) || (row2 ? parseDateAny(row2[itwSCol]) : null)
-        const itwE    = parseDateAny(row[itwECol]) || (row2 ? parseDateAny(row2[itwECol]) : null)
-        const ssS     = parseDateAny(row[ssSCol])  || (row2 ? parseDateAny(row2[ssSCol])  : null)
-        const ssE     = parseDateAny(row[ssECol])  || (row2 ? parseDateAny(row2[ssECol])  : null)
-
-        const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
-        const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
-        const wpApproved = !!wpDate
-        const gcPickup   = !!pickupD
-        const started    = !!ms15a
-        const complete   = !!ms16a
-        const inProgress = started && !complete
-        const daysOut    = ms15f ? daysBetween(today, ms15f) : null
-        const daysElapsed = inProgress && ms15a ? daysBetween(ms15a, today) : null
-
-        // Build vendor window by checking ALL site rows for worst case conflict
-        const allVendorParts: string[] = []
-
-        rows2.forEach(r => {
-          const rItwS  = parseDateAny(r[itwSCol])
-          const rItwE  = parseDateAny(r[itwECol])
-          const rSsS   = parseDateAny(r[ssSCol])
-          const rSsE   = parseDateAny(r[ssECol])
-          const rMs15f = parseDateAny(r[ms15fCol]) || ms15f
-
-          if (!rMs15f) return
-          if (!rSsS && !rSsE && !rItwS && !rItwE) return
-
-          const siteName = String(r[siteNameCol] || '').trim()
-          const siteLabel = siteName ? ` (${siteName})` : ''
-
-          const checkV = (name: string, start: Date | null, end: Date | null) => {
-            if (!start || !end) return
-            const ms15fTime = rMs15f.getTime()
-            const startTime = start.getTime()
-            const endTime   = end.getTime()
-            if (startTime <= ms15fTime && ms15fTime <= endTime) {
-              allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}${siteLabel}`)
-            } else if (endTime < ms15fTime) {
-              const buf = Math.round((ms15fTime - endTime) / (1000 * 60 * 60 * 24))
-              if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d before start${siteLabel}`)
-              else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
-              else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
-            } else {
-              const buf = Math.round((startTime - ms15fTime) / (1000 * 60 * 60 * 24))
-              if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
-              else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
-            }
-          }
-          checkV('ITW', rItwS, rItwE)
-          checkV('Samsung', rSsS, rSsE)
-        })
-
-        const itwParts = Array.from(new Set(allVendorParts.filter(p => p.includes('ITW'))))
-        const ssParts  = Array.from(new Set(allVendorParts.filter(p => p.includes('Samsung'))))
-
-        const sortParts = (parts: string[]) => {
-          const red    = parts.filter(p => p.includes('🔴'))
-          const yellow = parts.filter(p => p.includes('⚠️'))
-          const green  = parts.filter(p => p.includes('✅'))
-          return [...red, ...yellow, ...green]
-        }
-
-        const itwSorted = sortParts(itwParts)
-        const ssSorted  = sortParts(ssParts)
-
-        const allParts = [...itwSorted, ...ssSorted].filter(Boolean)
-        const vendorWindow = allParts.length > 0 ? allParts.join(' | ') : '✅ No conflicts'
-
-        // Check internal conflicts at site level
-        let siteAConflict = ''
-        let siteBConflict = ''
-
-        rows2.forEach((r, idx) => {
-          const siteName   = String(r[siteNameCol] || '').trim()
-          const siteNumber = String(r[siteNumCol]  || '').trim()
-          const thisGc     = String(r[gcCol] || '').trim()
-          if (!siteName || !siteNumber) return
-          const key = `${siteName}|${siteNumber}`.toLowerCase()
-          const occupant = siteOccupancy.get(key)
-          if (occupant && occupant.gc !== thisGc && occupant.hop !== hop) {
-            const conflictMsg = `⚠️ ${occupant.gc} on site — ${occupant.hop} completing ${occupant.ms16f}`
-            if (idx === 0) siteAConflict = conflictMsg
-            else siteBConflict = conflictMsg
-          }
-        })
-
-        let internalConflict = ''
-        if (siteAConflict && siteBConflict) {
-          internalConflict = `🔴 Both sites occupied — Site A: ${siteAConflict} | Site B: ${siteBConflict}`
-        } else if (siteAConflict) {
-          internalConflict = `⚠️ Site A occupied — ${siteAConflict} | Site B available`
-        } else if (siteBConflict) {
-          internalConflict = `⚠️ Site B occupied — ${siteBConflict} | Site A available`
-        }
-
-        const hopObj: HOP = {
-          hop, gc,
-          ops:          String(row[opsCol] || '').trim(),
-          ms15f:        fmtDate(ms15f),
-          ms15a:        fmtDate(ms15a),
-          ms16f:        fmtDate(ms16f),
-          ms16a:        fmtDate(ms16a),
-          hasNtp, hasMat, wpApproved, gcPickup,
-          ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
-          ntpWaitingOn: String(row[ntpWaitCol] || '').trim() || String(row2?.[ntpWaitCol] || '').trim(),
-          matForecast:  fmtDate(matFc),
-          matReceived:  matDate ? fmtDate(matDate) : '',
-          gcPickupDate: fmtDate(pickupD),
-          hasSpo:       !!(spoDate && spoDate.getFullYear() >= 2020),
-          spoIssued:    spoDate ? fmtDate(spoDate) : '',
-          steelFrom:    steelFrom === 'nan' ? '' : steelFrom,
-          itwStart:     fmtDate(itwS),
-          itwEnd:       fmtDate(itwE),
-          ssStart:      fmtDate(ssS),
-          ssEnd:        fmtDate(ssE),
-          daysOut, daysElapsed, inProgress, complete,
-          vendorWindow,
-          internalConflict,
-          siteAConflict,
-          siteBConflict,
-          blockers: [],
-          pullInReady: hasNtp && hasMat && !vendorWindow.includes('🔴') && !vendorWindow.includes('⚠️') && !inProgress && !complete,
-          pullInStatus: ''
-        }
-        hopObj.blockers    = getBlockers(hopObj)
-        hopObj.pullInStatus = getPullInStatus(hopObj)
-        parsed.push(hopObj)
-      })
-
-      setHops(parsed)
-
-      // Build GC list dynamically from parsed HOPs
-      const uniqueGCs = Array.from(new Set(parsed.map(h => h.gc).filter(Boolean))).sort()
-      setGcList(uniqueGCs)
-      setSelectedGC('')
-      setLoaded(true)
+      processRows(rows, file.name)
     }
     reader.readAsArrayBuffer(file)
-  }, [today])
+  }, [processRows])
 
   const logDateEdit = (hop: string, field: string, oldVal: string, newVal: string) => {
     if (!newVal || newVal === oldVal) return
@@ -832,19 +848,17 @@ export default function GCCallPage() {
           </div>
         )}
 
-        {/* File Upload */}
-        <div
-          className="mb-6 border-2 border-dashed border-gray-600 rounded-xl p-5 text-center cursor-pointer hover:border-blue-500 transition-colors"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
-          onClick={() => document.getElementById('tracker-upload')?.click()}
-        >
-          <input id="tracker-upload" type="file" accept=".xlsx" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          {loaded
-            ? <p className="text-green-400 font-semibold">✅ {fileName} — {hops.length} HOPs loaded</p>
-            : <p className="text-gray-400">📂 Drop your tracker here or click to upload</p>}
-        </div>
+        {snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
+            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
+            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+          </div>
+        )}
+        {!snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+          </div>
+        )}
 
         {/* GC Selector */}
         <div className="flex gap-3 mb-6 flex-wrap">
@@ -882,14 +896,7 @@ export default function GCCallPage() {
               </button>
             </div>
 
-            {!loaded && (
-              <div className="bg-gray-800 rounded-lg p-8 text-center border border-dashed border-gray-600">
-                <p className="text-gray-400">📂 Upload your tracker above to load {selectedGC} pipeline</p>
-              </div>
-            )}
-
-            {loaded && (
-              <div className="space-y-8">
+            <div className="space-y-8">
 
                 {/* Active Sites */}
                 <div>
@@ -982,7 +989,6 @@ export default function GCCallPage() {
                 </div>
 
               </div>
-            )}
           </div>
         )}
 

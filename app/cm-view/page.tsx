@@ -4,7 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase } from '../lib/supabase'
+import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
 interface HOP {
   hop: string
@@ -140,6 +140,7 @@ export default function CMViewPage() {
   const [showPmUpdates, setShowPmUpdates] = useState(false)
   const [pmSortAsc, setPmSortAsc] = useState(true)
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
+  const [snapshotTime, setSnapshotTime] = useState<string>('')
   const today = new Date()
 
   useEffect(() => {
@@ -280,6 +281,184 @@ export default function CMViewPage() {
     </td>
   )
 
+  useEffect(() => {
+    const loadFromSnapshot = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (!snap) return
+      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
+      setFileName(snap.filename)
+      processRows(snap.data, snap.filename)
+    }
+    loadFromSnapshot()
+  }, [])
+
+  const processRows = useCallback((rows: unknown[][], _filename: string) => {
+
+    let headerRow = -1
+    for (let i = 0; i < 10; i++) {
+      if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+    }
+    if (headerRow === -1) { alert('Could not find header row'); return }
+
+    const headers = rows[headerRow] as string[]
+    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+
+    const hopCol      = col('HOP')
+    const gcCol       = col('General Contractor')
+    const regionPmCol = col('Region PM')
+    const newCmCol    = col('New CM')
+    const opsCol      = col('Viaero Ops Field Ops')
+    const don444Col   = col('DON 444')
+    const ms15fCol    = col('MS15 Implementation Start F')
+    const ms15aCol    = col('MS15 Implementation Start A')
+    const ms16fCol    = col('MS16 Implementation Ends F')
+    const ms16aCol    = col('MS16 Implementation Ends A')
+    const mssCol      = col('MSS Completed NMS Ready ')
+    const powerCol    = col('Power-Up Completion')
+    const mainCutCol  = col('Main Path Cutover Completed')
+    const divCutCol   = col('Diversity Cutover Completed')
+    const decomCol    = col('Decom Complete')
+    const ntpCol      = col('NTP A')
+    const matCol      = headers.findIndex(h => String(h).trim().replace(/\s+$/, '') === 'Material Received A'.trim())
+    const matFcCol    = col('Material Forecast +4ish')
+    const wpCol       = col('Work Package Approved in QB')
+    const pickupCol   = col('GC Material Pick-up (A)')
+    const ntpOwnCol   = col('NTP Action Owner')
+    const ntpWaitCol  = col('NTP is waiting on')
+    const matLocCol   = col('Material Current Location')
+    const steelCol    = headers.findIndex(h => String(h).trim().toLowerCase().includes('steel from'))
+    const itwSCol     = col('ITW Schedule Start')
+    const itwECol     = col('ITW Schedule Complete')
+    const ssSCol      = col('Samsung Schedule Start')
+    const ssECol      = col('Samsung Schedule Complete')
+    const siteNameCol = col('Site Name')
+
+    const hopRows = new Map<string, unknown[][]>()
+    for (let i = headerRow + 1; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      const don = String(row[don444Col] || '').trim().toUpperCase()
+      if (don !== 'DON 444') continue
+      const regionPm = String(row[regionPmCol] || '').trim().toUpperCase()
+      if (regionPm !== 'CJ') continue
+      const hop = String(row[hopCol] || '').trim()
+      if (!hop || hop === 'undefined') continue
+      if (!hopRows.has(hop)) hopRows.set(hop, [])
+      hopRows.get(hop)!.push(row)
+    }
+
+    const parsed: HOP[] = []
+    hopRows.forEach((rows2, hop) => {
+      const row  = rows2[0]
+      const row2 = rows2[1] || null
+
+      const ms15f    = parseDateAny(row[ms15fCol])
+      const ms15a    = parseDate(row[ms15aCol])
+      const ms16a    = parseDate(row[ms16aCol])
+      const ntpDate  = parseDate(row[ntpCol])
+      const matDate  = parseDateAny(row[matCol])
+      const wpDate   = parseDateAny(row[wpCol])
+      const pickupD  = parseDateAny(row[pickupCol])
+      const mssDate  = parseDateAny(row[mssCol])
+      const powerDate= parseDateAny(row[powerCol])
+      const mainDate = parseDateAny(row[mainCutCol])
+      const divDate  = parseDateAny(row[divCutCol])
+      const decomDate= parseDateAny(row[decomCol])
+
+      const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
+      const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
+      const wpApproved = !!wpDate
+      const gcPickup   = !!pickupD
+      const started    = !!ms15a
+      const complete   = !!ms16a
+      const inProgress = started && !complete
+      const daysOut    = ms15f ? daysBetween(today, ms15f) : null
+      const daysElapsed = inProgress && ms15a ? daysBetween(ms15a, today) : null
+
+      // Vendor window — read both rows
+      const allVendorParts: string[] = []
+      rows2.forEach(r => {
+        const rItwS  = parseDateAny(r[itwSCol])
+        const rItwE  = parseDateAny(r[itwECol])
+        const rSsS   = parseDateAny(r[ssSCol])
+        const rSsE   = parseDateAny(r[ssECol])
+        const rMs15f = parseDateAny(r[ms15fCol]) || ms15f
+        if (!rMs15f) return
+        if (!rSsS && !rSsE && !rItwS && !rItwE) return
+        const siteName  = String(r[siteNameCol] || '').trim()
+        const siteLabel = siteName ? ` (${siteName})` : ''
+        const checkV = (name: string, start: Date | null, end: Date | null) => {
+          if (!start || !end) return
+          const ms15fTime = rMs15f.getTime()
+          const startTime = start.getTime()
+          const endTime   = end.getTime()
+          if (startTime <= ms15fTime && ms15fTime <= endTime) {
+            allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}${siteLabel}`)
+          } else if (endTime < ms15fTime) {
+            const buf = Math.round((ms15fTime - endTime) / (1000 * 60 * 60 * 24))
+            if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d${siteLabel}`)
+            else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
+            else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)}${siteLabel}`)
+          } else {
+            const buf = Math.round((startTime - ms15fTime) / (1000 * 60 * 60 * 24))
+            if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
+            else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)}${siteLabel}`)
+          }
+        }
+        checkV('ITW', rItwS, rItwE)
+        checkV('Samsung', rSsS, rSsE)
+      })
+
+      const itwParts  = Array.from(new Set(allVendorParts.filter(p => p.includes('ITW'))))
+      const ssParts   = Array.from(new Set(allVendorParts.filter(p => p.includes('Samsung'))))
+      const sortParts = (parts: string[]) => [...parts.filter(p => p.includes('🔴')), ...parts.filter(p => p.includes('⚠️')), ...parts.filter(p => p.includes('✅'))]
+      const vendorWindow = [...sortParts(itwParts), ...sortParts(ssParts)].filter(Boolean).join(' | ') || '✅ No conflicts'
+
+      const blockers: string[] = []
+      if (!hasNtp) blockers.push('🔴 NTP pending')
+      if (!hasMat) blockers.push('🔴 Material not received')
+      if (hasMat && !gcPickup) blockers.push('🟠 Mat in warehouse — GC pickup needed')
+      if (!wpApproved) blockers.push('🟡 WP not approved')
+      if (vendorWindow.includes('🔴')) blockers.push('🔴 Vendor conflict')
+
+      const hopObj: HOP = {
+        hop,
+        gc:           String(row[gcCol] || '').trim(),
+        cm:           String(row[newCmCol] || '').trim() || String(row2?.[newCmCol] || '').trim(),
+        ops:          String(row[opsCol] || '').trim(),
+        ms15f:        fmtDate(ms15f),
+        ms15a:        fmtDate(ms15a),
+        ms16f:        fmtDate(parseDateAny(row[ms16fCol])),
+        ms16a:        fmtDate(ms16a),
+        mss:          fmtDate(mssDate),
+        powerUp:      fmtDate(powerDate),
+        mainCutover:  fmtDate(mainDate),
+        divCutover:   fmtDate(divDate),
+        decom:        fmtDate(decomDate),
+        hasNtp, hasMat, wpApproved, gcPickup,
+        gcPickupDate: fmtDate(pickupD),
+        ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
+        ntpWaitingOn: String(row[ntpWaitCol] || '').trim() || String(row2?.[ntpWaitCol] || '').trim(),
+        matForecast:  fmtDate(parseDateAny(row[matFcCol])),
+        matReceived:  hasMat ? fmtDate(matDate) : '',
+        matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
+        steelFrom:    String(row[steelCol] || '').trim() || String(row2?.[steelCol] || '').trim(),
+        vendorWindow, blockers,
+        daysOut, daysElapsed, inProgress, complete,
+        statuses: [],
+        cmAction: ''
+      }
+      hopObj.statuses = getStatuses(hopObj)
+      hopObj.cmAction = getCmAction(hopObj)
+      parsed.push(hopObj)
+    })
+
+    const uniqueCMs = Array.from(new Set(parsed.map(h => h.cm).filter(Boolean))).sort()
+    setCmList(uniqueCMs)
+    setHops(parsed)
+    setLoaded(true)
+    setSelectedCM('')
+  }, [today])
+
   const handleFile = useCallback((file: File) => {
     setFileName(file.name)
     const reader = new FileReader()
@@ -289,173 +468,10 @@ export default function CMViewPage() {
       const ws = wb.Sheets['HOPs']
       if (!ws) { alert('HOPs tab not found'); return }
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-
-      let headerRow = -1
-      for (let i = 0; i < 10; i++) {
-        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
-      }
-      if (headerRow === -1) { alert('Could not find header row'); return }
-
-      const headers = rows[headerRow] as string[]
-      const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
-
-      const hopCol      = col('HOP')
-      const gcCol       = col('General Contractor')
-      const regionPmCol = col('Region PM')
-      const newCmCol    = col('New CM')
-      const opsCol      = col('Viaero Ops Field Ops')
-      const don444Col   = col('DON 444')
-      const ms15fCol    = col('MS15 Implementation Start F')
-      const ms15aCol    = col('MS15 Implementation Start A')
-      const ms16fCol    = col('MS16 Implementation Ends F')
-      const ms16aCol    = col('MS16 Implementation Ends A')
-      const mssCol      = col('MSS Completed NMS Ready ')
-      const powerCol    = col('Power-Up Completion')
-      const mainCutCol  = col('Main Path Cutover Completed')
-      const divCutCol   = col('Diversity Cutover Completed')
-      const decomCol    = col('Decom Complete')
-      const ntpCol      = col('NTP A')
-      const matCol      = headers.findIndex(h => String(h).trim().replace(/\s+$/, '') === 'Material Received A'.trim())
-      const matFcCol    = col('Material Forecast +4ish')
-      const wpCol       = col('Work Package Approved in QB')
-      const pickupCol   = col('GC Material Pick-up (A)')
-      const ntpOwnCol   = col('NTP Action Owner')
-      const ntpWaitCol  = col('NTP is waiting on')
-      const matLocCol   = col('Material Current Location')
-      const steelCol    = headers.findIndex(h => String(h).trim().toLowerCase().includes('steel from'))
-      const itwSCol     = col('ITW Schedule Start')
-      const itwECol     = col('ITW Schedule Complete')
-      const ssSCol      = col('Samsung Schedule Start')
-      const ssECol      = col('Samsung Schedule Complete')
-      const siteNameCol = col('Site Name')
-
-      const hopRows = new Map<string, unknown[][]>()
-      for (let i = headerRow + 1; i < rows.length; i++) {
-        const row = rows[i] as unknown[]
-        const don = String(row[don444Col] || '').trim().toUpperCase()
-        if (don !== 'DON 444') continue
-        const regionPm = String(row[regionPmCol] || '').trim().toUpperCase()
-        if (regionPm !== 'CJ') continue
-        const hop = String(row[hopCol] || '').trim()
-        if (!hop || hop === 'undefined') continue
-        if (!hopRows.has(hop)) hopRows.set(hop, [])
-        hopRows.get(hop)!.push(row)
-      }
-
-      const parsed: HOP[] = []
-      hopRows.forEach((rows2, hop) => {
-        const row  = rows2[0]
-        const row2 = rows2[1] || null
-
-        const ms15f    = parseDateAny(row[ms15fCol])
-        const ms15a    = parseDate(row[ms15aCol])
-        const ms16a    = parseDate(row[ms16aCol])
-        const ntpDate  = parseDate(row[ntpCol])
-        const matDate  = parseDateAny(row[matCol])
-        const wpDate   = parseDateAny(row[wpCol])
-        const pickupD  = parseDateAny(row[pickupCol])
-        const mssDate  = parseDateAny(row[mssCol])
-        const powerDate= parseDateAny(row[powerCol])
-        const mainDate = parseDateAny(row[mainCutCol])
-        const divDate  = parseDateAny(row[divCutCol])
-        const decomDate= parseDateAny(row[decomCol])
-
-        const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
-        const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
-        const wpApproved = !!wpDate
-        const gcPickup   = !!pickupD
-        const started    = !!ms15a
-        const complete   = !!ms16a
-        const inProgress = started && !complete
-        const daysOut    = ms15f ? daysBetween(today, ms15f) : null
-        const daysElapsed = inProgress && ms15a ? daysBetween(ms15a, today) : null
-
-        // Vendor window — read both rows
-        const allVendorParts: string[] = []
-        rows2.forEach(r => {
-          const rItwS  = parseDateAny(r[itwSCol])
-          const rItwE  = parseDateAny(r[itwECol])
-          const rSsS   = parseDateAny(r[ssSCol])
-          const rSsE   = parseDateAny(r[ssECol])
-          const rMs15f = parseDateAny(r[ms15fCol]) || ms15f
-          if (!rMs15f) return
-          if (!rSsS && !rSsE && !rItwS && !rItwE) return
-          const siteName  = String(r[siteNameCol] || '').trim()
-          const siteLabel = siteName ? ` (${siteName})` : ''
-          const checkV = (name: string, start: Date | null, end: Date | null) => {
-            if (!start || !end) return
-            const ms15fTime = rMs15f.getTime()
-            const startTime = start.getTime()
-            const endTime   = end.getTime()
-            if (startTime <= ms15fTime && ms15fTime <= endTime) {
-              allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}${siteLabel}`)
-            } else if (endTime < ms15fTime) {
-              const buf = Math.round((ms15fTime - endTime) / (1000 * 60 * 60 * 24))
-              if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d${siteLabel}`)
-              else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
-              else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)}${siteLabel}`)
-            } else {
-              const buf = Math.round((startTime - ms15fTime) / (1000 * 60 * 60 * 24))
-              if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
-              else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)}${siteLabel}`)
-            }
-          }
-          checkV('ITW', rItwS, rItwE)
-          checkV('Samsung', rSsS, rSsE)
-        })
-
-        const itwParts  = Array.from(new Set(allVendorParts.filter(p => p.includes('ITW'))))
-        const ssParts   = Array.from(new Set(allVendorParts.filter(p => p.includes('Samsung'))))
-        const sortParts = (parts: string[]) => [...parts.filter(p => p.includes('🔴')), ...parts.filter(p => p.includes('⚠️')), ...parts.filter(p => p.includes('✅'))]
-        const vendorWindow = [...sortParts(itwParts), ...sortParts(ssParts)].filter(Boolean).join(' | ') || '✅ No conflicts'
-
-        const blockers: string[] = []
-        if (!hasNtp) blockers.push('🔴 NTP pending')
-        if (!hasMat) blockers.push('🔴 Material not received')
-        if (hasMat && !gcPickup) blockers.push('🟠 Mat in warehouse — GC pickup needed')
-        if (!wpApproved) blockers.push('🟡 WP not approved')
-        if (vendorWindow.includes('🔴')) blockers.push('🔴 Vendor conflict')
-
-        const hopObj: HOP = {
-          hop,
-          gc:           String(row[gcCol] || '').trim(),
-          cm:           String(row[newCmCol] || '').trim() || String(row2?.[newCmCol] || '').trim(),
-          ops:          String(row[opsCol] || '').trim(),
-          ms15f:        fmtDate(ms15f),
-          ms15a:        fmtDate(ms15a),
-          ms16f:        fmtDate(parseDateAny(row[ms16fCol])),
-          ms16a:        fmtDate(ms16a),
-          mss:          fmtDate(mssDate),
-          powerUp:      fmtDate(powerDate),
-          mainCutover:  fmtDate(mainDate),
-          divCutover:   fmtDate(divDate),
-          decom:        fmtDate(decomDate),
-          hasNtp, hasMat, wpApproved, gcPickup,
-          gcPickupDate: fmtDate(pickupD),
-          ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
-          ntpWaitingOn: String(row[ntpWaitCol] || '').trim() || String(row2?.[ntpWaitCol] || '').trim(),
-          matForecast:  fmtDate(parseDateAny(row[matFcCol])),
-          matReceived:  hasMat ? fmtDate(matDate) : '',
-          matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
-          steelFrom:    String(row[steelCol] || '').trim() || String(row2?.[steelCol] || '').trim(),
-          vendorWindow, blockers,
-          daysOut, daysElapsed, inProgress, complete,
-          statuses: [],
-          cmAction: ''
-        }
-        hopObj.statuses = getStatuses(hopObj)
-        hopObj.cmAction = getCmAction(hopObj)
-        parsed.push(hopObj)
-      })
-
-      const uniqueCMs = Array.from(new Set(parsed.map(h => h.cm).filter(Boolean))).sort()
-      setCmList(uniqueCMs)
-      setHops(parsed)
-      setLoaded(true)
-      setSelectedCM('')
+      processRows(rows, file.name)
     }
     reader.readAsArrayBuffer(file)
-  }, [today])
+  }, [processRows])
 
   const cmHops    = hops.filter(h => h.cm === selectedCM)
   const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
@@ -684,19 +700,17 @@ export default function CMViewPage() {
           </div>
         )}
 
-        {/* File Upload */}
-        <div
-          className="mb-6 border-2 border-dashed border-gray-600 rounded-xl p-5 text-center cursor-pointer hover:border-blue-500 transition-colors"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
-          onClick={() => document.getElementById('cm-tracker-upload')?.click()}
-        >
-          <input id="cm-tracker-upload" type="file" accept=".xlsx" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          {loaded
-            ? <p className="text-green-400 font-semibold">✅ {fileName} — {hops.length} HOPs loaded</p>
-            : <p className="text-gray-400">📂 Drop your tracker here or click to upload</p>}
-        </div>
+        {snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
+            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
+            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+          </div>
+        )}
+        {!snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+          </div>
+        )}
 
         {/* CM Selector */}
         <div className="flex gap-3 mb-6 flex-wrap">

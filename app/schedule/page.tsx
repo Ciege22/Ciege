@@ -2,8 +2,9 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
+import { loadTrackerSnapshot } from '../lib/supabase'
 
 interface HOP {
   hop: string
@@ -127,7 +128,385 @@ export default function SchedulePage() {
   const [activeTab, setActiveTab] = useState<'gantt' | 'suggestions' | 'gaps'>('suggestions')
   const [selectedGC, setSelectedGC] = useState<string>('ALL')
   const [sortAsc, setSortAsc] = useState(true)
+  const [snapshotTime, setSnapshotTime] = useState<string>('')
   const today = new Date()
+
+  useEffect(() => {
+    const loadFromSnapshot = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (!snap) return
+      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
+      setFileName(snap.filename)
+      processRows(snap.data, snap.filename)
+    }
+    loadFromSnapshot()
+  }, [])
+
+  const processRows = useCallback((rows: unknown[][], _filename: string) => {
+
+    let headerRow = -1
+    for (let i = 0; i < 10; i++) {
+      if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+    }
+    if (headerRow === -1) { alert('Could not find header row'); return }
+
+    const headers = rows[headerRow] as string[]
+    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+
+    const hopCol      = col('HOP')
+    const gcCol       = col('General Contractor')
+    const nokiaPmCol  = col('Nokia PM')
+    const newCmCol    = col('New CM')
+    const don444Col   = col('DON 444')
+    const ms15fCol    = col('MS15 Implementation Start F')
+    const ms15aCol    = col('MS15 Implementation Start A')
+    const ms16fCol    = col('MS16 Implementation Ends F')
+    const ms16aCol    = col('MS16 Implementation Ends A')
+    const ntpCol      = col('NTP A')
+    const matCol      = headers.findIndex(h => String(h).trim() === 'Material Received A ')
+    const itwSCol     = col('ITW Schedule Start')
+    const itwECol     = col('ITW Schedule Complete')
+    const ssSCol      = col('Samsung Schedule Start')
+    const ssECol      = col('Samsung Schedule Complete')
+
+    const hopRows = new Map<string, unknown[][]>()
+    for (let i = headerRow + 1; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      const don = String(row[don444Col] || '').trim().toUpperCase()
+      if (don !== 'DON 444') continue
+      const nokiaPm = String(row[nokiaPmCol] || '').trim().toUpperCase()
+      if (nokiaPm !== 'CJ') continue
+      const hop = String(row[hopCol] || '').trim()
+      if (!hop || hop === 'undefined') continue
+      if (!hopRows.has(hop)) hopRows.set(hop, [])
+      hopRows.get(hop)!.push(row)
+    }
+
+    const parsed: HOP[] = []
+    hopRows.forEach((rows2, hop) => {
+      const row  = rows2[0]
+      const ms15f = parseDate(row[ms15fCol])
+      const ms15a = parseDate(row[ms15aCol])
+      const ms16f = parseDate(row[ms16fCol])
+      const ms16a = parseDate(row[ms16aCol])
+      const ntpDate = parseDate(row[ntpCol])
+      const matDate = parseDate(row[matCol])
+      const started  = !!ms15a
+      const complete = !!ms16a
+      const hasNtp   = !!(ntpDate && ntpDate.getFullYear() >= 2025)
+      const hasMat   = !!(matDate && matDate.getFullYear() >= 2020)
+
+      // Collect vendor conflicts from ALL rows
+      const vendorConflicts: { vendor: string; start: Date; end: Date }[] = []
+      rows2.forEach(r => {
+        const itwS = parseDate(r[itwSCol]); const itwE = parseDate(r[itwECol])
+        const ssS  = parseDate(r[ssSCol]);  const ssE  = parseDate(r[ssECol])
+        if (itwS && itwE) vendorConflicts.push({ vendor: 'ITW', start: itwS, end: itwE })
+        if (ssS && ssE)   vendorConflicts.push({ vendor: 'Samsung', start: ssS, end: ssE })
+      })
+
+      const siteNames = rows2.map(r => String(r[col('Site Name')] || '').trim()).filter(Boolean)
+
+      parsed.push({
+        hop,
+        gc:       String(row[gcCol] || '').trim(),
+        cm:       String(row[newCmCol] || '').trim(),
+        ms15f, ms15a, ms16f, ms16a,
+        hasNtp, hasMat,
+        vendorConflicts,
+        siteNames,
+        inProgress: started && !complete,
+        complete,
+        daysOut: ms15f ? daysBetween(today, ms15f) : null,
+        nokiaPm: String(row[nokiaPmCol] || '').trim()
+      })
+    })
+
+    // â”€â”€ Build crew assignments â”€â”€
+    const assignments: CrewAssignment[] = []
+    const gcList = ['MZI', 'NV Tel', 'Mastec', 'Vikor', 'Tech CX']
+
+    gcList.forEach(gc => {
+      const gcHopList = parsed
+        .filter(h => h.gc === gc && !h.complete)
+        .sort((a, b) => {
+          if (a.inProgress && !b.inProgress) return -1
+          if (!a.inProgress && b.inProgress) return 1
+          const aDate = a.ms15a || a.ms15f
+          const bDate = b.ms15a || b.ms15f
+          if (!aDate && !bDate) return 0
+          if (!aDate) return 1
+          if (!bDate) return -1
+          return aDate.getTime() - bDate.getTime()
+        })
+
+      const numCrews = GC_CREWS[gc] || 1
+      const crewAvail: Date[] = Array(numCrews).fill(today).map(() => new Date(today))
+
+      // Assign in-progress first
+      const inProg = gcHopList.filter(h => h.inProgress)
+      const pipeline = gcHopList.filter(h => !h.inProgress)
+
+      inProg.forEach((h, i) => {
+        const crewIdx = i % numCrews
+        const start = h.ms15a || today
+        const end   = h.ms16f || addDays(start, HOP_DURATION)
+        assignments.push({ crewId: `${gc}-Crew${crewIdx + 1}`, gc, hop: h.hop, start, end, isActive: true, isComplete: false })
+        crewAvail[crewIdx] = addDays(end, 1)
+      })
+
+      pipeline.forEach(h => {
+        const earliest = crewAvail.reduce((min, d) => d < min ? d : min, crewAvail[0])
+        const crewI = crewAvail.findIndex(d => d.getTime() === earliest.getTime())
+        const start = h.ms15f || addDays(earliest, 0)
+        const end   = addDays(start, HOP_DURATION)
+        assignments.push({ crewId: `${gc}-Crew${crewI + 1}`, gc, hop: h.hop, start, end, isActive: false, isComplete: false })
+        crewAvail[crewI] = addDays(end, 1)
+      })
+    })
+
+    // â”€â”€ Detect gaps â”€â”€
+    const gapList: GapInfo[] = []
+    const crewMap = new Map<string, CrewAssignment[]>()
+    assignments.forEach(a => {
+      if (!crewMap.has(a.crewId)) crewMap.set(a.crewId, [])
+      crewMap.get(a.crewId)!.push(a)
+    })
+    crewMap.forEach((crewJobs, crewId) => {
+      const sorted = crewJobs.sort((a, b) => a.start.getTime() - b.start.getTime())
+      for (let i = 0; i < sorted.length - 1; i++) {
+        const gap = daysBetween(sorted[i].end, sorted[i + 1].start)
+        if (gap > 3) {
+          gapList.push({
+            gc: sorted[i].gc, crewId,
+            gapStart: addDays(sorted[i].end, 1),
+            gapEnd: addDays(sorted[i + 1].start, -1),
+            gapDays: gap,
+            nextHop: sorted[i + 1].hop
+          })
+        }
+      }
+    })
+
+    // â”€â”€ Generate suggestions â”€â”€
+    const suggList: ScheduleSuggestion[] = []
+
+    parsed.forEach(h => {
+      if (h.complete) return
+
+      // Show in-progress HOPs
+      if (h.inProgress) {
+        const elapsed = h.ms15a ? daysBetween(h.ms15a, today) : 0
+        const ms16f = h.ms16f
+        const daysRemaining = ms16f ? daysBetween(today, ms16f) : null
+        const over18 = elapsed > 18
+        const allReasons: string[] = []
+        if (over18) allReasons.push(`⚠️ ${elapsed}d elapsed — over 18d target`)
+        if (daysRemaining !== null && daysRemaining < 0) allReasons.push(`🔴 FC End passed ${Math.abs(daysRemaining)}d ago`)
+        allReasons.push(`Started: ${fmtDate(h.ms15a)} | FC End: ${fmtDate(ms16f)}`)
+
+        suggList.push({
+          hop: h.hop, gc: h.gc,
+          currentStart: fmtDate(h.ms15a),
+          suggestedStart: fmtDate(ms16f),
+          daysMoved: 0,
+          direction: over18 ? 'push-out' : 'pull-in',
+          reason: over18
+            ? `🔨 IN PROGRESS — ${elapsed}d elapsed ⚠️ Over 18d target — get updated completion date`
+            : `🔨 IN PROGRESS — ${elapsed}d elapsed — on track, FC end ${fmtDate(ms16f)}`,
+          blocker: over18 ? `${elapsed}d elapsed` : 'None',
+          crewId: '',
+          readiness: `Started: ${fmtDate(h.ms15a)}`,
+          vendorClearsDate: undefined,
+          crewAvailDate: ms16f ? fmtDate(ms16f) : undefined,
+          allReasons,
+          parallelHops: []
+        })
+        return
+      }
+
+      // Flag unassigned HOPs
+      if (!h.gc) {
+        suggList.push({
+          hop: h.hop, gc: 'UNASSIGNED', currentStart: fmtDate(h.ms15f),
+          suggestedStart: '', daysMoved: 0, direction: 'unassigned',
+          reason: '⚠️ No GC assigned — needs contractor assignment',
+          blocker: 'No GC', crewId: '', readiness: h.hasNtp && h.hasMat ? '✅ NTP + Mat ready' : `NTP: ${h.hasNtp ? '✓' : '✗'} | Mat: ${h.hasMat ? '✓' : '✗'}`
+        })
+        return
+      }
+
+      if (!h.ms15f || h.inProgress) return
+
+      const vcConflict = hasVendorConflict(h.ms15f, h.vendorConflicts)
+      const readiness  = `NTP: ${h.hasNtp ? '✓' : '✗'} | Mat: ${h.hasMat ? '✓' : '✗'}`
+
+      // Find earliest available crew date for this GC
+      const gcAssignments = assignments.filter(a => a.gc === h.gc)
+      const crewAvailDates = new Map<string, Date>()
+      gcAssignments.forEach(a => {
+        const cur = crewAvailDates.get(a.crewId)
+        if (!cur || a.end > cur) crewAvailDates.set(a.crewId, addDays(a.end, 1))
+      })
+
+      let earliestCrew = ''
+      let earliestDate: Date | null = null
+      crewAvailDates.forEach((date, crewId) => {
+        if (!earliestDate || date < earliestDate) {
+          earliestDate = date; earliestCrew = crewId
+        }
+      })
+
+      // Find vendor clear date
+      let vendorClearDate: Date | null = null
+      if (h.vendorConflicts.length > 0) {
+        for (const c of h.vendorConflicts) {
+          const clearCandidate = addDays(c.end, 1)
+          if (!vendorClearDate || clearCandidate > vendorClearDate) vendorClearDate = clearCandidate
+        }
+      }
+
+      // Effective earliest start = max of crew available and vendor clear
+      const effectiveStart = earliestDate
+        ? (vendorClearDate && vendorClearDate > (earliestDate as Date)
+            ? vendorClearDate
+            : earliestDate as Date)
+        : vendorClearDate
+
+      // Find parallel HOPs — same site names
+      const parallelHops = parsed.filter(other =>
+        other.hop !== h.hop &&
+        other.gc === h.gc &&
+        !other.complete &&
+        !other.inProgress &&
+        other.siteNames.some(s => h.siteNames.includes(s))
+      ).map(o => o.hop)
+
+      const allReasons: string[] = []
+
+      // Pull-in opportunity
+      if (h.hasNtp && h.hasMat && !vcConflict && effectiveStart && h.ms15f && effectiveStart < h.ms15f) {
+        const daysMoved = daysBetween(effectiveStart, h.ms15f)
+        if (daysMoved >= 1) {
+          allReasons.push(`✅ Pull in ${daysMoved}d — crew available ${fmtDate(effectiveStart as Date)}, NTP + Mat confirmed`)
+          if (parallelHops.length > 0) allReasons.push(`🔄 Can start together with: ${parallelHops.join(', ')}`)
+          suggList.push({
+            hop: h.hop, gc: h.gc,
+            currentStart: fmtDate(h.ms15f),
+            suggestedStart: fmtDate(effectiveStart as Date),
+            daysMoved, direction: 'pull-in',
+            reason: allReasons[0],
+            blocker: 'None',
+            crewId: earliestCrew,
+            readiness,
+            vendorClearsDate: vendorClearDate ? fmtDate(vendorClearDate) : undefined,
+            crewAvailDate: earliestDate ? fmtDate(earliestDate as Date) : undefined,
+            allReasons,
+            parallelHops
+          })
+        }
+      }
+
+      // Vendor conflict
+      if (vcConflict) {
+        const suggestedAfterVendor = vendorClearDate || h.ms15f
+        allReasons.push(`🔴 Vendor conflict — ${vcConflict}`)
+        if (effectiveStart && h.ms15f && effectiveStart > h.ms15f) {
+          allReasons.push(`📅 Crew available ${fmtDate(earliestDate as unknown as Date)} | Vendor clears ${vendorClearDate ? fmtDate(vendorClearDate) : '?'}`)
+        }
+        if (!suggList.find(s => s.hop === h.hop)) {
+          suggList.push({
+            hop: h.hop, gc: h.gc,
+            currentStart: fmtDate(h.ms15f),
+            suggestedStart: suggestedAfterVendor ? fmtDate(suggestedAfterVendor) : '',
+            daysMoved: suggestedAfterVendor && h.ms15f ? Math.abs(daysBetween(h.ms15f, suggestedAfterVendor)) : 0,
+            direction: 'push-out',
+            reason: allReasons[0],
+            blocker: vcConflict,
+            crewId: earliestCrew || '',
+            readiness,
+            vendorClearsDate: vendorClearDate ? fmtDate(vendorClearDate) : undefined,
+            crewAvailDate: earliestDate ? fmtDate(earliestDate as Date) : undefined,
+            allReasons,
+            parallelHops
+          })
+        }
+      }
+
+      // Missing NTP or material
+      if ((!h.hasNtp || !h.hasMat) && h.daysOut !== null && h.daysOut <= 36) {
+        if (!suggList.find(s => s.hop === h.hop)) {
+          const blockers = []
+          if (!h.hasNtp) blockers.push('NTP missing')
+          if (!h.hasMat) blockers.push('Material not received')
+          suggList.push({
+            hop: h.hop, gc: h.gc,
+            currentStart: fmtDate(h.ms15f),
+            suggestedStart: '',
+            daysMoved: 0, direction: 'push-out',
+            reason: `⚠️ Starts in ${h.daysOut}d but blockers unresolved`,
+            blocker: blockers.join(' | '),
+            crewId: earliestCrew || '',
+            readiness,
+            allReasons: blockers
+          })
+        }
+      }
+
+      // Reassignment
+      if (h.hasNtp && h.hasMat && !vcConflict && earliestDate) {
+        const gapToStart = h.ms15f ? daysBetween(earliestDate as Date, h.ms15f) : 0
+        if (gapToStart < 0 && Math.abs(gapToStart) > 36) {
+          const otherGCs = ['MZI', 'NV Tel', 'Mastec', 'Tech CX'].filter(gc => gc !== h.gc)
+          let bestGC = ''; let bestDate: Date | null = null
+          otherGCs.forEach(gc => {
+            const gcA = assignments.filter(a => a.gc === gc)
+            const avail = new Map<string, Date>()
+            gcA.forEach(a => {
+              const cur = avail.get(a.crewId)
+              if (!cur || a.end > cur) avail.set(a.crewId, addDays(a.end, 1))
+            })
+            avail.forEach((date) => {
+              if (!bestDate || date < bestDate) { bestDate = date; bestGC = gc }
+            })
+          })
+          if (bestGC && bestDate && (bestDate as Date) < (earliestDate as unknown as Date)) {
+            if (!suggList.find(s => s.hop === h.hop && s.direction === 'reassign')) {
+              suggList.push({
+                hop: h.hop, gc: h.gc,
+                currentStart: fmtDate(h.ms15f),
+                suggestedStart: fmtDate(bestDate),
+                daysMoved: h.ms15f ? daysBetween(bestDate, h.ms15f) : 0,
+                direction: 'reassign',
+                reason: `🔄 Consider reassigning to ${bestGC} — crew available ${fmtDate(bestDate)}`,
+                blocker: `${h.gc} crew gap >36d`,
+                crewId: bestGC,
+                readiness,
+                crewAvailDate: fmtDate(earliestDate as Date),
+                allReasons: [`${h.gc} crew not available until ${fmtDate(earliestDate as Date)}`, `${bestGC} crew available ${fmtDate(bestDate)}`]
+              })
+            }
+          }
+        }
+      }
+    })
+
+    // Sort suggestions by priority
+    const priority = (s: ScheduleSuggestion) => {
+      if (s.direction === 'unassigned') return 0
+      if (s.direction === 'push-out' && s.blocker !== 'None') return 1
+      if (s.direction === 'reassign') return 2
+      if (s.direction === 'pull-in') return 3
+      return 4
+    }
+    suggList.sort((a, b) => priority(a) - priority(b))
+
+    setHops(parsed)
+    setCrewAssignments(assignments)
+    setGaps(gapList)
+    setSuggestions(suggList)
+    setLoaded(true)
+  }, [today])
 
   const handleFile = useCallback((file: File) => {
     setFileName(file.name)
@@ -138,372 +517,10 @@ export default function SchedulePage() {
       const ws = wb.Sheets['HOPs']
       if (!ws) { alert('HOPs tab not found'); return }
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-
-      let headerRow = -1
-      for (let i = 0; i < 10; i++) {
-        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
-      }
-      if (headerRow === -1) { alert('Could not find header row'); return }
-
-      const headers = rows[headerRow] as string[]
-      const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
-
-      const hopCol      = col('HOP')
-      const gcCol       = col('General Contractor')
-      const nokiaPmCol  = col('Nokia PM')
-      const newCmCol    = col('New CM')
-      const don444Col   = col('DON 444')
-      const ms15fCol    = col('MS15 Implementation Start F')
-      const ms15aCol    = col('MS15 Implementation Start A')
-      const ms16fCol    = col('MS16 Implementation Ends F')
-      const ms16aCol    = col('MS16 Implementation Ends A')
-      const ntpCol      = col('NTP A')
-      const matCol      = headers.findIndex(h => String(h).trim() === 'Material Received A ')
-      const itwSCol     = col('ITW Schedule Start')
-      const itwECol     = col('ITW Schedule Complete')
-      const ssSCol      = col('Samsung Schedule Start')
-      const ssECol      = col('Samsung Schedule Complete')
-
-      const hopRows = new Map<string, unknown[][]>()
-      for (let i = headerRow + 1; i < rows.length; i++) {
-        const row = rows[i] as unknown[]
-        const don = String(row[don444Col] || '').trim().toUpperCase()
-        if (don !== 'DON 444') continue
-        const nokiaPm = String(row[nokiaPmCol] || '').trim().toUpperCase()
-        if (nokiaPm !== 'CJ') continue
-        const hop = String(row[hopCol] || '').trim()
-        if (!hop || hop === 'undefined') continue
-        if (!hopRows.has(hop)) hopRows.set(hop, [])
-        hopRows.get(hop)!.push(row)
-      }
-
-      const parsed: HOP[] = []
-      hopRows.forEach((rows2, hop) => {
-        const row  = rows2[0]
-        const ms15f = parseDate(row[ms15fCol])
-        const ms15a = parseDate(row[ms15aCol])
-        const ms16f = parseDate(row[ms16fCol])
-        const ms16a = parseDate(row[ms16aCol])
-        const ntpDate = parseDate(row[ntpCol])
-        const matDate = parseDate(row[matCol])
-        const started  = !!ms15a
-        const complete = !!ms16a
-        const hasNtp   = !!(ntpDate && ntpDate.getFullYear() >= 2025)
-        const hasMat   = !!(matDate && matDate.getFullYear() >= 2020)
-
-        // Collect vendor conflicts from ALL rows
-        const vendorConflicts: { vendor: string; start: Date; end: Date }[] = []
-        rows2.forEach(r => {
-          const itwS = parseDate(r[itwSCol]); const itwE = parseDate(r[itwECol])
-          const ssS  = parseDate(r[ssSCol]);  const ssE  = parseDate(r[ssECol])
-          if (itwS && itwE) vendorConflicts.push({ vendor: 'ITW', start: itwS, end: itwE })
-          if (ssS && ssE)   vendorConflicts.push({ vendor: 'Samsung', start: ssS, end: ssE })
-        })
-
-        const siteNames = rows2.map(r => String(r[col('Site Name')] || '').trim()).filter(Boolean)
-
-        parsed.push({
-          hop,
-          gc:       String(row[gcCol] || '').trim(),
-          cm:       String(row[newCmCol] || '').trim(),
-          ms15f, ms15a, ms16f, ms16a,
-          hasNtp, hasMat,
-          vendorConflicts,
-          siteNames,
-          inProgress: started && !complete,
-          complete,
-          daysOut: ms15f ? daysBetween(today, ms15f) : null,
-          nokiaPm: String(row[nokiaPmCol] || '').trim()
-        })
-      })
-
-      // â”€â”€ Build crew assignments â”€â”€
-      const assignments: CrewAssignment[] = []
-      const gcList = ['MZI', 'NV Tel', 'Mastec', 'Vikor', 'Tech CX']
-
-      gcList.forEach(gc => {
-        const gcHopList = parsed
-          .filter(h => h.gc === gc && !h.complete)
-          .sort((a, b) => {
-            if (a.inProgress && !b.inProgress) return -1
-            if (!a.inProgress && b.inProgress) return 1
-            const aDate = a.ms15a || a.ms15f
-            const bDate = b.ms15a || b.ms15f
-            if (!aDate && !bDate) return 0
-            if (!aDate) return 1
-            if (!bDate) return -1
-            return aDate.getTime() - bDate.getTime()
-          })
-
-        const numCrews = GC_CREWS[gc] || 1
-        const crewAvail: Date[] = Array(numCrews).fill(today).map(() => new Date(today))
-
-        // Assign in-progress first
-        const inProg = gcHopList.filter(h => h.inProgress)
-        const pipeline = gcHopList.filter(h => !h.inProgress)
-
-        inProg.forEach((h, i) => {
-          const crewIdx = i % numCrews
-          const start = h.ms15a || today
-          const end   = h.ms16f || addDays(start, HOP_DURATION)
-          assignments.push({ crewId: `${gc}-Crew${crewIdx + 1}`, gc, hop: h.hop, start, end, isActive: true, isComplete: false })
-          crewAvail[crewIdx] = addDays(end, 1)
-        })
-
-        pipeline.forEach(h => {
-          const earliest = crewAvail.reduce((min, d) => d < min ? d : min, crewAvail[0])
-          const crewI = crewAvail.findIndex(d => d.getTime() === earliest.getTime())
-          const start = h.ms15f || addDays(earliest, 0)
-          const end   = addDays(start, HOP_DURATION)
-          assignments.push({ crewId: `${gc}-Crew${crewI + 1}`, gc, hop: h.hop, start, end, isActive: false, isComplete: false })
-          crewAvail[crewI] = addDays(end, 1)
-        })
-      })
-
-      // â”€â”€ Detect gaps â”€â”€
-      const gapList: GapInfo[] = []
-      const crewMap = new Map<string, CrewAssignment[]>()
-      assignments.forEach(a => {
-        if (!crewMap.has(a.crewId)) crewMap.set(a.crewId, [])
-        crewMap.get(a.crewId)!.push(a)
-      })
-      crewMap.forEach((crewJobs, crewId) => {
-        const sorted = crewJobs.sort((a, b) => a.start.getTime() - b.start.getTime())
-        for (let i = 0; i < sorted.length - 1; i++) {
-          const gap = daysBetween(sorted[i].end, sorted[i + 1].start)
-          if (gap > 3) {
-            gapList.push({
-              gc: sorted[i].gc, crewId,
-              gapStart: addDays(sorted[i].end, 1),
-              gapEnd: addDays(sorted[i + 1].start, -1),
-              gapDays: gap,
-              nextHop: sorted[i + 1].hop
-            })
-          }
-        }
-      })
-
-      // â”€â”€ Generate suggestions â”€â”€
-      const suggList: ScheduleSuggestion[] = []
-
-      parsed.forEach(h => {
-        if (h.complete) return
-
-        // Show in-progress HOPs
-        if (h.inProgress) {
-          const elapsed = h.ms15a ? daysBetween(h.ms15a, today) : 0
-          const ms16f = h.ms16f
-          const daysRemaining = ms16f ? daysBetween(today, ms16f) : null
-          const over18 = elapsed > 18
-          const allReasons: string[] = []
-          if (over18) allReasons.push(`⚠️ ${elapsed}d elapsed — over 18d target`)
-          if (daysRemaining !== null && daysRemaining < 0) allReasons.push(`🔴 FC End passed ${Math.abs(daysRemaining)}d ago`)
-          allReasons.push(`Started: ${fmtDate(h.ms15a)} | FC End: ${fmtDate(ms16f)}`)
-
-          suggList.push({
-            hop: h.hop, gc: h.gc,
-            currentStart: fmtDate(h.ms15a),
-            suggestedStart: fmtDate(ms16f),
-            daysMoved: 0,
-            direction: over18 ? 'push-out' : 'pull-in',
-            reason: over18
-              ? `🔨 IN PROGRESS — ${elapsed}d elapsed ⚠️ Over 18d target — get updated completion date`
-              : `🔨 IN PROGRESS — ${elapsed}d elapsed — on track, FC end ${fmtDate(ms16f)}`,
-            blocker: over18 ? `${elapsed}d elapsed` : 'None',
-            crewId: '',
-            readiness: `Started: ${fmtDate(h.ms15a)}`,
-            vendorClearsDate: undefined,
-            crewAvailDate: ms16f ? fmtDate(ms16f) : undefined,
-            allReasons,
-            parallelHops: []
-          })
-          return
-        }
-
-        // Flag unassigned HOPs
-        if (!h.gc) {
-          suggList.push({
-            hop: h.hop, gc: 'UNASSIGNED', currentStart: fmtDate(h.ms15f),
-            suggestedStart: '', daysMoved: 0, direction: 'unassigned',
-            reason: '⚠️ No GC assigned — needs contractor assignment',
-            blocker: 'No GC', crewId: '', readiness: h.hasNtp && h.hasMat ? '✅ NTP + Mat ready' : `NTP: ${h.hasNtp ? '✓' : '✗'} | Mat: ${h.hasMat ? '✓' : '✗'}`
-          })
-          return
-        }
-
-        if (!h.ms15f || h.inProgress) return
-
-        const vcConflict = hasVendorConflict(h.ms15f, h.vendorConflicts)
-        const readiness  = `NTP: ${h.hasNtp ? '✓' : '✗'} | Mat: ${h.hasMat ? '✓' : '✗'}`
-
-        // Find earliest available crew date for this GC
-        const gcAssignments = assignments.filter(a => a.gc === h.gc)
-        const crewAvailDates = new Map<string, Date>()
-        gcAssignments.forEach(a => {
-          const cur = crewAvailDates.get(a.crewId)
-          if (!cur || a.end > cur) crewAvailDates.set(a.crewId, addDays(a.end, 1))
-        })
-
-        let earliestCrew = ''
-        let earliestDate: Date | null = null
-        crewAvailDates.forEach((date, crewId) => {
-          if (!earliestDate || date < earliestDate) {
-            earliestDate = date; earliestCrew = crewId
-          }
-        })
-
-        // Find vendor clear date
-        let vendorClearDate: Date | null = null
-        if (h.vendorConflicts.length > 0) {
-          for (const c of h.vendorConflicts) {
-            const clearCandidate = addDays(c.end, 1)
-            if (!vendorClearDate || clearCandidate > vendorClearDate) vendorClearDate = clearCandidate
-          }
-        }
-
-        // Effective earliest start = max of crew available and vendor clear
-        const effectiveStart = earliestDate
-          ? (vendorClearDate && vendorClearDate > (earliestDate as Date)
-              ? vendorClearDate
-              : earliestDate as Date)
-          : vendorClearDate
-
-        // Find parallel HOPs — same site names
-        const parallelHops = parsed.filter(other =>
-          other.hop !== h.hop &&
-          other.gc === h.gc &&
-          !other.complete &&
-          !other.inProgress &&
-          other.siteNames.some(s => h.siteNames.includes(s))
-        ).map(o => o.hop)
-
-        const allReasons: string[] = []
-
-        // Pull-in opportunity
-        if (h.hasNtp && h.hasMat && !vcConflict && effectiveStart && h.ms15f && effectiveStart < h.ms15f) {
-          const daysMoved = daysBetween(effectiveStart, h.ms15f)
-          if (daysMoved >= 1) {
-            allReasons.push(`✅ Pull in ${daysMoved}d — crew available ${fmtDate(effectiveStart as Date)}, NTP + Mat confirmed`)
-            if (parallelHops.length > 0) allReasons.push(`🔄 Can start together with: ${parallelHops.join(', ')}`)
-            suggList.push({
-              hop: h.hop, gc: h.gc,
-              currentStart: fmtDate(h.ms15f),
-              suggestedStart: fmtDate(effectiveStart as Date),
-              daysMoved, direction: 'pull-in',
-              reason: allReasons[0],
-              blocker: 'None',
-              crewId: earliestCrew,
-              readiness,
-              vendorClearsDate: vendorClearDate ? fmtDate(vendorClearDate) : undefined,
-              crewAvailDate: earliestDate ? fmtDate(earliestDate as Date) : undefined,
-              allReasons,
-              parallelHops
-            })
-          }
-        }
-
-        // Vendor conflict
-        if (vcConflict) {
-          const suggestedAfterVendor = vendorClearDate || h.ms15f
-          allReasons.push(`🔴 Vendor conflict — ${vcConflict}`)
-          if (effectiveStart && h.ms15f && effectiveStart > h.ms15f) {
-            allReasons.push(`📅 Crew available ${fmtDate(earliestDate as unknown as Date)} | Vendor clears ${vendorClearDate ? fmtDate(vendorClearDate) : '?'}`)
-          }
-          if (!suggList.find(s => s.hop === h.hop)) {
-            suggList.push({
-              hop: h.hop, gc: h.gc,
-              currentStart: fmtDate(h.ms15f),
-              suggestedStart: suggestedAfterVendor ? fmtDate(suggestedAfterVendor) : '',
-              daysMoved: suggestedAfterVendor && h.ms15f ? Math.abs(daysBetween(h.ms15f, suggestedAfterVendor)) : 0,
-              direction: 'push-out',
-              reason: allReasons[0],
-              blocker: vcConflict,
-              crewId: earliestCrew || '',
-              readiness,
-              vendorClearsDate: vendorClearDate ? fmtDate(vendorClearDate) : undefined,
-              crewAvailDate: earliestDate ? fmtDate(earliestDate as Date) : undefined,
-              allReasons,
-              parallelHops
-            })
-          }
-        }
-
-        // Missing NTP or material
-        if ((!h.hasNtp || !h.hasMat) && h.daysOut !== null && h.daysOut <= 36) {
-          if (!suggList.find(s => s.hop === h.hop)) {
-            const blockers = []
-            if (!h.hasNtp) blockers.push('NTP missing')
-            if (!h.hasMat) blockers.push('Material not received')
-            suggList.push({
-              hop: h.hop, gc: h.gc,
-              currentStart: fmtDate(h.ms15f),
-              suggestedStart: '',
-              daysMoved: 0, direction: 'push-out',
-              reason: `⚠️ Starts in ${h.daysOut}d but blockers unresolved`,
-              blocker: blockers.join(' | '),
-              crewId: earliestCrew || '',
-              readiness,
-              allReasons: blockers
-            })
-          }
-        }
-
-        // Reassignment
-        if (h.hasNtp && h.hasMat && !vcConflict && earliestDate) {
-          const gapToStart = h.ms15f ? daysBetween(earliestDate as Date, h.ms15f) : 0
-          if (gapToStart < 0 && Math.abs(gapToStart) > 36) {
-            const otherGCs = ['MZI', 'NV Tel', 'Mastec', 'Tech CX'].filter(gc => gc !== h.gc)
-            let bestGC = ''; let bestDate: Date | null = null
-            otherGCs.forEach(gc => {
-              const gcA = assignments.filter(a => a.gc === gc)
-              const avail = new Map<string, Date>()
-              gcA.forEach(a => {
-                const cur = avail.get(a.crewId)
-                if (!cur || a.end > cur) avail.set(a.crewId, addDays(a.end, 1))
-              })
-              avail.forEach((date) => {
-                if (!bestDate || date < bestDate) { bestDate = date; bestGC = gc }
-              })
-            })
-            if (bestGC && bestDate && (bestDate as Date) < (earliestDate as unknown as Date)) {
-              if (!suggList.find(s => s.hop === h.hop && s.direction === 'reassign')) {
-                suggList.push({
-                  hop: h.hop, gc: h.gc,
-                  currentStart: fmtDate(h.ms15f),
-                  suggestedStart: fmtDate(bestDate),
-                  daysMoved: h.ms15f ? daysBetween(bestDate, h.ms15f) : 0,
-                  direction: 'reassign',
-                  reason: `🔄 Consider reassigning to ${bestGC} — crew available ${fmtDate(bestDate)}`,
-                  blocker: `${h.gc} crew gap >36d`,
-                  crewId: bestGC,
-                  readiness,
-                  crewAvailDate: fmtDate(earliestDate as Date),
-                  allReasons: [`${h.gc} crew not available until ${fmtDate(earliestDate as Date)}`, `${bestGC} crew available ${fmtDate(bestDate)}`]
-                })
-              }
-            }
-          }
-        }
-      })
-
-      // Sort suggestions by priority
-      const priority = (s: ScheduleSuggestion) => {
-        if (s.direction === 'unassigned') return 0
-        if (s.direction === 'push-out' && s.blocker !== 'None') return 1
-        if (s.direction === 'reassign') return 2
-        if (s.direction === 'pull-in') return 3
-        return 4
-      }
-      suggList.sort((a, b) => priority(a) - priority(b))
-
-      setHops(parsed)
-      setCrewAssignments(assignments)
-      setGaps(gapList)
-      setSuggestions(suggList)
-      setLoaded(true)
+      processRows(rows, file.name)
     }
     reader.readAsArrayBuffer(file)
-  }, [today])
+  }, [processRows])
 
   // â”€â”€ Gantt helpers â”€â”€
   const ganttStart = today
@@ -522,19 +539,17 @@ export default function SchedulePage() {
           <p className="text-gray-400 mt-1">Upload your tracker to analyze crew availability, gaps, and scheduling opportunities.</p>
         </div>
 
-        {/* File Upload */}
-        <div
-          className="mb-6 border-2 border-dashed border-gray-600 rounded-xl p-5 text-center cursor-pointer hover:border-blue-500 transition-colors"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleFile(f) }}
-          onClick={() => document.getElementById('sched-upload')?.click()}
-        >
-          <input id="sched-upload" type="file" accept=".xlsx" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleFile(f) }} />
-          {loaded
-            ? <p className="text-green-400 font-semibold">✅ {fileName} — {hops.length} HOPs loaded</p>
-            : <p className="text-gray-400">📂 Drop your tracker here or click to upload</p>}
-        </div>
+        {snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
+            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
+            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+          </div>
+        )}
+        {!snapshotTime && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+          </div>
+        )}
 
         {loaded && (
           <>
