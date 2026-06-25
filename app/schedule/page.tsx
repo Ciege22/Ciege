@@ -289,6 +289,37 @@ export default function SchedulePage() {
       parsed.forEach(h => {
         if (h.complete) return
 
+        // Show in-progress HOPs
+        if (h.inProgress) {
+          const elapsed = h.ms15a ? daysBetween(h.ms15a, today) : 0
+          const ms16f = h.ms16f
+          const daysRemaining = ms16f ? daysBetween(today, ms16f) : null
+          const over18 = elapsed > 18
+          const allReasons: string[] = []
+          if (over18) allReasons.push(`⚠️ ${elapsed}d elapsed — over 18d target`)
+          if (daysRemaining !== null && daysRemaining < 0) allReasons.push(`🔴 FC End passed ${Math.abs(daysRemaining)}d ago`)
+          allReasons.push(`Started: ${fmtDate(h.ms15a)} | FC End: ${fmtDate(ms16f)}`)
+
+          suggList.push({
+            hop: h.hop, gc: h.gc,
+            currentStart: fmtDate(h.ms15a),
+            suggestedStart: fmtDate(ms16f),
+            daysMoved: 0,
+            direction: over18 ? 'push-out' : 'pull-in',
+            reason: over18
+              ? `🔨 IN PROGRESS — ${elapsed}d elapsed ⚠️ Over 18d target — get updated completion date`
+              : `🔨 IN PROGRESS — ${elapsed}d elapsed — on track, FC end ${fmtDate(ms16f)}`,
+            blocker: over18 ? `${elapsed}d elapsed` : 'None',
+            crewId: '',
+            readiness: `Started: ${fmtDate(h.ms15a)}`,
+            vendorClearsDate: undefined,
+            crewAvailDate: ms16f ? fmtDate(ms16f) : undefined,
+            allReasons,
+            parallelHops: []
+          })
+          return
+        }
+
         // Flag unassigned HOPs
         if (!h.gc) {
           suggList.push({
