@@ -434,7 +434,7 @@ export default function SchedulePage() {
                 if (!bestDate || date < bestDate) { bestDate = date; bestGC = gc }
               })
             })
-            if (bestGC && bestDate && bestDate < (earliestDate as Date)) {
+            if (bestGC && bestDate && (bestDate as Date) < (earliestDate as unknown as Date)) {
               if (!suggList.find(s => s.hop === h.hop && s.direction === 'reassign')) {
                 suggList.push({
                   hop: h.hop, gc: h.gc,
