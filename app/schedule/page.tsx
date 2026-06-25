@@ -16,10 +16,11 @@ interface HOP {
   hasNtp: boolean
   hasMat: boolean
   vendorConflicts: { vendor: string; start: Date; end: Date }[]
+  siteNames: string[]
   inProgress: boolean
   complete: boolean
   daysOut: number | null
-  regionPm: string
+  nokiaPm: string
 }
 
 interface CrewAssignment {
@@ -43,6 +44,10 @@ interface ScheduleSuggestion {
   blocker: string
   crewId: string
   readiness: string
+  vendorClearsDate?: string
+  crewAvailDate?: string
+  allReasons?: string[]
+  parallelHops?: string[]
 }
 
 interface GapInfo {
@@ -107,7 +112,7 @@ function hasVendorConflict(date: Date, conflicts: { vendor: string; start: Date;
   for (const c of conflicts) {
     if (c.start <= date && date <= c.end) return `${c.vendor} on site thru ${fmtShort(c.end)}`
     const buf = daysBetween(c.end, date)
-    if (buf >= 0 && buf <= 5) return `${c.vendor} clears ${fmtShort(c.end)} — only ${buf}d buffer`
+    if (buf >= 0 && buf <= 1) return `${c.vendor} clears ${fmtShort(c.end)} — only ${buf}d buffer`
   }
   return ''
 }
@@ -145,7 +150,7 @@ export default function SchedulePage() {
 
       const hopCol      = col('HOP')
       const gcCol       = col('General Contractor')
-      const regionPmCol = col('Region PM')
+      const nokiaPmCol  = col('Nokia PM')
       const newCmCol    = col('New CM')
       const don444Col   = col('DON 444')
       const ms15fCol    = col('MS15 Implementation Start F')
@@ -164,8 +169,8 @@ export default function SchedulePage() {
         const row = rows[i] as unknown[]
         const don = String(row[don444Col] || '').trim().toUpperCase()
         if (don !== 'DON 444') continue
-        const regionPm = String(row[regionPmCol] || '').trim().toUpperCase()
-        if (regionPm !== 'CJ') continue
+        const nokiaPm = String(row[nokiaPmCol] || '').trim().toUpperCase()
+        if (nokiaPm !== 'CJ') continue
         const hop = String(row[hopCol] || '').trim()
         if (!hop || hop === 'undefined') continue
         if (!hopRows.has(hop)) hopRows.set(hop, [])
@@ -195,6 +200,8 @@ export default function SchedulePage() {
           if (ssS && ssE)   vendorConflicts.push({ vendor: 'Samsung', start: ssS, end: ssE })
         })
 
+        const siteNames = rows2.map(r => String(r[col('Site Name')] || '').trim()).filter(Boolean)
+
         parsed.push({
           hop,
           gc:       String(row[gcCol] || '').trim(),
@@ -202,10 +209,11 @@ export default function SchedulePage() {
           ms15f, ms15a, ms16f, ms16a,
           hasNtp, hasMat,
           vendorConflicts,
+          siteNames,
           inProgress: started && !complete,
           complete,
           daysOut: ms15f ? daysBetween(today, ms15f) : null,
-          regionPm: String(row[regionPmCol] || '').trim()
+          nokiaPm: String(row[nokiaPmCol] || '').trim()
         })
       })
 
@@ -313,59 +321,107 @@ export default function SchedulePage() {
           }
         })
 
-        // Check if can pull in
-        if (h.hasNtp && h.hasMat && !vcConflict && earliestDate && h.ms15f && (earliestDate as Date) < h.ms15f) {
-          const daysMoved = daysBetween(earliestDate as Date, h.ms15f!)
-          if (daysMoved >= 3) {
+        // Find vendor clear date
+        let vendorClearDate: Date | null = null
+        if (h.vendorConflicts.length > 0) {
+          for (const c of h.vendorConflicts) {
+            const clearCandidate = addDays(c.end, 1)
+            if (!vendorClearDate || clearCandidate > vendorClearDate) vendorClearDate = clearCandidate
+          }
+        }
+
+        // Effective earliest start = max of crew available and vendor clear
+        const effectiveStart = earliestDate
+          ? (vendorClearDate && vendorClearDate > (earliestDate as Date)
+              ? vendorClearDate
+              : earliestDate as Date)
+          : vendorClearDate
+
+        // Find parallel HOPs — same site names
+        const parallelHops = parsed.filter(other =>
+          other.hop !== h.hop &&
+          other.gc === h.gc &&
+          !other.complete &&
+          !other.inProgress &&
+          other.siteNames.some(s => h.siteNames.includes(s))
+        ).map(o => o.hop)
+
+        const allReasons: string[] = []
+
+        // Pull-in opportunity
+        if (h.hasNtp && h.hasMat && !vcConflict && effectiveStart && h.ms15f && effectiveStart < h.ms15f) {
+          const daysMoved = daysBetween(effectiveStart, h.ms15f)
+          if (daysMoved >= 1) {
+            allReasons.push(`✅ Pull in ${daysMoved}d — crew available ${fmtDate(effectiveStart as Date)}, NTP + Mat confirmed`)
+            if (parallelHops.length > 0) allReasons.push(`🔄 Can start together with: ${parallelHops.join(', ')}`)
             suggList.push({
               hop: h.hop, gc: h.gc,
               currentStart: fmtDate(h.ms15f),
-              suggestedStart: fmtDate(earliestDate),
+              suggestedStart: fmtDate(effectiveStart as Date),
               daysMoved, direction: 'pull-in',
-              reason: `✅ Pull in ${daysMoved}d — crew available ${fmtDate(earliestDate)}, NTP + Mat confirmed, no conflicts`,
-              blocker: 'None', crewId: earliestCrew, readiness
+              reason: allReasons[0],
+              blocker: 'None',
+              crewId: earliestCrew,
+              readiness,
+              vendorClearsDate: vendorClearDate ? fmtDate(vendorClearDate) : undefined,
+              crewAvailDate: earliestDate ? fmtDate(earliestDate as Date) : undefined,
+              allReasons,
+              parallelHops
             })
           }
         }
 
-        // Flag vendor conflicts
+        // Vendor conflict
         if (vcConflict) {
-          let clearDate = new Date(h.ms15f)
-          for (const c of h.vendorConflicts) {
-            if (c.end > clearDate) clearDate = addDays(c.end, 6)
+          const suggestedAfterVendor = vendorClearDate || h.ms15f
+          allReasons.push(`🔴 Vendor conflict — ${vcConflict}`)
+          if (effectiveStart && h.ms15f && effectiveStart > h.ms15f) {
+            allReasons.push(`📅 Crew available ${fmtDate(earliestDate as Date)} | Vendor clears ${vendorClearDate ? fmtDate(vendorClearDate) : '?'}`)
           }
-          const vcCheck = hasVendorConflict(clearDate, h.vendorConflicts)
-          suggList.push({
-            hop: h.hop, gc: h.gc,
-            currentStart: fmtDate(h.ms15f),
-            suggestedStart: vcCheck ? '' : fmtDate(clearDate),
-            daysMoved: vcCheck ? 0 : daysBetween(h.ms15f, clearDate),
-            direction: 'push-out',
-            reason: `🔴 Vendor conflict — ${vcConflict}. ${vcCheck ? 'Review manually' : `Suggest push to ${fmtDate(clearDate)}`}`,
-            blocker: vcConflict, crewId: earliestCrew || '', readiness
-          })
+          if (!suggList.find(s => s.hop === h.hop)) {
+            suggList.push({
+              hop: h.hop, gc: h.gc,
+              currentStart: fmtDate(h.ms15f),
+              suggestedStart: suggestedAfterVendor ? fmtDate(suggestedAfterVendor) : '',
+              daysMoved: suggestedAfterVendor && h.ms15f ? Math.abs(daysBetween(h.ms15f, suggestedAfterVendor)) : 0,
+              direction: 'push-out',
+              reason: allReasons[0],
+              blocker: vcConflict,
+              crewId: earliestCrew || '',
+              readiness,
+              vendorClearsDate: vendorClearDate ? fmtDate(vendorClearDate) : undefined,
+              crewAvailDate: earliestDate ? fmtDate(earliestDate as Date) : undefined,
+              allReasons,
+              parallelHops
+            })
+          }
         }
 
-        // Flag missing NTP or material ≤36 days
+        // Missing NTP or material
         if ((!h.hasNtp || !h.hasMat) && h.daysOut !== null && h.daysOut <= 36) {
-          const blockers = []
-          if (!h.hasNtp) blockers.push('NTP missing')
-          if (!h.hasMat) blockers.push('Material not received')
-          suggList.push({
-            hop: h.hop, gc: h.gc,
-            currentStart: fmtDate(h.ms15f),
-            suggestedStart: '',
-            daysMoved: 0, direction: 'push-out',
-            reason: `⚠️ Starts in ${h.daysOut}d but blockers unresolved — may need to push out`,
-            blocker: blockers.join(' | '), crewId: earliestCrew || '', readiness
-          })
+          if (!suggList.find(s => s.hop === h.hop)) {
+            const blockers = []
+            if (!h.hasNtp) blockers.push('NTP missing')
+            if (!h.hasMat) blockers.push('Material not received')
+            suggList.push({
+              hop: h.hop, gc: h.gc,
+              currentStart: fmtDate(h.ms15f),
+              suggestedStart: '',
+              daysMoved: 0, direction: 'push-out',
+              reason: `⚠️ Starts in ${h.daysOut}d but blockers unresolved`,
+              blocker: blockers.join(' | '),
+              crewId: earliestCrew || '',
+              readiness,
+              allReasons: blockers
+            })
+          }
         }
 
-        // Check reassignment — if GC crew gap > 36 days
+        // Reassignment
         if (h.hasNtp && h.hasMat && !vcConflict && earliestDate) {
-          const gapToStart = daysBetween(earliestDate, h.ms15f)
+          const gapToStart = h.ms15f ? daysBetween(earliestDate as Date, h.ms15f) : 0
           if (gapToStart < 0 && Math.abs(gapToStart) > 36) {
-            const otherGCs = gcList.filter(gc => gc !== h.gc && gc !== 'Vikor')
+            const otherGCs = ['MZI', 'NV Tel', 'Mastec', 'Tech CX'].filter(gc => gc !== h.gc)
             let bestGC = ''; let bestDate: Date | null = null
             otherGCs.forEach(gc => {
               const gcA = assignments.filter(a => a.gc === gc)
@@ -378,16 +434,22 @@ export default function SchedulePage() {
                 if (!bestDate || date < bestDate) { bestDate = date; bestGC = gc }
               })
             })
-            if (bestGC && bestDate && bestDate < (earliestDate || today)) {
-              suggList.push({
-                hop: h.hop, gc: h.gc,
-                currentStart: fmtDate(h.ms15f),
-                suggestedStart: fmtDate(bestDate),
-                daysMoved: daysBetween(bestDate, h.ms15f),
-                direction: 'reassign',
-                reason: `🔄 Consider reassigning to ${bestGC} — crew available ${fmtDate(bestDate)} vs ${h.gc} crew not available until ${fmtDate(earliestDate)}`,
-                blocker: `${h.gc} crew gap`, crewId: bestGC, readiness
-              })
+            if (bestGC && bestDate && bestDate < (earliestDate as Date)) {
+              if (!suggList.find(s => s.hop === h.hop && s.direction === 'reassign')) {
+                suggList.push({
+                  hop: h.hop, gc: h.gc,
+                  currentStart: fmtDate(h.ms15f),
+                  suggestedStart: fmtDate(bestDate),
+                  daysMoved: h.ms15f ? daysBetween(bestDate, h.ms15f) : 0,
+                  direction: 'reassign',
+                  reason: `🔄 Consider reassigning to ${bestGC} — crew available ${fmtDate(bestDate)}`,
+                  blocker: `${h.gc} crew gap >36d`,
+                  crewId: bestGC,
+                  readiness,
+                  crewAvailDate: fmtDate(earliestDate as Date),
+                  allReasons: [`${h.gc} crew not available until ${fmtDate(earliestDate as Date)}`, `${bestGC} crew available ${fmtDate(bestDate)}`]
+                })
+              }
             }
           }
         }
@@ -510,6 +572,9 @@ export default function SchedulePage() {
                         <th className="text-left p-2">Days Moved</th>
                         <th className="text-left p-2">Readiness</th>
                         <th className="text-left p-2">Blocker</th>
+                        <th className="text-left p-2">Vendor Clears</th>
+                        <th className="text-left p-2">Crew Available</th>
+                        <th className="text-left p-2">Parallel HOPs</th>
                         <th className="text-left p-2">Recommendation</th>
                       </tr>
                     </thead>
@@ -549,8 +614,15 @@ export default function SchedulePage() {
                               {s.daysMoved > 0 ? `${s.direction === 'pull-in' ? '-' : '+'}${s.daysMoved}d` : '—'}
                             </td>
                             <td className="p-2 text-gray-300 whitespace-nowrap">{s.readiness}</td>
-                            <td className="p-2 text-red-400 text-xs">{s.blocker !== 'None' ? s.blocker : <span className="text-green-400">None</span>}</td>
-                            <td className="p-2 text-xs max-w-64" title={s.reason}>{s.reason}</td>
+                            <td className="p-2 text-xs text-red-400">{s.blocker !== 'None' ? s.blocker : <span className="text-green-400">None</span>}</td>
+                            <td className="p-2 text-xs text-yellow-300 whitespace-nowrap">{s.vendorClearsDate || '—'}</td>
+                            <td className="p-2 text-xs text-blue-300 whitespace-nowrap">{s.crewAvailDate || '—'}</td>
+                            <td className="p-2 text-xs text-gray-300 whitespace-nowrap">
+                              {s.parallelHops && s.parallelHops.length > 0
+                                ? <span className="text-green-400" title={s.parallelHops.join(', ')}>🔄 {s.parallelHops.length} HOP{s.parallelHops.length > 1 ? 's' : ''}</span>
+                                : <span className="text-gray-600">—</span>}
+                            </td>
+                            <td className="p-2 text-xs max-w-64 cursor-help" title={(s.allReasons || []).join(' | ')}>{s.reason}</td>
                           </tr>
                         )
                       })}
