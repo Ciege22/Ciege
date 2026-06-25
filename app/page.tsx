@@ -1,6 +1,8 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
+import * as XLSX from 'xlsx'
+import { saveTrackerSnapshot, loadTrackerSnapshot } from './lib/supabase'
 
 const navItems = [
   { label: "Deck Builder", href: "/deck-builder", active: true },
@@ -109,6 +111,38 @@ function WeatherWidget() {
 }
 
 export default function Home() {
+  const [snapshotInfo, setSnapshotInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
+  const [uploading, setUploading] = useState(false)
+
+  useEffect(() => {
+    const checkSnapshot = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (snap) setSnapshotInfo({ filename: snap.filename, uploaded_at: snap.uploaded_at, hop_count: snap.hop_count })
+    }
+    checkSnapshot()
+  }, [])
+
+  const handleTrackerUpload = useCallback(async (file: File) => {
+    setUploading(true)
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer)
+        const wb = XLSX.read(data, { type: 'array', cellDates: true })
+        const ws = wb.Sheets['HOPs']
+        if (!ws) { alert('HOPs tab not found'); setUploading(false); return }
+        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
+        const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
+        await saveTrackerSnapshot(file.name, hopCount, rows)
+        setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
+      } catch (err) {
+        console.error('Upload error:', err)
+      }
+      setUploading(false)
+    }
+    reader.readAsArrayBuffer(file)
+  }, [])
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-[1600px] px-6 py-8">
@@ -120,6 +154,28 @@ export default function Home() {
               <p className="mt-2 text-sm leading-6 text-zinc-400">
                 Plan Execute Conquer
               </p>
+            </div>
+
+            <div className="mb-4">
+              <p className="text-xs text-gray-500 uppercase font-semibold mb-2">Tracker</p>
+              <div
+                className="border border-dashed border-gray-600 rounded-lg p-3 cursor-pointer hover:border-blue-500 transition-colors"
+                onDragOver={(e) => e.preventDefault()}
+                onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleTrackerUpload(f) }}
+                onClick={() => document.getElementById('dashboard-tracker-upload')?.click()}
+              >
+                <input id="dashboard-tracker-upload" type="file" accept=".xlsx" className="hidden"
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleTrackerUpload(f) }} />
+                {uploading
+                  ? <p className="text-blue-400 text-xs text-center">⏳ Uploading...</p>
+                  : snapshotInfo
+                  ? <div>
+                      <p className="text-green-400 text-xs font-semibold">✅ {snapshotInfo.filename}</p>
+                      <p className="text-gray-500 text-xs mt-1">{snapshotInfo.hop_count} HOPs · {new Date(snapshotInfo.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })} at {new Date(snapshotInfo.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>
+                    </div>
+                  : <p className="text-gray-400 text-xs text-center">📂 Upload tracker here</p>
+                }
+              </div>
             </div>
 
             <nav className="space-y-2">
