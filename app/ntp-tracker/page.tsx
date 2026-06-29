@@ -428,6 +428,12 @@ export default function NTPTrackerPage() {
   }
 
   const downloadExcel = () => {
+    console.log('downloadExcel called, hops:', hops.length)
+    if (hops.length === 0) {
+      alert('No data to download — please upload your tracker first')
+      return
+    }
+    try {
     const wb2 = XLSX.utils.book_new()
 
     // Summary sheet
@@ -497,6 +503,10 @@ export default function NTPTrackerPage() {
       XLSX.utils.book_append_sheet(wb2, summarySheet, '📊 All HOPs Summary')
 
     XLSX.writeFile(wb2, `NTP_Tracker_${today.toLocaleDateString('en-US').replace(/\//g, '-')}.xlsx`)
+    } catch (err) {
+      console.error('downloadExcel error:', err)
+      alert('Failed to generate Excel file — check the console for details')
+    }
   }
 
   return (
