@@ -535,6 +535,156 @@ export default function CMViewPage() {
     window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
+  const downloadAllCMs = () => {
+    try {
+      const wb = XLSX.utils.book_new()
+      const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
+
+      cmNames.forEach(cm => {
+        const cmHops = hops.filter(h => h.cm === cm && !h.complete)
+          .sort((a, b) => {
+            if (a.inProgress && !b.inProgress) return -1
+            if (!a.inProgress && b.inProgress) return 1
+            return (a.daysOut ?? 999) - (b.daysOut ?? 999)
+          })
+
+        if (cmHops.length === 0) return
+
+        const rows: unknown[][] = [
+          [`Site CM: ${cm} — Active & Pipeline Report — ${today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`],
+          [],
+          ['HOP', 'GC', 'Status', 'Days Elapsed', 'Days Out', 'FC Start', 'AC Start', 'FC End', 'AC End', 'NTP', 'Material', 'Steel From', 'Mat Location', 'GC Pickup', 'Vendor Window', 'CM Action', 'Notes']
+        ]
+
+        const activeSites = cmHops.filter(h => h.inProgress)
+        if (activeSites.length > 0) {
+          rows.push(['--- ACTIVE SITES ---'])
+          activeSites.forEach(h => {
+            const elapsed = h.daysElapsed !== null ? `${h.daysElapsed}d` : ''
+            const status = (h.daysElapsed ?? 0) > 18 ? '⚠️ OVER 18d' : '🔨 Active'
+            const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
+            rows.push([
+              h.hop, h.gc, status, elapsed, '',
+              h.ms15f, h.ms15a, h.ms16f, h.ms16a,
+              h.hasNtp ? '✓' : '✗',
+              h.hasMat ? '✓' : '✗',
+              h.steelFrom || '—',
+              h.matLocation || '—',
+              h.gcPickupDate || '✗',
+              h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear',
+              h.cmAction,
+              latestNote
+            ])
+          })
+        }
+
+        const pipeline = cmHops.filter(h => !h.inProgress)
+        if (pipeline.length > 0) {
+          rows.push([])
+          rows.push(['--- PIPELINE ---'])
+          pipeline.forEach(h => {
+            const daysOut = h.daysOut !== null ? `${h.daysOut}d` : ''
+            const status = h.daysOut !== null && h.daysOut <= 7 ? '🔴 This Week' :
+                          h.daysOut !== null && h.daysOut <= 14 ? '🟠 2 Weeks' :
+                          h.daysOut !== null && h.daysOut <= 30 ? '🟡 This Month' : '🔵 Pipeline'
+            const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
+            rows.push([
+              h.hop, h.gc, status, '', daysOut,
+              h.ms15f, h.ms15a || '', h.ms16f, '',
+              h.hasNtp ? '✓' : '✗',
+              h.hasMat ? '✓' : '✗',
+              h.steelFrom || '—',
+              h.matLocation || '—',
+              h.gcPickupDate || '✗',
+              h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear',
+              h.cmAction,
+              latestNote
+            ])
+          })
+        }
+
+        const ws = XLSX.utils.aoa_to_sheet(rows)
+        ws['!cols'] = [
+          { wch: 36 }, { wch: 14 }, { wch: 18 }, { wch: 12 }, { wch: 10 },
+          { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
+          { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 20 }, { wch: 12 },
+          { wch: 30 }, { wch: 45 }, { wch: 50 }
+        ]
+
+        XLSX.utils.book_append_sheet(wb, ws, cm.slice(0, 31))
+      })
+
+      XLSX.writeFile(wb, `Viaero_CM_Report_${today.toLocaleDateString('en-US').replace(/\//g, '-')}.xlsx`)
+    } catch (err) {
+      console.error('Download error:', err)
+      alert('Download failed — please try again')
+    }
+  }
+
+  const generateAllCMsEmail = () => {
+    const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
+    const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    const div = '─'.repeat(60)
+    const subj = `Viaero MW Program — CM Call Follow-Up | All CMs | ${date}`
+
+    let body = `Hap, Steve, Benny,\n\n`
+    body += `Per our calls today — please find below your individual site summaries and action items for ${date}.\n`
+    body += `Please see the attached Excel for your full pipeline detail.\n`
+    body += `${div}\n\n`
+
+    cmNames.forEach(cm => {
+      const cmHops = hops.filter(h => h.cm === cm && !h.complete)
+      if (cmHops.length === 0) return
+
+      const active = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
+      const upcoming = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+
+      body += `${cm.toUpperCase()}\n${div}\n`
+
+      if (active.length > 0) {
+        body += `Active Sites (${active.length}):\n`
+        active.forEach(h => {
+          const status = (h.daysElapsed ?? 0) > 18
+            ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — please confirm completion date with crew and advise`
+            : `✅ On track — ${h.daysElapsed}d elapsed`
+          body += `• ${h.hop}  |  GC: ${h.gc}  |  ${status}\n`
+          const note = sessionNotes[h.hop]
+          if (note) body += `  Note: ${note}\n`
+        })
+        body += '\n'
+      }
+
+      if (upcoming.length > 0) {
+        body += `Starting Within 2 Weeks (${upcoming.length}):\n`
+        upcoming.forEach(h => {
+          body += `• ${h.hop}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out\n`
+          body += `  NTP: ${h.hasNtp ? '✓' : '✗ Pending'}  |  Mat: ${h.hasMat ? '✓' : '✗ Pending'}  |  GC Pickup: ${h.gcPickupDate || '✗'}\n`
+          if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join(' | ')}\n`
+          const note = sessionNotes[h.hop]
+          if (note) body += `  Note: ${note}\n`
+        })
+        body += '\n'
+      }
+
+      const actionNotes = Object.entries(sessionNotes).filter(([hop, note]) => note.trim() && cmHops.some(h => h.hop === hop))
+      if (actionNotes.length > 0) {
+        body += `Action Items:\n`
+        actionNotes.forEach(([hop, note], i) => {
+          body += `${i + 1}. ${hop} — ${note}\n`
+        })
+        body += '\n'
+      }
+
+      body += `${div}\n\n`
+    })
+
+    body += `Please confirm receipt and advise on any open items.\n\n`
+    body += `Respectfully,\nCJ\nNokia Program Manager — Viaero MW Construction Program\nCC: Thomas M. — Lead CM\n\n`
+    body += `** Please see attached Excel file for your full pipeline detail **`
+
+    window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+  }
+
   const PipelineSection = ({ title, rows }: { title: string, rows: HOP[] }) => (
     <div className="mb-8">
       <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
@@ -736,10 +886,20 @@ export default function CMViewPage() {
                   </p>
                 )}
               </div>
-              <button onClick={generateEmail}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold">
-                ✉️ Generate Follow-Up Email
-              </button>
+              <div className="flex gap-2 flex-wrap">
+                <button onClick={generateEmail}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                  ✉️ CM Email
+                </button>
+                <button onClick={generateAllCMsEmail}
+                  className="bg-purple-600 hover:bg-purple-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                  ✉️ All CMs Email
+                </button>
+                <button onClick={downloadAllCMs}
+                  className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                  📥 Download All CMs
+                </button>
+              </div>
             </div>
 
             {loaded && (
