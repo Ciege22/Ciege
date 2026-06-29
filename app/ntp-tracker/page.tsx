@@ -67,7 +67,7 @@ function daysBetween(a: Date, b: Date): number {
 function getOwnerCategory(owner: string): string {
   const o = owner.trim()
   if (!o) return 'No Owner'
-  if (o === 'On Hold') return 'On Hold'
+  if (o === 'On Hold') return 'Viaero'
   if (o === 'Viaero') return 'Viaero'
   if (o === 'Viaero & Nokia') return 'Viaero & Nokia'
   if (o === 'ITW') return 'ITW'
@@ -78,18 +78,62 @@ function getOwnerCategory(owner: string): string {
   return 'Other'
 }
 
-function getWaitingOnBucket(waitingOn: string): string {
+function getWaitingOnBucket(waitingOn: string, ntpOwner: string): string {
   const w = waitingOn.toLowerCase()
-  if (!w || w === 'blank') return 'No Info'
-  if (w.includes('on hold per viaero')) return '🔴 On Hold per Viaero'
-  if (w.includes('cage match')) return '📋 Pending Cage Match'
-  if (w.includes('pcn')) return '📡 Pending PCN'
-  if (w.includes('service quote')) return '💰 Pending Service Quote'
-  if (w.includes('lld') || w.includes('wp')) return '📄 Pending WP / LLD Submittal'
-  if (w.includes('itw')) return '🔧 Pending ITW Approval'
-  if (w.includes('ll approval') || w.includes('lease') || w.includes('landlord')) return '🏢 Pending LL Approval'
-  if (w.includes('samsung') || w.includes('combo cds') || w.includes('revised cds')) return '📡 Pending Samsung CDs'
+  const o = ntpOwner.toLowerCase()
+
+  if (!w || w === 'blank') return '❓ No Info — Review'
+
+  // On Hold always goes to Viaero
+  if (w.includes('on hold')) return '🔴 On Hold per Viaero'
+
+  // Check for BOTH submittal and approval in same entry → Viaero & Nokia
+  const hasSubmittal = w.includes('submittal')
+  const hasApproval  = w.includes('approval')
+  if (hasSubmittal && hasApproval) return '🤝 Pending Submittal & Approval — Viaero & Nokia'
+
+  // Approval only → Viaero
+  if (hasApproval && !hasSubmittal) {
+    if (w.includes('service quote') || w.includes('wp') || w.includes('lld') || w.includes('work package')) {
+      return '✅ Pending Approval — Viaero Action'
+    }
+  }
+
+  // Submittal only → Nokia
+  if (hasSubmittal && !hasApproval) {
+    if (w.includes('service quote') || w.includes('wp') || w.includes('lld') || w.includes('work package')) {
+      return '📄 Pending Submittal — Nokia Action'
+    }
+  }
+
+  // Cage match → Nokia
+  if (w.includes('cage match')) return '📋 Pending Cage Match — Nokia'
+
+  // PCN → Nokia
+  if (w.includes('pcn')) return '📡 Pending PCN — Nokia'
+
+  // Samsung CDs → ITW
+  if (w.includes('samsung') || w.includes('combo cds') || w.includes('revised cds')) return '📡 Pending Samsung CDs — ITW'
+
+  // Landlord → ITW
+  if (w.includes(' ll ') || w.includes('ll ') || w.includes('landlord') || w.includes('lease') || w.startsWith('ll ') || w.includes('pending ll')) return '🏢 Pending Landlord (LL) — ITW'
+
+  // SA / MA → ITW
+  if (w.includes('structural') || w.includes('mount analysis') || w.includes('failing sa') || w.includes(' sa ') || w.includes('sa ') || w.startsWith('sa ') || w.includes(',sa') || w.includes('ma ') || w.includes(' ma,')) return '🏗️ Pending SA / MA — ITW'
+
+  // ITW specific
+  if (w.includes('itw') || w.includes('lisco tg')) return '🔧 Pending ITW Approval'
+
+  // Commsearch
   if (w.includes('commsearch')) return '🔍 Pending Commsearch'
+
+  // Scoping
+  if (w.includes('scoping')) return '🔭 Pending Scoping — Nokia'
+
+  // New tower
+  if (w.includes('new tower')) return '🗼 Pending New Tower'
+
+  // Catch all
   return '❓ Other — Review'
 }
 
@@ -252,7 +296,7 @@ export default function NTPTrackerPage() {
         month:         monthLabel,
         daysOut:       ms15f ? daysBetween(today, ms15f) : null,
         ownerCategory: getOwnerCategory(ntpOwner),
-        waitingOnBucket: getWaitingOnBucket(ntpWait)
+        waitingOnBucket: getWaitingOnBucket(ntpWait, ntpOwner)
       })
     })
 
