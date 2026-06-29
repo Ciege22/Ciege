@@ -107,7 +107,7 @@ function getWaitingOnBucket(waitingOn: string, ntpOwner: string): string {
   }
 
   // Cage match → Nokia
-  if (w.includes('cage match')) return '📋 Pending Cage Match — Nokia'
+  if (w.includes('cage match')) return '📋 Pending Cage Match — Viaero & Nokia'
 
   // PCN → Nokia
   if (w.includes('pcn')) return '📡 Pending PCN — Nokia'
@@ -131,7 +131,7 @@ function getWaitingOnBucket(waitingOn: string, ntpOwner: string): string {
   if (w.includes('scoping')) return '🔭 Pending Scoping — Nokia'
 
   // New tower
-  if (w.includes('new tower')) return '🗼 Pending New Tower'
+  if (w.includes('new tower')) return '🗼 Pending New Tower — ITW'
 
   // Catch all
   return '❓ Other — Review'
