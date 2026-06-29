@@ -461,6 +461,41 @@ export default function NTPTrackerPage() {
       XLSX.utils.book_append_sheet(wb2, XLSX.utils.aoa_to_sheet(sheetData), sheetName)
     })
 
+    // All HOPs Summary sheet
+      const summaryRows: unknown[][] = [
+        ['HOP', 'Month', 'Category', 'Action Owner', 'Waiting On Bucket', 'GC', 'FC Start', 'FC End', 'Days Out', 'NTP Blocker / Waiting On', 'Material', 'Mat Forecast', 'Vendor Window', 'Nokia PM', 'CM', 'STATUS']
+      ]
+
+      const allSorted = [...hops].sort((a, b) => {
+        const aIsExternal = ['ITW', 'Samsung / ITW', 'Nokia / ITW', 'Viaero', 'On Hold'].includes(a.ownerCategory)
+        const bIsExternal = ['ITW', 'Samsung / ITW', 'Nokia / ITW', 'Viaero', 'On Hold'].includes(b.ownerCategory)
+        if (aIsExternal && !bIsExternal) return -1
+        if (!aIsExternal && bIsExternal) return 1
+        if (a.month !== b.month) return new Date(a.month) > new Date(b.month) ? 1 : -1
+        if (a.ms16f && b.ms16f) return new Date(a.ms16f) > new Date(b.ms16f) ? 1 : -1
+        return 0
+      })
+
+      allSorted.forEach(h => {
+        const category = ['ITW', 'Samsung / ITW', 'Nokia / ITW'].includes(h.ownerCategory) ? 'External — ITW' :
+                        ['Viaero', 'On Hold'].includes(h.ownerCategory) ? 'External — Viaero' :
+                        h.ownerCategory === 'Viaero & Nokia' ? 'Viaero & Nokia' :
+                        h.ownerCategory === 'Nokia' ? 'Program Team' :
+                        h.ownerCategory === 'Commsearch' ? 'Commsearch' : 'Other'
+        summaryRows.push([
+          h.hop, h.month, category, h.ntpOwner, h.waitingOnBucket,
+          h.gc, h.ms15f, h.ms16f,
+          h.daysOut !== null ? h.daysOut : '',
+          h.ntpWaitingOn,
+          h.hasMat ? 'Received' : 'Pending',
+          h.matForecast, h.vendorWindow,
+          h.nokiaPm, h.cm, 'Pending'
+        ])
+      })
+
+      const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows)
+      XLSX.utils.book_append_sheet(wb2, summarySheet, '📊 All HOPs Summary')
+
     XLSX.writeFile(wb2, `NTP_Tracker_${today.toLocaleDateString('en-US').replace(/\//g, '-')}.xlsx`)
   }
 
