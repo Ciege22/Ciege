@@ -454,7 +454,7 @@ export default function NTPTrackerPage() {
     })
 
     Object.entries(ownerGroups).forEach(([owner, ownerHops]) => {
-      const sheetName = owner.slice(0, 31)
+      const sheetName = owner.slice(0, 31).replace(/[\\\/\?\*\[\]:]/g, '')
       const sheetData = [
         ['HOP', 'GC', 'CM', 'Nokia PM', 'FC Start', 'FC End', 'NTP Owner', 'NTP Waiting On', 'Material', 'Mat Forecast', 'Vendor Window', 'Month'],
         ...ownerHops.sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999)).map(h => [
@@ -500,7 +500,7 @@ export default function NTPTrackerPage() {
       })
 
       const summarySheet = XLSX.utils.aoa_to_sheet(summaryRows)
-      XLSX.utils.book_append_sheet(wb2, summarySheet, '📊 All HOPs Summary')
+      XLSX.utils.book_append_sheet(wb2, summarySheet, 'All HOPs Summary')
 
     XLSX.writeFile(wb2, `NTP_Tracker_${today.toLocaleDateString('en-US').replace(/\//g, '-')}.xlsx`)
     } catch (err) {
