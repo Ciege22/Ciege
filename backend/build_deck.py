@@ -356,7 +356,6 @@ def extract_data(tracker_path: str, snapshot_path: str,
     prev_ip = set(snap.get('ip_hops', []))
     new_starts = sorted(curr_ip - prev_ip)
     completions = sorted(prev_ip - curr_ip)
-    started_count = len(new_starts)
 
     # POR data
     ms15f_col = 'MS15 Implementation Start F'
@@ -954,7 +953,11 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     for i, si in enumerate(new_start_idxs):
         if si < len(shapes4):
             if i < len(d['new_starts']):
-                set_shape_text(shapes4[si], f'★ {d["new_starts"][i]}')
+                if si == 55 and len(d['new_starts']) > 5:
+                    combined = ', '.join(f'★ {h}' for h in d['new_starts'][4:])
+                    set_shape_text(shapes4[si], combined)
+                else:
+                    set_shape_text(shapes4[si], f'★ {d["new_starts"][i]}')
             else:
                 set_shape_text(shapes4[si], '')
                 for off in [1, 2]:
