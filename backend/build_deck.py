@@ -949,33 +949,31 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     set_shape_text(shapes4[24], ds(delta_ntp, snap_date))
     set_shape_text(shapes4[26], f'★  New Starts Since {snap_date} ({len(d["new_starts"])})')
 
-    # Single dynamic text block for new starts — scales to any count
-    new_starts_text = '\n'.join(f'★ {h}' for h in d['new_starts']) if d['new_starts'] else 'No new starts this session'
+    new_start_idxs = [29, 34, 39, 50, 55]
+    new_starts_list = d['new_starts']
 
-    # Use the first slot shape (index 29) as the single container for all new starts
-    if 29 < len(shapes4):
-        shape = shapes4[29]
-        set_shape_text(shape, new_starts_text)
-
-        # Auto-shrink font if many items, otherwise keep default size
-        try:
-            from pptx.util import Pt
-            item_count = len(d['new_starts'])
-            if item_count > 8:
-                font_size = Pt(10)
-            elif item_count > 5:
-                font_size = Pt(12)
+    for i, si in enumerate(new_start_idxs):
+        if si < len(shapes4):
+            if i < min(len(new_starts_list), 4):
+                # First 4 slots get one HOP each
+                set_shape_text(shapes4[si], f'★ {new_starts_list[i]}')
+            elif i == 4 and len(new_starts_list) >= 5:
+                # Last slot (index 4, shape 55) gets ALL remaining HOPs stacked with newlines
+                remaining = new_starts_list[4:]
+                combined_text = '\n'.join(f'★ {h}' for h in remaining)
+                shape = shapes4[si]
+                set_shape_text(shape, combined_text)
+                # Shrink font if more than 1 item crammed in
+                if len(remaining) > 1:
+                    try:
+                        from pptx.util import Pt
+                        font_size = Pt(9) if len(remaining) > 2 else Pt(11)
+                        for paragraph in shape.text_frame.paragraphs:
+                            for run in paragraph.runs:
+                                run.font.size = font_size
+                    except Exception:
+                        pass
             else:
-                font_size = Pt(14)
-            for paragraph in shape.text_frame.paragraphs:
-                for run in paragraph.runs:
-                    run.font.size = font_size
-        except Exception:
-            pass
-
-        # Clear the other 4 slots since they're no longer used
-        for si in [34, 39, 50, 55]:
-            if si < len(shapes4):
                 set_shape_text(shapes4[si], '')
 
     por = d['por']
