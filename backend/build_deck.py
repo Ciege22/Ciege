@@ -356,6 +356,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     prev_ip = set(snap.get('ip_hops', []))
     new_starts = sorted(curr_ip - prev_ip)
     completions = sorted(prev_ip - curr_ip)
+    started_count = len(new_starts)
 
     # POR data
     ms15f_col = 'MS15 Implementation Start F'
