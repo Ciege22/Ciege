@@ -949,20 +949,34 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     set_shape_text(shapes4[24], ds(delta_ntp, snap_date))
     set_shape_text(shapes4[26], f'★  New Starts Since {snap_date} ({len(d["new_starts"])})')
 
-    new_start_idxs = [29, 34, 39, 50, 55]
-    for i, si in enumerate(new_start_idxs):
-        if si < len(shapes4):
-            if i < len(d['new_starts']):
-                if si == 55 and len(d['new_starts']) > 5:
-                    combined = ', '.join(f'★ {h}' for h in d['new_starts'][4:])
-                    set_shape_text(shapes4[si], combined)
-                else:
-                    set_shape_text(shapes4[si], f'★ {d["new_starts"][i]}')
+    # Single dynamic text block for new starts — scales to any count
+    new_starts_text = '\n'.join(f'★ {h}' for h in d['new_starts']) if d['new_starts'] else 'No new starts this session'
+
+    # Use the first slot shape (index 29) as the single container for all new starts
+    if 29 < len(shapes4):
+        shape = shapes4[29]
+        set_shape_text(shape, new_starts_text)
+
+        # Auto-shrink font if many items, otherwise keep default size
+        try:
+            from pptx.util import Pt
+            item_count = len(d['new_starts'])
+            if item_count > 8:
+                font_size = Pt(10)
+            elif item_count > 5:
+                font_size = Pt(12)
             else:
+                font_size = Pt(14)
+            for paragraph in shape.text_frame.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = font_size
+        except Exception:
+            pass
+
+        # Clear the other 4 slots since they're no longer used
+        for si in [34, 39, 50, 55]:
+            if si < len(shapes4):
                 set_shape_text(shapes4[si], '')
-                for off in [1, 2]:
-                    try: set_shape_text(shapes4[si + off], '')
-                    except: pass
 
     por = d['por']
     jun_delta = por['jun']['ntp'] - snap.get('jun_por_ntp', 0)
