@@ -211,6 +211,68 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
   )
 }
 
+interface SectionProps {
+  title: string
+  rows: HOP[]
+  showElapsed?: boolean
+  color?: string
+  expandedHops: Set<string>
+  actions: Action[]
+  mode: string
+  newActionText: Record<string, string>
+  newActionType: Record<string, string>
+  onToggle: (hop: string) => void
+  onToggleAction: (action: Action) => void
+  onAddAction: (hop: string) => void
+  onActionTextChange: (hop: string, val: string) => void
+  onActionTypeChange: (hop: string, val: string) => void
+}
+
+function Section({ title, rows, showElapsed = false, color = 'gray', expandedHops, actions, mode,
+  newActionText, newActionType, onToggle, onToggleAction, onAddAction,
+  onActionTextChange, onActionTypeChange }: SectionProps) {
+  const bgMap: Record<string, string> = {
+    red: 'bg-red-900 border-red-700',
+    yellow: 'bg-yellow-900 border-yellow-700',
+    blue: 'bg-blue-900 border-blue-700',
+    orange: 'bg-orange-900 border-orange-700',
+    gray: 'bg-gray-800 border-gray-600'
+  }
+  return (
+    <div className="mb-6">
+      <div className={`flex items-center justify-between px-4 py-2 rounded-t-lg border ${bgMap[color]}`}>
+        <h3 className="text-sm font-bold text-white">{title}</h3>
+        <span className="text-white text-xs font-bold">{rows.length} HOPs</span>
+      </div>
+      {rows.length === 0
+        ? <div className="bg-gray-900 rounded-b-lg border border-gray-700 border-t-0 p-4 text-center">
+            <p className="text-green-400 text-sm">✅ Nothing here — you're ahead</p>
+          </div>
+        : <div className="bg-gray-950 rounded-b-lg border border-gray-700 border-t-0 p-3">
+            {rows.map(h => (
+              <HopRow
+                key={h.hop}
+                h={h}
+                showElapsed={showElapsed}
+                isExpanded={expandedHops.has(h.hop)}
+                hopAllActions={actions.filter(a => a.hop_name === h.hop)}
+                hopOpenActions={actions.filter(a => a.hop_name === h.hop && !a.completed)}
+                mode={mode}
+                onToggle={onToggle}
+                onToggleAction={onToggleAction}
+                onAddAction={onAddAction}
+                actionText={newActionText[h.hop] || ''}
+                actionType={newActionType[h.hop] || 'Other'}
+                onActionTextChange={onActionTextChange}
+                onActionTypeChange={onActionTypeChange}
+              />
+            ))}
+          </div>
+      }
+    </div>
+  )
+}
+
 export default function WeeklyFocusPage() {
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -475,51 +537,6 @@ export default function WeeklyFocusPage() {
     })
   }
 
-  const Section = ({ title, rows, showElapsed = false, color = 'gray' }: {
-    title: string, rows: HOP[], showElapsed?: boolean, color?: string
-  }) => {
-    const bgMap: Record<string, string> = {
-      red: 'bg-red-900 border-red-700',
-      yellow: 'bg-yellow-900 border-yellow-700',
-      blue: 'bg-blue-900 border-blue-700',
-      orange: 'bg-orange-900 border-orange-700',
-      gray: 'bg-gray-800 border-gray-600'
-    }
-    return (
-      <div className="mb-6">
-        <div className={`flex items-center justify-between px-4 py-2 rounded-t-lg border ${bgMap[color]}`}>
-          <h3 className="text-sm font-bold text-white">{title}</h3>
-          <span className="text-white text-xs font-bold">{rows.length} HOPs</span>
-        </div>
-        {rows.length === 0
-          ? <div className="bg-gray-900 rounded-b-lg border border-gray-700 border-t-0 p-4 text-center">
-              <p className="text-green-400 text-sm">✅ Nothing here — you're ahead</p>
-            </div>
-          : <div className="bg-gray-950 rounded-b-lg border border-gray-700 border-t-0 p-3">
-              {rows.map(h => (
-                <HopRow
-                  key={h.hop}
-                  h={h}
-                  showElapsed={showElapsed}
-                  isExpanded={expandedHops.has(h.hop)}
-                  hopAllActions={actions.filter(a => a.hop_name === h.hop)}
-                  hopOpenActions={actions.filter(a => a.hop_name === h.hop && !a.completed)}
-                  mode={mode}
-                  onToggle={toggleHop}
-                  onToggleAction={toggleAction}
-                  onAddAction={addAction}
-                  actionText={newActionText[h.hop] || ''}
-                  actionType={newActionType[h.hop] || 'Other'}
-                  onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
-                  onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
-                />
-              ))}
-            </div>
-        }
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-5xl mx-auto">
@@ -606,11 +623,41 @@ export default function WeeklyFocusPage() {
             </div>
 
             {/* Sections */}
-            <Section title="🔴 Needs Attention Now — Starts This Week With Blockers" rows={needsAttention} color="red" />
-            <Section title="🔨 Active — Drive to Completion" rows={active} showElapsed color="blue" />
-            <Section title="✅ Starting This Week — Confirm Ready" rows={thisWeekReady} color="gray" />
-            <Section title="🟠 Starting Next 2 Weeks — Get Ahead Now" rows={next2Weeks} color="orange" />
-            <Section title="🚦 NTP Urgent — Missing NTP ≤14 Days" rows={ntpUrgent} color="yellow" />
+            <Section title="🔴 Needs Attention Now — Starts This Week With Blockers" rows={needsAttention} color="red"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
+            <Section title="🔨 Active — Drive to Completion" rows={active} showElapsed color="blue"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
+            <Section title="✅ Starting This Week — Confirm Ready" rows={thisWeekReady} color="gray"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
+            <Section title="🟠 Starting Next 2 Weeks — Get Ahead Now" rows={next2Weeks} color="orange"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
+            <Section title="🚦 NTP Urgent — Missing NTP ≤14 Days" rows={ntpUrgent} color="yellow"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
           </>
         )}
 
