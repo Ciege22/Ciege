@@ -114,6 +114,24 @@ function WeatherWidget() {
 export default function Home() {
   const [snapshotInfo, setSnapshotInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
   const [uploading, setUploading] = useState(false)
+  const [kpis, setKpis] = useState<{
+    totalHops: number
+    ntpComplete: number
+    materialsReceived: number
+    startsToDate: number
+    completesToDate: number
+    activeNow: number
+    over18d: number
+    startingThisWeek: number
+    ntpUrgent: number
+    spoNeeded: number
+    openActions: number
+    cutSpoNow: number
+    materialWatch: number
+    vendorConflicts: number
+    currentMonthFcComplete: number
+    currentMonthActComplete: number
+  } | null>(null)
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -121,6 +139,127 @@ export default function Home() {
       if (snap) setSnapshotInfo({ filename: snap.filename, uploaded_at: snap.uploaded_at, hop_count: snap.hop_count })
     }
     checkSnapshot()
+  }, [])
+
+  useEffect(() => {
+    const loadKPIs = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (snap) computeKPIs(snap.data)
+    }
+    loadKPIs()
+  }, [computeKPIs])
+
+  const computeKPIs = useCallback((rows: unknown[][]) => {
+    const today = new Date()
+    const currentMonth = today.getMonth()
+    const currentYear = today.getFullYear()
+
+    let headerRow = -1
+    for (let i = 0; i < 10; i++) {
+      if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+    }
+    if (headerRow === -1) return
+
+    const headers = rows[headerRow] as string[]
+    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+
+    const hopCol      = col('HOP')
+    const don444Col   = col('DON 444')
+    const ms15fCol    = col('MS15 Implementation Start F')
+    const ms15aCol    = col('MS15 Implementation Start A')
+    const ms16fCol    = col('MS16 Implementation Ends F')
+    const ms16aCol    = col('MS16 Implementation Ends A')
+    const ntpCol      = col('NTP A')
+    const matCol      = headers.findIndex(h => String(h).trim() === 'Material Received A ')
+    const spoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const cpoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
+    const itwSCol     = col('ITW Schedule Start')
+    const itwECol     = col('ITW Schedule Complete')
+    const ssSCol      = col('Samsung Schedule Start')
+    const ssECol      = col('Samsung Schedule Complete')
+
+    const parseD = (val: unknown): Date | null => {
+      if (!val) return null
+      if (val instanceof Date) return isNaN(val.getTime()) ? null : val
+      if (typeof val === 'number') { const d = new Date((val - 25569) * 86400 * 1000); return isNaN(d.getTime()) ? null : d }
+      const d = new Date(String(val)); return isNaN(d.getTime()) ? null : d
+    }
+
+    const hopRows = new Map<string, unknown[][]>()
+    for (let i = headerRow + 1; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      const don = String(row[don444Col] || '').trim().toUpperCase()
+      if (don !== 'DON 444') continue
+      const hop = String(row[hopCol] || '').trim()
+      if (!hop || hop === 'undefined') continue
+      if (!hopRows.has(hop)) hopRows.set(hop, [])
+      hopRows.get(hop)!.push(row)
+    }
+
+    let totalHops = 0, ntpComplete = 0, materialsReceived = 0
+    let startsToDate = 0, completesToDate = 0, activeNow = 0, over18d = 0
+    let startingThisWeek = 0, ntpUrgent = 0, spoNeeded = 0
+    let cutSpoNow = 0, materialWatch = 0, vendorConflicts = 0
+    let currentMonthFcComplete = 0, currentMonthActComplete = 0
+
+    hopRows.forEach((rows2) => {
+      const row = rows2[0]
+      totalHops++
+
+      const ntpDate = parseD(row[ntpCol])
+      const matDate = parseD(row[matCol])
+      const ms15f   = parseD(row[ms15fCol])
+      const ms15a   = parseD(row[ms15aCol])
+      const ms16f   = parseD(row[ms16fCol])
+      const ms16a   = parseD(row[ms16aCol])
+      const spoDate = parseD(row[spoCol])
+      const cpoVal  = String(row[cpoCol] || '').trim()
+
+      const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
+      const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
+      const hasSpo     = !!spoDate
+      const hasCpo     = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
+      const started    = !!ms15a
+      const complete   = !!ms16a
+      const inProgress = started && !complete
+      const daysOut    = ms15f ? Math.round((ms15f.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)) : null
+      const daysElapsed = inProgress && ms15a ? Math.round((today.getTime() - ms15a.getTime()) / (1000 * 60 * 60 * 24)) : null
+
+      if (hasNtp) ntpComplete++
+      if (hasMat) materialsReceived++
+      if (started) startsToDate++
+      if (complete) completesToDate++
+      if (inProgress) activeNow++
+      if (inProgress && (daysElapsed ?? 0) > 18) over18d++
+      if (!started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7) startingThisWeek++
+      if (!hasNtp && !complete && daysOut !== null && daysOut <= 14) ntpUrgent++
+      if (!hasSpo && !complete) {
+        if (hasCpo) cutSpoNow++
+        else spoNeeded++
+      }
+      if (!hasMat && !complete && daysOut !== null && daysOut <= 14) materialWatch++
+
+      if (ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear) currentMonthFcComplete++
+      if (ms16a && ms16a.getMonth() === currentMonth && ms16a.getFullYear() === currentYear) currentMonthActComplete++
+
+      let hasConflict = false
+      rows2.forEach(r => {
+        const itwS = parseD(r[itwSCol]); const itwE = parseD(r[itwECol])
+        const ssS  = parseD(r[ssSCol]);  const ssE  = parseD(r[ssECol])
+        if (ms15f) {
+          if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) hasConflict = true
+          if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) hasConflict = true
+        }
+      })
+      if (hasConflict && !complete) vendorConflicts++
+    })
+
+    setKpis({
+      totalHops, ntpComplete, materialsReceived, startsToDate, completesToDate,
+      activeNow, over18d, startingThisWeek, ntpUrgent, spoNeeded,
+      openActions: 0, cutSpoNow, materialWatch, vendorConflicts,
+      currentMonthFcComplete, currentMonthActComplete
+    })
   }, [])
 
   const handleTrackerUpload = useCallback(async (file: File) => {
@@ -136,13 +275,14 @@ export default function Home() {
         const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
         await saveTrackerSnapshot(file.name, hopCount, rows)
         setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
+        computeKPIs(rows)
       } catch (err) {
         console.error('Upload error:', err)
       }
       setUploading(false)
     }
     reader.readAsArrayBuffer(file)
-  }, [])
+  }, [computeKPIs])
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -232,20 +372,61 @@ export default function Home() {
               </div>
             </section>
 
-            <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-              {stats.map((stat) => (
-                <article
-                  key={stat.label}
-                  className="rounded-[28px] border border-white/10 bg-zinc-900/80 p-6 shadow-xl shadow-black/20"
-                >
-                  <p className="text-sm font-medium uppercase tracking-[0.35em] text-zinc-500">
-                    {stat.label}
-                  </p>
-                  <p className="mt-4 text-4xl font-semibold text-white">{stat.value}</p>
-                  <p className="mt-3 text-sm text-emerald-300">{stat.delta} vs last week</p>
-                </article>
-              ))}
-            </section>
+            {kpis && (
+              <div className="space-y-3 mb-6">
+                {/* Row 1 — Program Health */}
+                <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
+                  {[
+                    { label: 'Total HOPs', value: kpis.totalHops, color: 'text-white', sub: 'DON 444 program' },
+                    { label: 'NTP Complete', value: kpis.ntpComplete, color: 'text-green-400', sub: `${Math.round(kpis.ntpComplete/kpis.totalHops*100)}% of program` },
+                    { label: 'Materials Received', value: kpis.materialsReceived, color: 'text-green-400', sub: `${Math.round(kpis.materialsReceived/kpis.totalHops*100)}% of program` },
+                    { label: 'Starts to Date', value: kpis.startsToDate, color: 'text-blue-400', sub: 'MS15 A confirmed' },
+                    { label: 'Completes to Date', value: kpis.completesToDate, color: 'text-teal-400', sub: 'MS16 A confirmed' },
+                    { label: `${new Date().toLocaleString('default',{month:'short'})} FC Completes`, value: kpis.currentMonthFcComplete, color: 'text-yellow-400', sub: 'MS16 F this month' },
+                    { label: `${new Date().toLocaleString('default',{month:'short'})} Act Completes`, value: kpis.currentMonthActComplete, color: 'text-emerald-400', sub: 'MS16 A this month' },
+                  ].map(({ label, value, color, sub }) => (
+                    <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
+                      <p className="text-gray-500 text-xs">{label}</p>
+                      <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                      <p className="text-gray-600 text-xs mt-1">{sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Row 2 — Needs Action Today */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {[
+                    { label: 'Active Sites', value: kpis.activeNow, color: 'text-blue-400', sub: 'crews on site now' },
+                    { label: 'Over 18 Days', value: kpis.over18d, color: kpis.over18d > 0 ? 'text-red-400' : 'text-green-400', sub: 'past target duration' },
+                    { label: 'Starting This Week', value: kpis.startingThisWeek, color: 'text-orange-400', sub: '0–7 days out' },
+                    { label: 'NTP Urgent', value: kpis.ntpUrgent, color: kpis.ntpUrgent > 0 ? 'text-red-400' : 'text-green-400', sub: 'missing NTP ≤14d' },
+                    { label: 'SPO Needed', value: kpis.spoNeeded, color: kpis.spoNeeded > 0 ? 'text-red-400' : 'text-green-400', sub: 'no CPO yet' },
+                  ].map(({ label, value, color, sub }) => (
+                    <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
+                      <p className="text-gray-500 text-xs">{label}</p>
+                      <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                      <p className="text-gray-600 text-xs mt-1">{sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Row 3 — Actions */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  {[
+                    { label: 'Cut SPO Now', value: kpis.cutSpoNow, color: kpis.cutSpoNow > 0 ? 'text-yellow-400' : 'text-green-400', sub: 'CPO ready — no SPO' },
+                    { label: 'Material Watch', value: kpis.materialWatch, color: kpis.materialWatch > 0 ? 'text-orange-400' : 'text-green-400', sub: 'no mat ≤14d to start' },
+                    { label: 'Vendor Conflicts', value: kpis.vendorConflicts, color: kpis.vendorConflicts > 0 ? 'text-red-400' : 'text-green-400', sub: 'Samsung/ITW on site at start' },
+                    { label: 'Open Actions', value: kpis.openActions, color: 'text-blue-400', sub: 'from HOP Readiness' },
+                  ].map(({ label, value, color, sub }) => (
+                    <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
+                      <p className="text-gray-500 text-xs">{label}</p>
+                      <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                      <p className="text-gray-600 text-xs mt-1">{sub}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </main>
         </div>
       </div>
