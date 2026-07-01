@@ -197,7 +197,7 @@ export default function WeeklyFocusPage() {
     const mssCol      = col('MSS Completed NMS Ready ')
     const powerCol    = col('Power-Up Completion')
     const ntpCol      = col('NTP A')
-    const matCol      = headers.findIndex(h => String(h).trim() === 'Material Received A ')
+    const matCol      = headers.findIndex(h => String(h).trim().replace(/\s+$/, '') === 'Material Received A'.trim())
     const matFcCol    = col('Material Forecast +4ish')
     const wpCol       = col('Work Package Approved in QB')
     const pickupCol   = col('GC Material Pick-up (A)')
