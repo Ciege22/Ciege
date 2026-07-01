@@ -147,6 +147,8 @@ export default function Home() {
     materialWatch: boolean, vendorConflict: boolean,
     currentMonthFc: boolean, currentMonthAct: boolean,
   }[]>([])
+  const [pmFilter, setPmFilter] = useState<string>('ALL')
+  const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -225,6 +227,13 @@ export default function Home() {
     let startingThisWeek = 0, ntpUrgent = 0, spoNeeded = 0
     let cutSpoNow = 0, materialWatch = 0, vendorConflicts = 0
     let currentMonthFcComplete = 0, currentMonthActComplete = 0
+
+    const pmSet = new Set<string>()
+    hopRows.forEach((rows2) => {
+      const pm = String(rows2[0][nokiaPmCol] || '').trim()
+      if (pm) pmSet.add(pm)
+    })
+    const pmList = ['ALL', ...Array.from(pmSet).sort()]
 
     hopRows.forEach((rows2) => {
       const row = rows2[0]
@@ -340,6 +349,7 @@ export default function Home() {
       })
     })
     setHopDetails(details)
+    setPmOptions(pmList)
 
     setKpis({
       totalHops, ntpComplete, materialsReceived, startsToDate, completesToDate,
@@ -381,9 +391,31 @@ export default function Home() {
 
   const openModal = (title: string, filter: (h: typeof hopDetails[0]) => boolean) => {
     setModalTitle(title)
-    setModalHops(hopDetails.filter(filter))
+    const pmFiltered = pmFilter === 'ALL' ? hopDetails : hopDetails.filter(h => h.nokiaPm === pmFilter)
+    setModalHops(pmFiltered.filter(filter))
     setShowModal(true)
   }
+
+  const filteredDetails = pmFilter === 'ALL' ? hopDetails : hopDetails.filter(h => h.nokiaPm === pmFilter)
+
+  const filteredKpis = kpis ? {
+    ...kpis,
+    totalHops: filteredDetails.length,
+    ntpComplete: filteredDetails.filter(h => h.hasNtp).length,
+    materialsReceived: filteredDetails.filter(h => h.hasMat).length,
+    startsToDate: filteredDetails.filter(h => !!h.ms15a).length,
+    completesToDate: filteredDetails.filter(h => h.complete).length,
+    activeNow: filteredDetails.filter(h => h.inProgress).length,
+    over18d: filteredDetails.filter(h => h.over18d).length,
+    startingThisWeek: filteredDetails.filter(h => h.startingThisWeek).length,
+    ntpUrgent: filteredDetails.filter(h => h.ntpUrgent).length,
+    spoNeeded: filteredDetails.filter(h => h.spoNeeded).length,
+    cutSpoNow: filteredDetails.filter(h => h.cutSpoNow).length,
+    materialWatch: filteredDetails.filter(h => h.materialWatch).length,
+    vendorConflicts: filteredDetails.filter(h => h.vendorConflict).length,
+    currentMonthFcComplete: filteredDetails.filter(h => h.currentMonthFc).length,
+    currentMonthActComplete: filteredDetails.filter(h => h.currentMonthAct).length,
+  } : null
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -473,18 +505,30 @@ export default function Home() {
               </div>
             </section>
 
-            {kpis && (
+            {pmOptions.length > 1 && (
+              <div className="flex gap-2 mb-4 flex-wrap items-center">
+                <span className="text-gray-500 text-xs font-semibold">Nokia PM:</span>
+                {pmOptions.map(pm => (
+                  <button key={pm} onClick={() => setPmFilter(pm)}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${pmFilter === pm ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                    {pm}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {filteredKpis && (
               <div className="space-y-3 mb-6">
                 {/* Row 1 — Program Health */}
                 <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
                   {[
-                    { label: 'Total HOPs', value: kpis.totalHops, color: 'text-white', sub: 'DON 444 program', filter: () => true },
-                    { label: 'NTP Complete', value: kpis.ntpComplete, color: 'text-green-400', sub: `${Math.round(kpis.ntpComplete/kpis.totalHops*100)}% of program`, filter: (h: typeof hopDetails[0]) => h.hasNtp },
-                    { label: 'Materials Received', value: kpis.materialsReceived, color: 'text-green-400', sub: `${Math.round(kpis.materialsReceived/kpis.totalHops*100)}% of program`, filter: (h: typeof hopDetails[0]) => h.hasMat },
-                    { label: 'Starts to Date', value: kpis.startsToDate, color: 'text-blue-400', sub: 'MS15 A confirmed', filter: (h: typeof hopDetails[0]) => !!h.ms15a },
-                    { label: 'Completes to Date', value: kpis.completesToDate, color: 'text-teal-400', sub: 'MS16 A confirmed', filter: (h: typeof hopDetails[0]) => h.complete },
-                    { label: `${new Date().toLocaleString('default',{month:'short'})} FC Completes`, value: kpis.currentMonthFcComplete, color: 'text-yellow-400', sub: 'MS16 F this month', filter: (h: typeof hopDetails[0]) => h.currentMonthFc },
-                    { label: `${new Date().toLocaleString('default',{month:'short'})} Act Completes`, value: kpis.currentMonthActComplete, color: 'text-emerald-400', sub: 'MS16 A this month', filter: (h: typeof hopDetails[0]) => h.currentMonthAct },
+                    { label: 'Total HOPs', value: filteredKpis!.totalHops, color: 'text-white', sub: 'DON 444 program', filter: () => true },
+                    { label: 'NTP Complete', value: filteredKpis!.ntpComplete, color: 'text-green-400', sub: `${Math.round(filteredKpis!.ntpComplete/filteredKpis!.totalHops*100)}% of program`, filter: (h: typeof hopDetails[0]) => h.hasNtp },
+                    { label: 'Materials Received', value: filteredKpis!.materialsReceived, color: 'text-green-400', sub: `${Math.round(filteredKpis!.materialsReceived/filteredKpis!.totalHops*100)}% of program`, filter: (h: typeof hopDetails[0]) => h.hasMat },
+                    { label: 'Starts to Date', value: filteredKpis!.startsToDate, color: 'text-blue-400', sub: 'MS15 A confirmed', filter: (h: typeof hopDetails[0]) => !!h.ms15a },
+                    { label: 'Completes to Date', value: filteredKpis!.completesToDate, color: 'text-teal-400', sub: 'MS16 A confirmed', filter: (h: typeof hopDetails[0]) => h.complete },
+                    { label: `${new Date().toLocaleString('default',{month:'short'})} FC Completes`, value: filteredKpis!.currentMonthFcComplete, color: 'text-yellow-400', sub: 'MS16 F this month', filter: (h: typeof hopDetails[0]) => h.currentMonthFc },
+                    { label: `${new Date().toLocaleString('default',{month:'short'})} Act Completes`, value: filteredKpis!.currentMonthActComplete, color: 'text-emerald-400', sub: 'MS16 A this month', filter: (h: typeof hopDetails[0]) => h.currentMonthAct },
                   ].map(({ label, value, color, sub, filter }) => (
                     <div key={label} onClick={() => openModal(label, filter)}
                       className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
@@ -498,11 +542,11 @@ export default function Home() {
                 {/* Row 2 — Needs Action Today */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   {[
-                    { label: 'Active Sites', value: kpis.activeNow, color: 'text-blue-400', sub: 'crews on site now', filter: (h: typeof hopDetails[0]) => h.inProgress },
-                    { label: 'Over 18 Days', value: kpis.over18d, color: kpis.over18d > 0 ? 'text-red-400' : 'text-green-400', sub: 'past target duration', filter: (h: typeof hopDetails[0]) => h.over18d },
-                    { label: 'Starting This Week', value: kpis.startingThisWeek, color: 'text-orange-400', sub: '0–7 days out', filter: (h: typeof hopDetails[0]) => h.startingThisWeek },
-                    { label: 'NTP Urgent', value: kpis.ntpUrgent, color: kpis.ntpUrgent > 0 ? 'text-red-400' : 'text-green-400', sub: 'missing NTP ≤14d', filter: (h: typeof hopDetails[0]) => h.ntpUrgent },
-                    { label: 'SPO Needed', value: kpis.spoNeeded, color: kpis.spoNeeded > 0 ? 'text-red-400' : 'text-green-400', sub: 'no CPO yet', filter: (h: typeof hopDetails[0]) => h.spoNeeded },
+                    { label: 'Active Sites', value: filteredKpis!.activeNow, color: 'text-blue-400', sub: 'crews on site now', filter: (h: typeof hopDetails[0]) => h.inProgress },
+                    { label: 'Over 18 Days', value: filteredKpis!.over18d, color: filteredKpis!.over18d > 0 ? 'text-red-400' : 'text-green-400', sub: 'past target duration', filter: (h: typeof hopDetails[0]) => h.over18d },
+                    { label: 'Starting This Week', value: filteredKpis!.startingThisWeek, color: 'text-orange-400', sub: '0–7 days out', filter: (h: typeof hopDetails[0]) => h.startingThisWeek },
+                    { label: 'NTP Urgent', value: filteredKpis!.ntpUrgent, color: filteredKpis!.ntpUrgent > 0 ? 'text-red-400' : 'text-green-400', sub: 'missing NTP ≤14d', filter: (h: typeof hopDetails[0]) => h.ntpUrgent },
+                    { label: 'SPO Needed', value: filteredKpis!.spoNeeded, color: filteredKpis!.spoNeeded > 0 ? 'text-red-400' : 'text-green-400', sub: 'no CPO yet', filter: (h: typeof hopDetails[0]) => h.spoNeeded },
                   ].map(({ label, value, color, sub, filter }) => (
                     <div key={label} onClick={() => openModal(label, filter)}
                       className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
@@ -516,10 +560,10 @@ export default function Home() {
                 {/* Row 3 — Actions */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
-                    { label: 'Cut SPO Now', value: kpis.cutSpoNow, color: kpis.cutSpoNow > 0 ? 'text-yellow-400' : 'text-green-400', sub: 'CPO ready — no SPO', filter: (h: typeof hopDetails[0]) => h.cutSpoNow },
-                    { label: 'Material Watch', value: kpis.materialWatch, color: kpis.materialWatch > 0 ? 'text-orange-400' : 'text-green-400', sub: 'no mat ≤14d to start', filter: (h: typeof hopDetails[0]) => h.materialWatch },
-                    { label: 'Vendor Conflicts', value: kpis.vendorConflicts, color: kpis.vendorConflicts > 0 ? 'text-red-400' : 'text-green-400', sub: 'Samsung/ITW on site at start', filter: (h: typeof hopDetails[0]) => h.vendorConflict },
-                    { label: 'Open Actions', value: kpis.openActions, color: 'text-blue-400', sub: 'from HOP Readiness', filter: () => false },
+                    { label: 'Cut SPO Now', value: filteredKpis!.cutSpoNow, color: filteredKpis!.cutSpoNow > 0 ? 'text-yellow-400' : 'text-green-400', sub: 'CPO ready — no SPO', filter: (h: typeof hopDetails[0]) => h.cutSpoNow },
+                    { label: 'Material Watch', value: filteredKpis!.materialWatch, color: filteredKpis!.materialWatch > 0 ? 'text-orange-400' : 'text-green-400', sub: 'no mat ≤14d to start', filter: (h: typeof hopDetails[0]) => h.materialWatch },
+                    { label: 'Vendor Conflicts', value: filteredKpis!.vendorConflicts, color: filteredKpis!.vendorConflicts > 0 ? 'text-red-400' : 'text-green-400', sub: 'Samsung/ITW on site at start', filter: (h: typeof hopDetails[0]) => h.vendorConflict },
+                    { label: 'Open Actions', value: filteredKpis!.openActions, color: 'text-blue-400', sub: 'from HOP Readiness', filter: () => false },
                   ].map(({ label, value, color, sub, filter }) => (
                     <div key={label} onClick={() => openModal(label, filter)}
                       className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
