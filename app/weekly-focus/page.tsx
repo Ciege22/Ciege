@@ -511,6 +511,16 @@ export default function WeeklyFocusPage() {
     h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14
   ).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
 
+  const week3 = filteredHops.filter(h =>
+    !h.inProgress && !h.complete &&
+    h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 21
+  ).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+
+  const week4 = filteredHops.filter(h =>
+    !h.inProgress && !h.complete &&
+    h.daysOut !== null && h.daysOut > 21 && h.daysOut <= 28
+  ).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+
   const ntpUrgent = filteredHops.filter(h =>
     !h.hasNtp && !h.complete &&
     h.daysOut !== null && h.daysOut <= 14
@@ -628,12 +638,14 @@ export default function WeeklyFocusPage() {
             </div>
 
             {/* KPI Row */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-7 gap-3 mb-6">
               {[
                 { label: 'Active', value: active.length, color: 'text-blue-400' },
                 { label: 'Needs Attention', value: needsAttention.length, color: 'text-red-400' },
                 { label: 'This Week Ready', value: thisWeekReady.length, color: 'text-green-400' },
                 { label: 'Next 2 Weeks', value: next2Weeks.length, color: 'text-yellow-400' },
+                { label: 'Week 3', value: week3.length, color: 'text-teal-400' },
+                { label: 'Week 4', value: week4.length, color: 'text-gray-400' },
                 { label: 'NTP Urgent', value: ntpUrgent.length, color: 'text-orange-400' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
@@ -666,6 +678,20 @@ export default function WeeklyFocusPage() {
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
             <Section title="🟠 Starting Next 2 Weeks — Get Ahead Now" rows={next2Weeks} color="orange"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
+            <Section title="🟡 Week 3 (15–21 days)" rows={week3} color="yellow"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
+            <Section title="🔵 Week 4 (22–28 days)" rows={week4} color="gray"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
