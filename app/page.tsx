@@ -132,6 +132,21 @@ export default function Home() {
     currentMonthFcComplete: number
     currentMonthActComplete: number
   } | null>(null)
+  const [modalTitle, setModalTitle] = useState('')
+  const [modalHops, setModalHops] = useState<unknown[]>([])
+  const [showModal, setShowModal] = useState(false)
+  const [hopDetails, setHopDetails] = useState<{
+    hop: string, gc: string, nokiaPm: string,
+    ms15f: string, ms15a: string, ms16f: string, ms16a: string,
+    hasNtp: boolean, ntpWaitingOn: string,
+    hasMat: boolean, hasSpo: boolean, hasCpo: boolean,
+    daysOut: number | null, daysElapsed: number | null,
+    inProgress: boolean, complete: boolean, over18d: boolean,
+    startingThisWeek: boolean, ntpUrgent: boolean,
+    cutSpoNow: boolean, spoNeeded: boolean,
+    materialWatch: boolean, vendorConflict: boolean,
+    currentMonthFc: boolean, currentMonthAct: boolean,
+  }[]>([])
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -157,6 +172,8 @@ export default function Home() {
 
     const hopCol      = col('HOP')
     const don444Col   = col('DON 444')
+    const nokiaPmCol  = col('Nokia PM')
+    const ntpWaitCol  = col('NTP is waiting on')
     const ms15fCol    = col('MS15 Implementation Start F')
     const ms15aCol    = col('MS15 Implementation Start A')
     const ms16fCol    = col('MS16 Implementation Ends F')
@@ -246,6 +263,69 @@ export default function Home() {
       if (hasConflict && !complete) vendorConflicts++
     })
 
+    const details: {
+      hop: string, gc: string, nokiaPm: string,
+      ms15f: string, ms15a: string, ms16f: string, ms16a: string,
+      hasNtp: boolean, ntpWaitingOn: string,
+      hasMat: boolean, hasSpo: boolean, hasCpo: boolean,
+      daysOut: number | null, daysElapsed: number | null,
+      inProgress: boolean, complete: boolean, over18d: boolean,
+      startingThisWeek: boolean, ntpUrgent: boolean,
+      cutSpoNow: boolean, spoNeeded: boolean,
+      materialWatch: boolean, vendorConflict: boolean,
+      currentMonthFc: boolean, currentMonthAct: boolean,
+    }[] = []
+    hopRows.forEach((rows2) => {
+      const row = rows2[0]
+      const ntpDate = parseD(row[ntpCol])
+      const matDate = parseD(row[matCol])
+      const ms15f   = parseD(row[ms15fCol])
+      const ms15a   = parseD(row[ms15aCol])
+      const ms16f   = parseD(row[ms16fCol])
+      const ms16a   = parseD(row[ms16aCol])
+      const spoDate = parseD(row[spoCol])
+      const cpoVal  = String(row[cpoCol] || '').trim()
+      const hasNtp  = !!(ntpDate && ntpDate.getFullYear() >= 2025)
+      const hasMat  = !!(matDate && matDate.getFullYear() >= 2020)
+      const hasSpo  = !!spoDate
+      const hasCpo  = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
+      const started    = !!ms15a
+      const complete   = !!ms16a
+      const inProgress = started && !complete
+      const daysOut    = ms15f ? Math.round((ms15f.getTime() - today.getTime()) / (1000*60*60*24)) : null
+      const daysElapsed = inProgress && ms15a ? Math.round((today.getTime() - ms15a.getTime()) / (1000*60*60*24)) : null
+      const fmtD = (d: Date | null) => d ? `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}` : ''
+      let hasConflict2 = false
+      rows2.forEach(r => {
+        const itwS = parseD(r[itwSCol]); const itwE = parseD(r[itwECol])
+        const ssS  = parseD(r[ssSCol]);  const ssE  = parseD(r[ssECol])
+        if (ms15f) {
+          if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) hasConflict2 = true
+          if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) hasConflict2 = true
+        }
+      })
+      details.push({
+        hop: String(row[hopCol] || '').trim(),
+        gc: String(row[col('General Contractor')] || '').trim(),
+        nokiaPm: String(row[nokiaPmCol] || '').trim(),
+        ms15f: fmtD(ms15f), ms15a: fmtD(ms15a),
+        ms16f: fmtD(ms16f), ms16a: fmtD(ms16a),
+        hasNtp, ntpWaitingOn: String(row[ntpWaitCol] || '').trim(),
+        hasMat, hasSpo, hasCpo,
+        daysOut, daysElapsed, inProgress, complete,
+        over18d: inProgress && (daysElapsed??0) > 18,
+        startingThisWeek: !started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7,
+        ntpUrgent: !hasNtp && !complete && daysOut !== null && daysOut <= 14,
+        cutSpoNow: !hasSpo && !complete && hasCpo,
+        spoNeeded: !hasSpo && !complete && !hasCpo,
+        materialWatch: !hasMat && !complete && daysOut !== null && daysOut <= 14,
+        vendorConflict: hasConflict2 && !complete,
+        currentMonthFc: !!(ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear),
+        currentMonthAct: !!(ms16a && ms16a.getMonth() === currentMonth && ms16a.getFullYear() === currentYear),
+      })
+    })
+    setHopDetails(details)
+
     setKpis({
       totalHops, ntpComplete, materialsReceived, startsToDate, completesToDate,
       activeNow, over18d, startingThisWeek, ntpUrgent, spoNeeded,
@@ -283,6 +363,12 @@ export default function Home() {
     }
     reader.readAsArrayBuffer(file)
   }, [computeKPIs])
+
+  const openModal = (title: string, filter: (h: typeof hopDetails[0]) => boolean) => {
+    setModalTitle(title)
+    setModalHops(hopDetails.filter(filter))
+    setShowModal(true)
+  }
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
@@ -377,15 +463,16 @@ export default function Home() {
                 {/* Row 1 — Program Health */}
                 <div className="grid grid-cols-2 md:grid-cols-7 gap-3">
                   {[
-                    { label: 'Total HOPs', value: kpis.totalHops, color: 'text-white', sub: 'DON 444 program' },
-                    { label: 'NTP Complete', value: kpis.ntpComplete, color: 'text-green-400', sub: `${Math.round(kpis.ntpComplete/kpis.totalHops*100)}% of program` },
-                    { label: 'Materials Received', value: kpis.materialsReceived, color: 'text-green-400', sub: `${Math.round(kpis.materialsReceived/kpis.totalHops*100)}% of program` },
-                    { label: 'Starts to Date', value: kpis.startsToDate, color: 'text-blue-400', sub: 'MS15 A confirmed' },
-                    { label: 'Completes to Date', value: kpis.completesToDate, color: 'text-teal-400', sub: 'MS16 A confirmed' },
-                    { label: `${new Date().toLocaleString('default',{month:'short'})} FC Completes`, value: kpis.currentMonthFcComplete, color: 'text-yellow-400', sub: 'MS16 F this month' },
-                    { label: `${new Date().toLocaleString('default',{month:'short'})} Act Completes`, value: kpis.currentMonthActComplete, color: 'text-emerald-400', sub: 'MS16 A this month' },
-                  ].map(({ label, value, color, sub }) => (
-                    <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
+                    { label: 'Total HOPs', value: kpis.totalHops, color: 'text-white', sub: 'DON 444 program', filter: () => true },
+                    { label: 'NTP Complete', value: kpis.ntpComplete, color: 'text-green-400', sub: `${Math.round(kpis.ntpComplete/kpis.totalHops*100)}% of program`, filter: (h: typeof hopDetails[0]) => h.hasNtp },
+                    { label: 'Materials Received', value: kpis.materialsReceived, color: 'text-green-400', sub: `${Math.round(kpis.materialsReceived/kpis.totalHops*100)}% of program`, filter: (h: typeof hopDetails[0]) => h.hasMat },
+                    { label: 'Starts to Date', value: kpis.startsToDate, color: 'text-blue-400', sub: 'MS15 A confirmed', filter: (h: typeof hopDetails[0]) => !!h.ms15a },
+                    { label: 'Completes to Date', value: kpis.completesToDate, color: 'text-teal-400', sub: 'MS16 A confirmed', filter: (h: typeof hopDetails[0]) => h.complete },
+                    { label: `${new Date().toLocaleString('default',{month:'short'})} FC Completes`, value: kpis.currentMonthFcComplete, color: 'text-yellow-400', sub: 'MS16 F this month', filter: (h: typeof hopDetails[0]) => h.currentMonthFc },
+                    { label: `${new Date().toLocaleString('default',{month:'short'})} Act Completes`, value: kpis.currentMonthActComplete, color: 'text-emerald-400', sub: 'MS16 A this month', filter: (h: typeof hopDetails[0]) => h.currentMonthAct },
+                  ].map(({ label, value, color, sub, filter }) => (
+                    <div key={label} onClick={() => openModal(label, filter)}
+                      className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
                       <p className="text-gray-500 text-xs">{label}</p>
                       <p className={`text-2xl font-bold ${color}`}>{value}</p>
                       <p className="text-gray-600 text-xs mt-1">{sub}</p>
@@ -396,13 +483,14 @@ export default function Home() {
                 {/* Row 2 — Needs Action Today */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   {[
-                    { label: 'Active Sites', value: kpis.activeNow, color: 'text-blue-400', sub: 'crews on site now' },
-                    { label: 'Over 18 Days', value: kpis.over18d, color: kpis.over18d > 0 ? 'text-red-400' : 'text-green-400', sub: 'past target duration' },
-                    { label: 'Starting This Week', value: kpis.startingThisWeek, color: 'text-orange-400', sub: '0–7 days out' },
-                    { label: 'NTP Urgent', value: kpis.ntpUrgent, color: kpis.ntpUrgent > 0 ? 'text-red-400' : 'text-green-400', sub: 'missing NTP ≤14d' },
-                    { label: 'SPO Needed', value: kpis.spoNeeded, color: kpis.spoNeeded > 0 ? 'text-red-400' : 'text-green-400', sub: 'no CPO yet' },
-                  ].map(({ label, value, color, sub }) => (
-                    <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
+                    { label: 'Active Sites', value: kpis.activeNow, color: 'text-blue-400', sub: 'crews on site now', filter: (h: typeof hopDetails[0]) => h.inProgress },
+                    { label: 'Over 18 Days', value: kpis.over18d, color: kpis.over18d > 0 ? 'text-red-400' : 'text-green-400', sub: 'past target duration', filter: (h: typeof hopDetails[0]) => h.over18d },
+                    { label: 'Starting This Week', value: kpis.startingThisWeek, color: 'text-orange-400', sub: '0–7 days out', filter: (h: typeof hopDetails[0]) => h.startingThisWeek },
+                    { label: 'NTP Urgent', value: kpis.ntpUrgent, color: kpis.ntpUrgent > 0 ? 'text-red-400' : 'text-green-400', sub: 'missing NTP ≤14d', filter: (h: typeof hopDetails[0]) => h.ntpUrgent },
+                    { label: 'SPO Needed', value: kpis.spoNeeded, color: kpis.spoNeeded > 0 ? 'text-red-400' : 'text-green-400', sub: 'no CPO yet', filter: (h: typeof hopDetails[0]) => h.spoNeeded },
+                  ].map(({ label, value, color, sub, filter }) => (
+                    <div key={label} onClick={() => openModal(label, filter)}
+                      className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
                       <p className="text-gray-500 text-xs">{label}</p>
                       <p className={`text-2xl font-bold ${color}`}>{value}</p>
                       <p className="text-gray-600 text-xs mt-1">{sub}</p>
@@ -413,12 +501,13 @@ export default function Home() {
                 {/* Row 3 — Actions */}
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   {[
-                    { label: 'Cut SPO Now', value: kpis.cutSpoNow, color: kpis.cutSpoNow > 0 ? 'text-yellow-400' : 'text-green-400', sub: 'CPO ready — no SPO' },
-                    { label: 'Material Watch', value: kpis.materialWatch, color: kpis.materialWatch > 0 ? 'text-orange-400' : 'text-green-400', sub: 'no mat ≤14d to start' },
-                    { label: 'Vendor Conflicts', value: kpis.vendorConflicts, color: kpis.vendorConflicts > 0 ? 'text-red-400' : 'text-green-400', sub: 'Samsung/ITW on site at start' },
-                    { label: 'Open Actions', value: kpis.openActions, color: 'text-blue-400', sub: 'from HOP Readiness' },
-                  ].map(({ label, value, color, sub }) => (
-                    <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
+                    { label: 'Cut SPO Now', value: kpis.cutSpoNow, color: kpis.cutSpoNow > 0 ? 'text-yellow-400' : 'text-green-400', sub: 'CPO ready — no SPO', filter: (h: typeof hopDetails[0]) => h.cutSpoNow },
+                    { label: 'Material Watch', value: kpis.materialWatch, color: kpis.materialWatch > 0 ? 'text-orange-400' : 'text-green-400', sub: 'no mat ≤14d to start', filter: (h: typeof hopDetails[0]) => h.materialWatch },
+                    { label: 'Vendor Conflicts', value: kpis.vendorConflicts, color: kpis.vendorConflicts > 0 ? 'text-red-400' : 'text-green-400', sub: 'Samsung/ITW on site at start', filter: (h: typeof hopDetails[0]) => h.vendorConflict },
+                    { label: 'Open Actions', value: kpis.openActions, color: 'text-blue-400', sub: 'from HOP Readiness', filter: () => false },
+                  ].map(({ label, value, color, sub, filter }) => (
+                    <div key={label} onClick={() => openModal(label, filter)}
+                      className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
                       <p className="text-gray-500 text-xs">{label}</p>
                       <p className={`text-2xl font-bold ${color}`}>{value}</p>
                       <p className="text-gray-600 text-xs mt-1">{sub}</p>
@@ -430,6 +519,58 @@ export default function Home() {
           </main>
         </div>
       </div>
+
+      {/* KPI Drill-Down Modal */}
+      {showModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowModal(false)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-5xl max-h-[80vh] flex flex-col mx-4" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+              <h2 className="text-white font-semibold text-lg">{modalTitle} <span className="text-gray-400 text-sm ml-2">({(modalHops as typeof hopDetails).length} sites)</span></h2>
+              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+            </div>
+            <div className="overflow-auto flex-1">
+              {(modalHops as typeof hopDetails).length === 0 ? (
+                <p className="text-gray-500 text-center py-10">No sites match this filter.</p>
+              ) : (
+                <table className="w-full text-xs text-left">
+                  <thead className="sticky top-0 bg-gray-800 text-gray-400">
+                    <tr>
+                      <th className="px-3 py-2">HOP</th>
+                      <th className="px-3 py-2">GC</th>
+                      <th className="px-3 py-2">Nokia PM</th>
+                      <th className="px-3 py-2">FC Start</th>
+                      <th className="px-3 py-2">AC Start</th>
+                      <th className="px-3 py-2">FC End</th>
+                      <th className="px-3 py-2">AC End</th>
+                      <th className="px-3 py-2">NTP</th>
+                      <th className="px-3 py-2">NTP Waiting On</th>
+                      <th className="px-3 py-2">Mat</th>
+                      <th className="px-3 py-2">SPO</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(modalHops as typeof hopDetails).map((h, i) => (
+                      <tr key={i} className={i % 2 === 0 ? 'bg-gray-900' : 'bg-gray-850'}>
+                        <td className="px-3 py-1.5 font-mono text-white">{h.hop}</td>
+                        <td className="px-3 py-1.5 text-gray-300">{h.gc}</td>
+                        <td className="px-3 py-1.5 text-gray-300">{h.nokiaPm}</td>
+                        <td className="px-3 py-1.5 text-gray-400">{h.ms15f}</td>
+                        <td className="px-3 py-1.5 text-blue-400">{h.ms15a}</td>
+                        <td className="px-3 py-1.5 text-gray-400">{h.ms16f}</td>
+                        <td className="px-3 py-1.5 text-teal-400">{h.ms16a}</td>
+                        <td className="px-3 py-1.5">{h.hasNtp ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+                        <td className="px-3 py-1.5 text-gray-400 max-w-[180px] truncate">{h.ntpWaitingOn}</td>
+                        <td className="px-3 py-1.5">{h.hasMat ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+                        <td className="px-3 py-1.5">{h.hasSpo ? <span className="text-green-400">✓</span> : h.hasCpo ? <span className="text-yellow-400">CPO</span> : <span className="text-red-400">✗</span>}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
