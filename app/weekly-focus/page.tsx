@@ -20,6 +20,8 @@ interface HOP {
   hasNtp: boolean
   hasMat: boolean
   hasSpo: boolean
+  hasCpo: boolean
+  spoStatus: string
   ntpOwner: string
   ntpWaitingOn: string
   matForecast: string
@@ -135,7 +137,8 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
           }
           {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
           {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
-          {!h.hasSpo && <span className="bg-yellow-900 text-yellow-200 text-xs px-2 py-0.5 rounded-full">SPO ✗</span>}
+          {h.spoStatus === 'cpo_ready' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO Now</span>}
+          {h.spoStatus === 'missing_cpo' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">SPO — Chase CPO</span>}
           {h.vendorWindow.includes('🔴') && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">Vendor ⚠️</span>}
           {h.over18d && <span className="bg-red-800 text-red-200 text-xs px-2 py-0.5 rounded-full">⚠️ Over 18d</span>}
           {hopOpenActions.length > 0 && (
@@ -158,7 +161,15 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
             <div><span className="text-gray-500">Act End:</span> <span className="text-white">{h.ms16a || '—'}</span></div>
             <div><span className="text-gray-500">NTP:</span> <span className={h.hasNtp ? 'text-green-400' : 'text-red-400'}>{h.hasNtp ? '✓ Confirmed' : '✗ Pending'}</span></div>
             <div><span className="text-gray-500">Material:</span> <span className={h.hasMat ? 'text-green-400' : 'text-red-400'}>{h.hasMat ? '✓ Received' : '✗ Pending'}</span></div>
-            <div><span className="text-gray-500">SPO:</span> <span className={h.hasSpo ? 'text-green-400' : 'text-red-400'}>{h.hasSpo ? '✓ Issued' : '✗ Not Issued'}</span></div>
+            <div><span className="text-gray-500">SPO:</span> <span className={
+              h.spoStatus === 'issued' ? 'text-green-400' :
+              h.spoStatus === 'cpo_ready' ? 'text-yellow-300 font-bold' :
+              'text-red-400'
+            }>{
+              h.spoStatus === 'issued' ? '✓ Issued' :
+              h.spoStatus === 'cpo_ready' ? '⚡ CPO Available — Cut SPO Now' :
+              '✗ No CPO — Chase CPO'
+            }</span></div>
             {!h.hasNtp && h.ntpWaitingOn && <div className="col-span-2"><span className="text-gray-500">NTP Waiting On:</span> <span className="text-yellow-300">{h.ntpWaitingOn}</span></div>}
             {!h.hasMat && h.matForecast && <div><span className="text-gray-500">Mat Forecast:</span> <span className="text-yellow-300">{h.matForecast}</span></div>}
             {h.vendorWindow !== '✅ Clear' && <div className="col-span-2"><span className="text-gray-500">Vendor:</span> <span className="text-red-400">{h.vendorWindow}</span></div>}
@@ -379,6 +390,7 @@ export default function WeeklyFocusPage() {
     const ntpCol      = col('NTP A')
     const matCol      = headers.findIndex(h => String(h).trim().replace(/\s+$/, '') === 'Material Received A'.trim())
     const spoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const cpoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
     const matFcCol    = col('Material Forecast +4ish')
     const wpCol       = col('Work Package Approved in QB')
     const pickupCol   = col('GC Material Pick-up (A)')
@@ -418,6 +430,9 @@ export default function WeeklyFocusPage() {
       const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
       const spoDate    = parseDateAny(row[spoCol])
       const hasSpo     = !!spoDate
+      const cpoVal     = String(row[cpoCol] || '').trim()
+      const hasCpo     = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
+      const spoStatus  = hasSpo ? 'issued' : hasCpo ? 'cpo_ready' : 'missing_cpo'
       const wpApproved = !!wpDate
       const gcPickup   = !!pickupD
       const started    = !!ms15a
@@ -451,7 +466,7 @@ export default function WeeklyFocusPage() {
         ms16a:       fmtDate(ms16a),
         mss:         fmtDate(mssDate),
         powerUp:     fmtDate(powerDate),
-        hasNtp, hasMat, hasSpo, wpApproved, gcPickup,
+        hasNtp, hasMat, hasSpo, hasCpo, spoStatus, wpApproved, gcPickup,
         ntpOwner:    String(row[ntpOwnCol] || '').trim(),
         ntpWaitingOn: String(row[ntpWaitCol] || '').trim(),
         matForecast: fmtDate(parseDateAny(row[matFcCol])),
