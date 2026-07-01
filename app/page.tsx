@@ -286,7 +286,7 @@ export default function Home() {
       const spoDate = parseD(row[spoCol])
       const cpoVal  = String(row[cpoCol] || '').trim()
       const hasNtp  = !!(ntpDate && ntpDate.getFullYear() >= 2025)
-      const hasMat  = !!(matDate && matDate.getFullYear() >= 2020) || complete
+      const hasMat  = !!(matDate && matDate.getFullYear() >= 2020) || !!ms16a
       const hasSpo  = !!spoDate
       const hasCpo  = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
       const started    = !!ms15a
