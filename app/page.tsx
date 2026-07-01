@@ -190,8 +190,23 @@ export default function Home() {
     const parseD = (val: unknown): Date | null => {
       if (!val) return null
       if (val instanceof Date) return isNaN(val.getTime()) ? null : val
-      if (typeof val === 'number') { const d = new Date((val - 25569) * 86400 * 1000); return isNaN(d.getTime()) ? null : d }
-      const d = new Date(String(val)); return isNaN(d.getTime()) ? null : d
+      if (typeof val === 'number') {
+        if (val > 40000 && val < 60000) {
+          const d = new Date((val - 25569) * 86400 * 1000)
+          return isNaN(d.getTime()) ? null : d
+        }
+        return null
+      }
+      const s = String(val).trim()
+      if (!s || s === 'null' || s === 'undefined' || s === 'NaN') return null
+      const d = new Date(s)
+      if (!isNaN(d.getTime())) return d
+      const parts = s.split('/')
+      if (parts.length === 3) {
+        const d2 = new Date(parseInt(parts[2]), parseInt(parts[0])-1, parseInt(parts[1]))
+        return isNaN(d2.getTime()) ? null : d2
+      }
+      return null
     }
 
     const hopRows = new Map<string, unknown[][]>()
@@ -225,7 +240,7 @@ export default function Home() {
       const cpoVal  = String(row[cpoCol] || '').trim()
 
       const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
-      const hasMat     = !!(matDate && matDate.getFullYear() >= 2020) || !!ms16a
+      const hasMat     = !!(matDate && !isNaN(matDate.getTime()) && matDate.getFullYear() >= 2020) || !!ms16a
       const hasSpo     = !!spoDate
       const hasCpo     = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
       const started    = !!ms15a
@@ -286,7 +301,7 @@ export default function Home() {
       const spoDate = parseD(row[spoCol])
       const cpoVal  = String(row[cpoCol] || '').trim()
       const hasNtp  = !!(ntpDate && ntpDate.getFullYear() >= 2025)
-      const hasMat  = !!(matDate && matDate.getFullYear() >= 2020) || !!ms16a
+      const hasMat  = !!(matDate && !isNaN(matDate.getTime()) && matDate.getFullYear() >= 2020) || !!ms16a
       const hasSpo  = !!spoDate
       const hasCpo  = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
       const started    = !!ms15a
