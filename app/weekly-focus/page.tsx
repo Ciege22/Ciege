@@ -96,6 +96,121 @@ const AUTO_COMPLETE_MAP: Record<string, string[]> = {
   'MSS Completed NMS Ready ': ['Update Tracker'],
 }
 
+const newActionTextRef = { current: {} as Record<string, string> }
+const newActionTypeRef = { current: {} as Record<string, string> }
+
+interface HopRowProps {
+  h: HOP
+  showElapsed: boolean
+  isExpanded: boolean
+  hopAllActions: Action[]
+  hopOpenActions: Action[]
+  mode: string
+  onToggle: (hop: string) => void
+  onToggleAction: (action: Action) => void
+  onAddAction: (hop: string) => void
+  actionText: string
+  actionType: string
+  onActionTextChange: (hop: string, val: string) => void
+  onActionTypeChange: (hop: string, val: string) => void
+}
+
+function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mode,
+  onToggle, onToggleAction, onAddAction, actionText, actionType,
+  onActionTextChange, onActionTypeChange }: HopRowProps) {
+  const hasBlocker = !h.hasNtp || !h.hasMat || h.vendorWindow.includes('🔴') || h.over18d
+
+  return (
+    <div className={`rounded-lg border mb-2 overflow-hidden ${h.over18d ? 'border-red-700' : hasBlocker ? 'border-yellow-800' : 'border-gray-700'}`}>
+      <div
+        className={`flex items-center justify-between p-3 cursor-pointer ${h.over18d ? 'bg-red-950' : hasBlocker ? 'bg-yellow-950' : 'bg-gray-900'} hover:bg-opacity-80`}
+        onClick={() => onToggle(h.hop)}>
+        <div className="flex items-center gap-3 flex-wrap">
+          <span className="font-bold text-white text-sm">{h.hop}</span>
+          <span className="text-gray-400 text-xs">{mode === 'gc' ? h.gc : h.cm}</span>
+          {showElapsed
+            ? <span className={`text-xs font-bold ${h.over18d ? 'text-red-400' : 'text-green-400'}`}>{h.daysElapsed}d elapsed</span>
+            : h.daysOut !== null && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>
+          }
+          {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
+          {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
+          {h.vendorWindow.includes('🔴') && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">Vendor ⚠️</span>}
+          {h.over18d && <span className="bg-red-800 text-red-200 text-xs px-2 py-0.5 rounded-full">⚠️ Over 18d</span>}
+          {hopOpenActions.length > 0 && (
+            <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">
+              {hopOpenActions.length} open action{hopOpenActions.length > 1 ? 's' : ''}
+            </span>
+          )}
+        </div>
+        <span className="text-gray-500 text-xs whitespace-nowrap">{isExpanded ? '▲' : '▼'}</span>
+      </div>
+
+      {isExpanded && (
+        <div className="bg-gray-950 border-t border-gray-800 p-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-xs">
+            <div><span className="text-gray-500">GC:</span> <span className="text-white">{h.gc || '—'}</span></div>
+            <div><span className="text-gray-500">CM:</span> <span className="text-white">{h.cm || '—'}</span></div>
+            <div><span className="text-gray-500">FC Start:</span> <span className="text-white">{h.ms15f || '—'}</span></div>
+            <div><span className="text-gray-500">FC End:</span> <span className="text-white">{h.ms16f || '—'}</span></div>
+            <div><span className="text-gray-500">Act Start:</span> <span className="text-white">{h.ms15a || '—'}</span></div>
+            <div><span className="text-gray-500">Act End:</span> <span className="text-white">{h.ms16a || '—'}</span></div>
+            <div><span className="text-gray-500">NTP:</span> <span className={h.hasNtp ? 'text-green-400' : 'text-red-400'}>{h.hasNtp ? '✓ Confirmed' : '✗ Pending'}</span></div>
+            <div><span className="text-gray-500">Material:</span> <span className={h.hasMat ? 'text-green-400' : 'text-red-400'}>{h.hasMat ? '✓ Received' : '✗ Pending'}</span></div>
+            {!h.hasNtp && h.ntpWaitingOn && <div className="col-span-2"><span className="text-gray-500">NTP Waiting On:</span> <span className="text-yellow-300">{h.ntpWaitingOn}</span></div>}
+            {!h.hasMat && h.matForecast && <div><span className="text-gray-500">Mat Forecast:</span> <span className="text-yellow-300">{h.matForecast}</span></div>}
+            {h.vendorWindow !== '✅ Clear' && <div className="col-span-2"><span className="text-gray-500">Vendor:</span> <span className="text-red-400">{h.vendorWindow}</span></div>}
+            {h.mss && <div><span className="text-gray-500">MSS:</span> <span className="text-green-400">{h.mss}</span></div>}
+            {h.powerUp && <div><span className="text-gray-500">Power-Up:</span> <span className="text-green-400">{h.powerUp}</span></div>}
+          </div>
+
+          <div className="border-t border-gray-800 pt-3">
+            <h4 className="text-xs font-bold text-gray-400 mb-2">ACTIONS</h4>
+            {hopAllActions.length > 0 && (
+              <div className="space-y-1 mb-3">
+                {hopAllActions.map(action => (
+                  <div key={action.id} className={`flex items-center gap-2 text-xs p-2 rounded ${action.completed ? 'bg-gray-900 opacity-50' : 'bg-gray-800'}`}>
+                    <input type="checkbox" checked={action.completed}
+                      onChange={() => onToggleAction(action)}
+                      className="w-4 h-4 cursor-pointer accent-green-500" />
+                    <span className={`flex-1 ${action.completed ? 'line-through text-gray-500' : 'text-white'}`}>{action.action_text}</span>
+                    <span className="text-gray-600 whitespace-nowrap">{action.action_type}</span>
+                    {action.auto_completed && <span className="text-green-600 text-xs">auto ✓</span>}
+                    {action.completed && action.completed_at && (
+                      <span className="text-gray-600 text-xs whitespace-nowrap">
+                        {new Date(action.completed_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 flex-wrap">
+              <input
+                type="text"
+                placeholder="Add action..."
+                value={actionText}
+                onChange={(e) => onActionTextChange(h.hop, e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') onAddAction(h.hop) }}
+                className="flex-1 min-w-48 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+              />
+              <select
+                value={actionType}
+                onChange={(e) => onActionTypeChange(h.hop, e.target.value)}
+                className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none">
+                {ACTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select>
+              <button onClick={() => onAddAction(h.hop)}
+                className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold">
+                + Add
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function WeeklyFocusPage() {
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -360,112 +475,6 @@ export default function WeeklyFocusPage() {
     })
   }
 
-  const HopRow = ({ h, showElapsed = false }: { h: HOP, showElapsed?: boolean }) => {
-    const isExpanded = expandedHops.has(h.hop)
-    const hopOpenActions = openActions(h.hop)
-    const hopAllActions = hopActions(h.hop)
-    const hasBlocker = !h.hasNtp || !h.hasMat || h.vendorWindow.includes('🔴') || h.over18d
-
-    return (
-      <div className={`rounded-lg border mb-2 overflow-hidden ${h.over18d ? 'border-red-700' : hasBlocker ? 'border-yellow-800' : 'border-gray-700'}`}>
-        {/* HOP Header Row */}
-        <div
-          className={`flex items-center justify-between p-3 cursor-pointer ${h.over18d ? 'bg-red-950' : hasBlocker ? 'bg-yellow-950' : 'bg-gray-900'} hover:bg-opacity-80`}
-          onClick={() => toggleHop(h.hop)}>
-          <div className="flex items-center gap-3 flex-wrap">
-            <span className="font-bold text-white text-sm">{h.hop}</span>
-            <span className="text-gray-400 text-xs">{mode === 'gc' ? h.gc : h.cm}</span>
-            {showElapsed
-              ? <span className={`text-xs font-bold ${h.over18d ? 'text-red-400' : 'text-green-400'}`}>{h.daysElapsed}d elapsed</span>
-              : h.daysOut !== null && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>
-            }
-            {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
-            {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
-            {h.vendorWindow.includes('🔴') && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">Vendor ⚠️</span>}
-            {h.over18d && <span className="bg-red-800 text-red-200 text-xs px-2 py-0.5 rounded-full">⚠️ Over 18d</span>}
-            {hopOpenActions.length > 0 && (
-              <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">
-                {hopOpenActions.length} open action{hopOpenActions.length > 1 ? 's' : ''}
-              </span>
-            )}
-          </div>
-          <span className="text-gray-500 text-xs whitespace-nowrap">{isExpanded ? '▲' : '▼'}</span>
-        </div>
-
-        {/* Expanded Detail */}
-        {isExpanded && (
-          <div className="bg-gray-950 border-t border-gray-800 p-4">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-xs">
-              <div><span className="text-gray-500">GC:</span> <span className="text-white">{h.gc || '—'}</span></div>
-              <div><span className="text-gray-500">CM:</span> <span className="text-white">{h.cm || '—'}</span></div>
-              <div><span className="text-gray-500">FC Start:</span> <span className="text-white">{h.ms15f || '—'}</span></div>
-              <div><span className="text-gray-500">FC End:</span> <span className="text-white">{h.ms16f || '—'}</span></div>
-              <div><span className="text-gray-500">Act Start:</span> <span className="text-white">{h.ms15a || '—'}</span></div>
-              <div><span className="text-gray-500">Act End:</span> <span className="text-white">{h.ms16a || '—'}</span></div>
-              <div><span className="text-gray-500">NTP:</span> <span className={h.hasNtp ? 'text-green-400' : 'text-red-400'}>{h.hasNtp ? '✓ Confirmed' : '✗ Pending'}</span></div>
-              <div><span className="text-gray-500">Material:</span> <span className={h.hasMat ? 'text-green-400' : 'text-red-400'}>{h.hasMat ? '✓ Received' : '✗ Pending'}</span></div>
-              {!h.hasNtp && h.ntpWaitingOn && <div className="col-span-2"><span className="text-gray-500">NTP Waiting On:</span> <span className="text-yellow-300">{h.ntpWaitingOn}</span></div>}
-              {!h.hasMat && h.matForecast && <div><span className="text-gray-500">Mat Forecast:</span> <span className="text-yellow-300">{h.matForecast}</span></div>}
-              {h.vendorWindow !== '✅ Clear' && <div className="col-span-2"><span className="text-gray-500">Vendor:</span> <span className="text-red-400">{h.vendorWindow}</span></div>}
-              {h.mss && <div><span className="text-gray-500">MSS:</span> <span className="text-green-400">{h.mss}</span></div>}
-              {h.powerUp && <div><span className="text-gray-500">Power-Up:</span> <span className="text-green-400">{h.powerUp}</span></div>}
-            </div>
-
-            {/* Actions */}
-            <div className="border-t border-gray-800 pt-3">
-              <h4 className="text-xs font-bold text-gray-400 mb-2">ACTIONS</h4>
-
-              {/* Existing actions */}
-              {hopAllActions.length > 0 && (
-                <div className="space-y-1 mb-3">
-                  {hopAllActions.map(action => (
-                    <div key={action.id} className={`flex items-center gap-2 text-xs p-2 rounded ${action.completed ? 'bg-gray-900 opacity-50' : 'bg-gray-800'}`}>
-                      <input type="checkbox" checked={action.completed}
-                        onChange={() => toggleAction(action)}
-                        className="w-4 h-4 cursor-pointer accent-green-500" />
-                      <span className={`flex-1 ${action.completed ? 'line-through text-gray-500' : 'text-white'}`}>
-                        {action.action_text}
-                      </span>
-                      <span className="text-gray-600 whitespace-nowrap">{action.action_type}</span>
-                      {action.auto_completed && <span className="text-green-600 text-xs">auto ✓</span>}
-                      {action.completed && action.completed_at && (
-                        <span className="text-gray-600 text-xs whitespace-nowrap">
-                          {new Date(action.completed_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })}
-                        </span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Add new action */}
-              <div className="flex gap-2 flex-wrap">
-                <input
-                  type="text"
-                  placeholder="Add action..."
-                  value={newActionText[h.hop] || ''}
-                  onChange={(e) => setNewActionText(prev => ({ ...prev, [h.hop]: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === 'Enter') addAction(h.hop) }}
-                  className="flex-1 min-w-48 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
-                />
-                <select
-                  value={newActionType[h.hop] || 'Other'}
-                  onChange={(e) => setNewActionType(prev => ({ ...prev, [h.hop]: e.target.value }))}
-                  className="bg-gray-800 text-gray-300 text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none">
-                  {ACTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-                </select>
-                <button onClick={() => addAction(h.hop)}
-                  className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold">
-                  + Add
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-      </div>
-    )
-  }
-
   const Section = ({ title, rows, showElapsed = false, color = 'gray' }: {
     title: string, rows: HOP[], showElapsed?: boolean, color?: string
   }) => {
@@ -487,7 +496,24 @@ export default function WeeklyFocusPage() {
               <p className="text-green-400 text-sm">✅ Nothing here — you're ahead</p>
             </div>
           : <div className="bg-gray-950 rounded-b-lg border border-gray-700 border-t-0 p-3">
-              {rows.map(h => <HopRow key={h.hop} h={h} showElapsed={showElapsed} />)}
+              {rows.map(h => (
+                <HopRow
+                  key={h.hop}
+                  h={h}
+                  showElapsed={showElapsed}
+                  isExpanded={expandedHops.has(h.hop)}
+                  hopAllActions={actions.filter(a => a.hop_name === h.hop)}
+                  hopOpenActions={actions.filter(a => a.hop_name === h.hop && !a.completed)}
+                  mode={mode}
+                  onToggle={toggleHop}
+                  onToggleAction={toggleAction}
+                  onAddAction={addAction}
+                  actionText={newActionText[h.hop] || ''}
+                  actionType={newActionType[h.hop] || 'Other'}
+                  onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+                  onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+                />
+              ))}
             </div>
         }
       </div>
