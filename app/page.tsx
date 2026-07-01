@@ -5,12 +5,12 @@ import * as XLSX from 'xlsx'
 import { saveTrackerSnapshot, loadTrackerSnapshot } from './lib/supabase'
 
 const navItems = [
+  { label: "HOP Readiness", href: "/weekly-focus", active: false },
   { label: "Deck Builder", href: "/deck-builder", active: true },
   { label: "GC Call View", href: "/gc-call", active: false },
   { label: "CM Call View", href: "/cm-view", active: false },
   { label: "Schedule Optimizer", href: "/schedule", active: false },
   { label: "NTP Tracker", href: "/ntp-tracker", active: false },
-  { label: "Weekly Focus", href: "/weekly-focus", active: false },
 ];
 
 const stats = [

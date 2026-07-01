@@ -530,6 +530,11 @@ export default function WeeklyFocusPage() {
     h.daysOut !== null && h.daysOut > 21 && h.daysOut <= 28
   ).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
 
+  const pipeline60 = filteredHops.filter(h =>
+    !h.inProgress && !h.complete &&
+    h.daysOut !== null && h.daysOut > 28 && h.daysOut <= 60
+  ).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+
   const ntpUrgent = filteredHops.filter(h =>
     !h.hasNtp && !h.complete &&
     h.daysOut !== null && h.daysOut <= 14
@@ -584,7 +589,7 @@ export default function WeeklyFocusPage() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-3xl font-bold">Weekly Focus</h1>
+            <h1 className="text-3xl font-bold">HOP Readiness</h1>
             <p className="text-gray-400 mt-1">Your work area — actions, reminders, and what needs attention this week</p>
           </div>
           {totalOpenActions > 0 && (
@@ -647,7 +652,7 @@ export default function WeeklyFocusPage() {
             </div>
 
             {/* KPI Row */}
-            <div className="grid grid-cols-2 md:grid-cols-7 gap-3 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-6">
               {[
                 { label: 'Active', value: active.length, color: 'text-blue-400' },
                 { label: 'Needs Attention', value: needsAttention.length, color: 'text-red-400' },
@@ -655,6 +660,7 @@ export default function WeeklyFocusPage() {
                 { label: 'Next 2 Weeks', value: next2Weeks.length, color: 'text-yellow-400' },
                 { label: 'Week 3', value: week3.length, color: 'text-teal-400' },
                 { label: 'Week 4', value: week4.length, color: 'text-gray-400' },
+                { label: '60 Day Pipeline', value: pipeline60.length, color: 'text-purple-400' },
                 { label: 'NTP Urgent', value: ntpUrgent.length, color: 'text-orange-400' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center">
@@ -701,6 +707,13 @@ export default function WeeklyFocusPage() {
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
             <Section title="🔵 Week 4 (22–28 days)" rows={week4} color="gray"
+              expandedHops={expandedHops} actions={actions} mode={mode}
+              newActionText={newActionText} newActionType={newActionType}
+              onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
+              onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
+              onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
+            />
+            <Section title="🔭 60 Day Pipeline (29–60 days)" rows={pipeline60} color="gray"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
