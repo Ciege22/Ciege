@@ -286,8 +286,8 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="mx-auto max-w-[1600px] px-6 py-8">
-        <div className="grid gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+      <div className="mx-auto max-w-[1920px] px-10 py-10">
+        <div className="grid gap-8 lg:grid-cols-[320px_minmax(0,1fr)]">
           <aside className="rounded-[32px] border border-white/10 bg-white/5 p-6 shadow-[0_24px_120px_-80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
             <div className="mb-8">
               <p className="text-xs uppercase tracking-[0.4em] text-emerald-300/80">Ciege</p>
