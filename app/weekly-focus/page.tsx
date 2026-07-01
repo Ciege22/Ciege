@@ -245,6 +245,8 @@ interface SectionProps {
 function Section({ title, rows, showElapsed = false, color = 'gray', expandedHops, actions, mode,
   newActionText, newActionType, onToggle, onToggleAction, onAddAction,
   onActionTextChange, onActionTypeChange }: SectionProps) {
+  const [collapsed, setCollapsed] = useState(true)
+
   const bgMap: Record<string, string> = {
     red: 'bg-red-900 border-red-700',
     yellow: 'bg-yellow-900 border-yellow-700',
@@ -252,37 +254,44 @@ function Section({ title, rows, showElapsed = false, color = 'gray', expandedHop
     orange: 'bg-orange-900 border-orange-700',
     gray: 'bg-gray-800 border-gray-600'
   }
+
   return (
-    <div className="mb-6">
-      <div className={`flex items-center justify-between px-4 py-2 rounded-t-lg border ${bgMap[color]}`}>
+    <div className="mb-4">
+      <div
+        className={`flex items-center justify-between px-4 py-3 rounded-lg border cursor-pointer hover:opacity-90 transition-opacity ${bgMap[color]} ${collapsed ? 'rounded-lg' : 'rounded-t-lg rounded-b-none'}`}
+        onClick={() => setCollapsed(prev => !prev)}>
         <h3 className="text-sm font-bold text-white">{title}</h3>
-        <span className="text-white text-xs font-bold">{rows.length} HOPs</span>
+        <div className="flex items-center gap-3">
+          <span className="text-white text-xs font-bold bg-black bg-opacity-20 px-2 py-0.5 rounded-full">{rows.length} HOPs</span>
+          <span className="text-white text-xs">{collapsed ? '▼ Expand' : '▲ Collapse'}</span>
+        </div>
       </div>
-      {rows.length === 0
-        ? <div className="bg-gray-900 rounded-b-lg border border-gray-700 border-t-0 p-4 text-center">
-            <p className="text-green-400 text-sm">✅ Nothing here — you're ahead</p>
-          </div>
-        : <div className="bg-gray-950 rounded-b-lg border border-gray-700 border-t-0 p-3">
-            {rows.map(h => (
-              <HopRow
-                key={h.hop}
-                h={h}
-                showElapsed={showElapsed}
-                isExpanded={expandedHops.has(h.hop)}
-                hopAllActions={actions.filter(a => a.hop_name === h.hop)}
-                hopOpenActions={actions.filter(a => a.hop_name === h.hop && !a.completed)}
-                mode={mode}
-                onToggle={onToggle}
-                onToggleAction={onToggleAction}
-                onAddAction={onAddAction}
-                actionText={newActionText[h.hop] || ''}
-                actionType={newActionType[h.hop] || 'Other'}
-                onActionTextChange={onActionTextChange}
-                onActionTypeChange={onActionTypeChange}
-              />
-            ))}
-          </div>
-      }
+      {!collapsed && (
+        rows.length === 0
+          ? <div className="bg-gray-900 rounded-b-lg border border-gray-700 border-t-0 p-4 text-center">
+              <p className="text-green-400 text-sm">✅ Nothing here — you're ahead</p>
+            </div>
+          : <div className="bg-gray-950 rounded-b-lg border border-gray-700 border-t-0 p-3">
+              {rows.map(h => (
+                <HopRow
+                  key={h.hop}
+                  h={h}
+                  showElapsed={showElapsed}
+                  isExpanded={expandedHops.has(h.hop)}
+                  hopAllActions={actions.filter(a => a.hop_name === h.hop)}
+                  hopOpenActions={actions.filter(a => a.hop_name === h.hop && !a.completed)}
+                  mode={mode}
+                  onToggle={onToggle}
+                  onToggleAction={onToggleAction}
+                  onAddAction={onAddAction}
+                  actionText={newActionText[h.hop] || ''}
+                  actionType={newActionType[h.hop] || 'Other'}
+                  onActionTextChange={onActionTextChange}
+                  onActionTypeChange={onActionTypeChange}
+                />
+              ))}
+            </div>
+      )}
     </div>
   )
 }
