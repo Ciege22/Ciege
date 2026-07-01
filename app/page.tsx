@@ -141,14 +141,6 @@ export default function Home() {
     checkSnapshot()
   }, [])
 
-  useEffect(() => {
-    const loadKPIs = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (snap) computeKPIs(snap.data)
-    }
-    loadKPIs()
-  }, [computeKPIs])
-
   const computeKPIs = useCallback((rows: unknown[][]) => {
     const today = new Date()
     const currentMonth = today.getMonth()
@@ -261,6 +253,14 @@ export default function Home() {
       currentMonthFcComplete, currentMonthActComplete
     })
   }, [])
+
+  useEffect(() => {
+    const loadKPIs = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (snap) computeKPIs(snap.data)
+    }
+    loadKPIs()
+  }, [computeKPIs])
 
   const handleTrackerUpload = useCallback(async (file: File) => {
     setUploading(true)
