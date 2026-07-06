@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import * as XLSX from 'xlsx'
-import { saveTrackerSnapshot, loadTrackerSnapshot } from './lib/supabase'
+import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges } from './lib/supabase'
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
@@ -11,6 +11,7 @@ const navItems = [
   { label: "CM Call View", href: "/cm-view", active: false },
   { label: "Schedule Optimizer", href: "/schedule", active: false },
   { label: "NTP Tracker", href: "/ntp-tracker", active: false },
+  { label: "Change Log", href: "/change-log", active: false },
 ];
 
 const stats = [
@@ -367,6 +368,184 @@ export default function Home() {
     loadKPIs()
   }, [computeKPIs])
 
+  const detectChanges = (newRows: unknown[][], oldRows: unknown[][], uploadId: string) => {
+    const today = new Date().toISOString()
+    const changes: unknown[] = []
+
+    const getHeaders = (rows: unknown[][]) => {
+      for (let i = 0; i < 10; i++) {
+        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) return rows[i] as string[]
+      }
+      return []
+    }
+
+    const newHeaders = getHeaders(newRows)
+    const oldHeaders = getHeaders(oldRows)
+    if (newHeaders.length === 0 || oldHeaders.length === 0) return changes
+
+    const col = (headers: string[], name: string) => headers.findIndex(h => String(h).trim() === name)
+
+    const buildHopMap = (rows: unknown[][], headers: string[]) => {
+      const hopCol = col(headers, 'HOP')
+      const don444Col = col(headers, 'DON 444')
+      const map = new Map<string, unknown[]>()
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i] as unknown[]
+        const don = String(row[don444Col] || '').trim().toUpperCase()
+        if (don !== 'DON 444') continue
+        const hop = String(row[hopCol] || '').trim()
+        if (!hop || hop === 'undefined') continue
+        if (!map.has(hop)) map.set(hop, row)
+      }
+      return map
+    }
+
+    const newMap = buildHopMap(newRows, newHeaders)
+    const oldMap = buildHopMap(oldRows, oldHeaders)
+
+    const fmtVal = (val: unknown) => {
+      if (!val) return ''
+      if (val instanceof Date) return val.toLocaleDateString()
+      const s = String(val).trim()
+      if (s === 'null' || s === 'undefined' || s === 'NaN') return ''
+      const d = new Date(s)
+      if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d.toLocaleDateString()
+      return s
+    }
+
+    const watchFields = [
+      { name: 'MS15 Implementation Start F', label: 'FC Start' },
+      { name: 'MS15 Implementation Start A', label: 'AC Start' },
+      { name: 'MS16 Implementation Ends F', label: 'FC End' },
+      { name: 'MS16 Implementation Ends A', label: 'AC End' },
+      { name: 'NTP A', label: 'NTP' },
+      { name: 'Material Received A ', label: 'Material' },
+      { name: 'General Contractor', label: 'GC' },
+      { name: 'New CM', label: 'CM' },
+      { name: 'NTP Action Owner', label: 'NTP Owner' },
+      { name: 'NTP is waiting on', label: 'NTP Waiting On' },
+      { name: 'CX SPO issued', label: 'SPO Issued' },
+      { name: 'MSS Completed NMS Ready ', label: 'MSS' },
+      { name: 'Power-Up Completion', label: 'Power-Up' },
+    ]
+
+    // New HOPs
+    newMap.forEach((row, hop) => {
+      if (!oldMap.has(hop)) {
+        const gcCol = col(newHeaders, 'General Contractor')
+        const cmCol = col(newHeaders, 'New CM')
+        const pmCol = col(newHeaders, 'Nokia PM')
+        changes.push({
+          upload_id: uploadId, uploaded_at: today, hop_name: hop,
+          gc: fmtVal(row[gcCol]), cm: fmtVal(row[cmCol]),
+          nokia_pm: fmtVal(row[pmCol]),
+          change_type: '🆕 New HOP', field_name: 'HOP', old_value: '', new_value: hop
+        })
+      }
+    })
+
+    // Removed HOPs
+    oldMap.forEach((row, hop) => {
+      if (!newMap.has(hop)) {
+        const gcCol = col(oldHeaders, 'General Contractor')
+        const cmCol = col(oldHeaders, 'New CM')
+        const pmCol = col(oldHeaders, 'Nokia PM')
+        changes.push({
+          upload_id: uploadId, uploaded_at: today, hop_name: hop,
+          gc: fmtVal(row[gcCol]), cm: fmtVal(row[cmCol]),
+          nokia_pm: fmtVal(row[pmCol]),
+          change_type: '❌ HOP Removed', field_name: 'HOP', old_value: hop, new_value: ''
+        })
+      }
+    })
+
+    // Field changes on existing HOPs
+    newMap.forEach((newRow, hop) => {
+      const oldRow = oldMap.get(hop)
+      if (!oldRow) return
+      const gcCol = col(newHeaders, 'General Contractor')
+      const cmCol = col(newHeaders, 'New CM')
+      const pmCol = col(newHeaders, 'Nokia PM')
+      const gc = fmtVal(newRow[gcCol])
+      const cm = fmtVal(newRow[cmCol])
+      const pm = fmtVal(newRow[pmCol])
+
+      watchFields.forEach(({ name, label }) => {
+        const newIdx = col(newHeaders, name)
+        const oldIdx = col(oldHeaders, name)
+        if (newIdx === -1 && oldIdx === -1) return
+        const newVal = fmtVal(newIdx >= 0 ? newRow[newIdx] : '')
+        const oldVal = fmtVal(oldIdx >= 0 ? oldRow[oldIdx] : '')
+        if (newVal === oldVal) return
+
+        let changeType = '📝 Updated'
+        if (label === 'AC Start' && !oldVal && newVal) changeType = '🚀 Site Started'
+        if (label === 'AC End' && !oldVal && newVal) changeType = '✅ Site Completed'
+        if (label === 'NTP' && !oldVal && newVal) changeType = '✅ NTP Confirmed'
+        if (label === 'Material' && !oldVal && newVal) changeType = '📦 Material Received'
+        if (label === 'SPO Issued' && !oldVal && newVal) changeType = '📋 SPO Issued'
+        if (label === 'MSS' && !oldVal && newVal) changeType = '📡 MSS Completed'
+        if (label === 'Power-Up' && !oldVal && newVal) changeType = '⚡ Power-Up Complete'
+        if (label === 'FC Start' && oldVal && newVal && oldVal !== newVal) {
+          const oldD = new Date(oldVal); const newD = new Date(newVal)
+          if (!isNaN(oldD.getTime()) && !isNaN(newD.getTime())) {
+            const diff = Math.round((newD.getTime() - oldD.getTime()) / (1000*60*60*24))
+            changeType = diff > 0 ? `📅 FC Start Pushed ${diff}d` : `📅 FC Start Pulled In ${Math.abs(diff)}d`
+          }
+        }
+        if (label === 'FC End' && oldVal && newVal && oldVal !== newVal) {
+          const oldD = new Date(oldVal); const newD = new Date(newVal)
+          if (!isNaN(oldD.getTime()) && !isNaN(newD.getTime())) {
+            const diff = Math.round((newD.getTime() - oldD.getTime()) / (1000*60*60*24))
+            changeType = diff > 0 ? `📅 FC End Pushed ${diff}d` : `📅 FC End Pulled In ${Math.abs(diff)}d`
+          }
+        }
+        if (label === 'GC' && oldVal && newVal) changeType = '🔄 GC Changed'
+        if (label === 'CM' && oldVal && newVal) changeType = '🔄 CM Changed'
+
+        changes.push({
+          upload_id: uploadId, uploaded_at: today, hop_name: hop,
+          gc, cm, nokia_pm: pm,
+          change_type: changeType, field_name: label,
+          old_value: oldVal, new_value: newVal
+        })
+      })
+    })
+
+    return changes
+  }
+
+  const detectSchemaChanges = (newRows: unknown[][], oldRows: unknown[][], uploadId: string) => {
+    const today = new Date().toISOString()
+    const changes: unknown[] = []
+
+    const getHeaders = (rows: unknown[][]) => {
+      for (let i = 0; i < 10; i++) {
+        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) {
+          return (rows[i] as string[]).map(h => String(h).trim()).filter(Boolean)
+        }
+      }
+      return []
+    }
+
+    const newHeaders = new Set(getHeaders(newRows))
+    const oldHeaders = new Set(getHeaders(oldRows))
+
+    newHeaders.forEach(h => {
+      if (!oldHeaders.has(h)) {
+        changes.push({ upload_id: uploadId, uploaded_at: today, change_type: '➕ Column Added', column_name: h })
+      }
+    })
+
+    oldHeaders.forEach(h => {
+      if (!newHeaders.has(h)) {
+        changes.push({ upload_id: uploadId, uploaded_at: today, change_type: '➖ Column Removed', column_name: h })
+      }
+    })
+
+    return changes
+  }
+
   const handleTrackerUpload = useCallback(async (file: File) => {
     setUploading(true)
     const reader = new FileReader()
@@ -378,9 +557,22 @@ export default function Home() {
         if (!ws) { alert('HOPs tab not found'); setUploading(false); return }
         const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
         const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
-        await saveTrackerSnapshot(file.name, hopCount, rows)
+        const newSnap = await saveTrackerSnapshot(file.name, hopCount, rows)
         setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
         computeKPIs(rows)
+
+        // Compare against previous snapshot and save changes
+        try {
+          const prevSnap = await getPreviousSnapshot()
+          if (prevSnap && newSnap) {
+            const changes = detectChanges(rows, prevSnap.data, newSnap.id)
+            const schemaChanges = detectSchemaChanges(rows, prevSnap.data, newSnap.id)
+            await saveTrackerChanges(newSnap.id, changes)
+            await saveSchemaChanges(newSnap.id, schemaChanges)
+          }
+        } catch (err) {
+          console.error('Change detection error:', err)
+        }
       } catch (err) {
         console.error('Upload error:', err)
       }
