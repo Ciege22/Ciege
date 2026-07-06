@@ -357,7 +357,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     raw_new_starts = sorted(curr_ip - prev_ip)
 
     # Filter to only HOPs where MS15 A is strictly after the snapshot date
-    snap_date_str = snap.get('date', '')
+    snap_date_str = snap.get('session_date', snap.get('date', ''))
     new_starts = []
     for hop in raw_new_starts:
         hop_rows = df[df['HOP'] == hop]
