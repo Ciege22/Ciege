@@ -11,6 +11,7 @@ from datetime import datetime
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
+from supabase import create_client
 
 # Ensure backend package path is importable when running this file directly
 sys.path.append(os.path.dirname(__file__))
@@ -18,6 +19,10 @@ import build_deck
 
 app = Flask(__name__)
 CORS(app)
+
+SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
+SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
+supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 
 def _save_uploaded_file(uploaded, dest_dir, field_name):
@@ -33,12 +38,28 @@ def _save_uploaded_file(uploaded, dest_dir, field_name):
 def build_endpoint():
 	tmpdir = tempfile.mkdtemp(prefix='ciege_build_')
 	try:
-		# Support both file upload and JSON data from Supabase
-		tracker_json = request.form.get('tracker_json')
-		prev_snapshot_json = request.form.get('prev_snapshot_json')
+		# Fetch tracker and previous snapshot directly from Supabase
+		tracker_rows = None
+		prev_snapshot_data = None
 
-		tracker_rows = json.loads(tracker_json) if tracker_json else None
-		prev_snapshot_data = json.loads(prev_snapshot_json) if prev_snapshot_json else None
+		if supabase_client:
+			try:
+				# Get latest snapshot
+				latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
+				if latest.data:
+					tracker_rows = json.loads(latest.data['data'])
+
+				# Get previous snapshot
+				previous = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).range(1, 1).execute()
+				if previous.data:
+					prev_rows = json.loads(previous.data[0]['data'])
+					prev_uploaded_at = previous.data[0]['uploaded_at']
+					prev_snapshot_data = {
+						'rows': prev_rows,
+						'uploaded_at': prev_uploaded_at
+					}
+			except Exception as e:
+				print(f'Supabase fetch error: {e}')
 
 		previous_deck = request.files.get('previous_deck')
 		ntp_comments = request.files.get('ntp_comments')

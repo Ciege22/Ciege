@@ -97,16 +97,7 @@ export default function DeckBuilderPage() {
       formData.append('ntp_comments', ntpInput.files[0])
     }
 
-    // Tracker and snapshot from Supabase as JSON
-    if (trackerRows) {
-      formData.append('tracker_json', JSON.stringify(trackerRows))
-    }
-    if (prevSnapRows) {
-      formData.append('prev_snapshot_json', JSON.stringify({
-        rows: prevSnapRows,
-        uploaded_at: prevSnapDate
-      }))
-    }
+    // Tracker and snapshot are fetched by Railway directly from Supabase
 
     const deckDate = dateRef.current?.value
     if (deckDate) {
