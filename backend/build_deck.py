@@ -930,7 +930,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     # Slide 4: Delta (index 2 after slide 3 deletion)
     shapes4 = list(prs.slides[2].shapes)
-    with open('/tmp/shapes4_debug.txt', 'w') as dbg:
+    debug_path = '/tmp/shapes4_debug.txt'
+    with open(debug_path, 'w') as dbg:
         for idx, shp in enumerate(shapes4):
             try:
                 txt = shp.text_frame.text[:60].replace('\n', ' ') if shp.has_text_frame else '[no text]'
@@ -1444,7 +1445,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     prs.save(output_path)
     if os.path.exists(tmp_path): os.remove(tmp_path)
-    return output_path
+    return output_path, '/tmp/shapes4_debug.txt'
 
 
 # ─────────────────────────────────────────────
@@ -1618,7 +1619,7 @@ def build(tracker_path: str, previous_deck_path: str, snapshot_path: str,
     snap_out = os.path.join(output_dir, f'session_snapshot_{date_slug}.json')
     ntp_out  = os.path.join(output_dir, f'NTP_Comments_{date_slug}.xlsx')
 
-    update_deck(data, previous_deck_path, deck_out)
+    _, debug_out = update_deck(data, previous_deck_path, deck_out)
     generate_snapshot(data, snap_out)
     generate_ntp_comments(data, ntp_out)
 
@@ -1626,6 +1627,7 @@ def build(tracker_path: str, previous_deck_path: str, snapshot_path: str,
         'deck_path': deck_out,
         'snapshot_path': snap_out,
         'ntp_comments_path': ntp_out,
+        'debug_path': debug_out,
         'summary': {
             'deck_date': deck_date,
             'total_hops': data['total'],
