@@ -930,14 +930,6 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     # Slide 4: Delta (index 2 after slide 3 deletion)
     shapes4 = list(prs.slides[2].shapes)
-    debug_path = '/tmp/shapes4_debug.txt'
-    with open(debug_path, 'w') as dbg:
-        for idx, shp in enumerate(shapes4):
-            try:
-                txt = shp.text_frame.text[:60].replace('\n', ' ') if shp.has_text_frame else '[no text]'
-            except:
-                txt = '[error]'
-            dbg.write(f"shapes4[{idx}] name={shp.name!r} text={txt!r}\n")
     snap = d['snap']
     delta_starts = d['started_count'] - snap.get('total_starts', 0)
     delta_complete = d['complete_count'] - snap.get('total_complete', 0)
@@ -957,7 +949,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     set_shape_text(shapes4[24], ds(delta_ntp, snap_date))
     set_shape_text(shapes4[26], f'★  New Starts Since {snap_date} ({len(d["new_starts"])})')
 
-    new_start_idxs = [29, 34, 39, 50, 55]
+    new_start_idxs = [29, 32, 35, 44, 47]
     new_starts_list = d['new_starts']
 
     for i, si in enumerate(new_start_idxs):
@@ -992,8 +984,8 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         sign = '+' if delta > 0 else ''
         return f'{mo} POR:  {ntp} of {total} HOPs with NTP  ({sign}{delta} since {snap_date})'
 
-    set_shape_text(shapes4[45], nd('Jun', por['jun']['ntp'], por['jun']['total'], jun_delta))
-    set_shape_text(shapes4[47], nd('Jul', por['jul']['ntp'], por['jul']['total'], jul_delta))
+    set_shape_text(shapes4[41], nd('Jun', por['jun']['ntp'], por['jun']['total'], jun_delta))
+    set_shape_text(shapes4[43], nd('Jul', por['jul']['ntp'], por['jul']['total'], jul_delta))
 
     # Slide 5: Materials & NTP (index 3 after deletion)
     shapes5 = list(prs.slides[3].shapes)
@@ -1445,7 +1437,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     prs.save(output_path)
     if os.path.exists(tmp_path): os.remove(tmp_path)
-    return output_path, '/tmp/shapes4_debug.txt'
+    return output_path
 
 
 # ─────────────────────────────────────────────
@@ -1619,7 +1611,7 @@ def build(tracker_path: str, previous_deck_path: str, snapshot_path: str,
     snap_out = os.path.join(output_dir, f'session_snapshot_{date_slug}.json')
     ntp_out  = os.path.join(output_dir, f'NTP_Comments_{date_slug}.xlsx')
 
-    _, debug_out = update_deck(data, previous_deck_path, deck_out)
+    update_deck(data, previous_deck_path, deck_out)
     generate_snapshot(data, snap_out)
     generate_ntp_comments(data, ntp_out)
 
@@ -1627,7 +1619,6 @@ def build(tracker_path: str, previous_deck_path: str, snapshot_path: str,
         'deck_path': deck_out,
         'snapshot_path': snap_out,
         'ntp_comments_path': ntp_out,
-        'debug_path': debug_out,
         'summary': {
             'deck_date': deck_date,
             'total_hops': data['total'],
