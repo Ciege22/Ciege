@@ -27,7 +27,25 @@ export default function DeckBuilderPage() {
           getPreviousSnapshot()
         ])
         if (latest) {
-          setTrackerRows(latest.data)
+          // Filter to only DON 444 rows before storing to reduce payload size
+          const rows = latest.data
+          let headerIdx = -1
+          for (let i = 0; i < 10; i++) {
+            if (rows[i]?.some(c => String(c).trim() === 'HOP')) { headerIdx = i; break }
+          }
+          if (headerIdx >= 0) {
+            const headers = rows[headerIdx]
+            const don444Col = headers.findIndex(h => String(h).trim() === 'DON 444')
+            const filtered = [
+              rows[headerIdx],
+              ...rows.slice(headerIdx + 1).filter(row =>
+                String(row[don444Col] || '').trim().toUpperCase() === 'DON 444'
+              )
+            ]
+            setTrackerRows(filtered)
+          } else {
+            setTrackerRows(latest.data)
+          }
           setTrackerInfo({ filename: latest.filename, uploaded_at: latest.uploaded_at, hop_count: latest.hop_count })
           setTrackerLoaded(true)
         }
@@ -98,10 +116,18 @@ export default function DeckBuilderPage() {
 
     setLoading(true)
     try {
-      const res = await fetch('https://ciege-production.up.railway.app/build', {
-        method: 'POST',
-        body: formData,
-      })
+      let res
+      try {
+        res = await fetch('https://ciege-production.up.railway.app/build', {
+          method: 'POST',
+          body: formData,
+        })
+      } catch (err) {
+        console.error('Railway fetch error:', err)
+        console.error('Error type:', err.name)
+        console.error('Error message:', err.message)
+        throw err
+      }
 
       if (!res.ok) {
         const text = await res.text()
