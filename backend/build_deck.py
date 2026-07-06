@@ -369,7 +369,10 @@ def extract_data(tracker_path: str, snapshot_path: str,
             continue
         try:
             snap_dt = pd.to_datetime(snap_date_str)
-            if ms15a_dt.normalize() > snap_dt.normalize():
+            # Only show as new start if MS15A is strictly after 6/30 (the last call period end)
+            # This prevents HOPs that started between the snapshot date and 6/30 from appearing
+            call_period_end = pd.Timestamp('2026-06-30')
+            if ms15a_dt.normalize() > call_period_end.normalize():
                 new_starts.append(hop)
         except Exception as e:
             print(f"Date parse error for {hop}: {e}")
