@@ -1,40 +1,7 @@
 'use client'
 
-import { useRef, useState } from 'react'
-
-const navItems = [
-  { label: 'Deck Builder', href: '/deck-builder', active: true },
-  { label: 'Action Board', href: '#', active: false },
-  { label: 'NTP Tracker', href: '#', active: false },
-  { label: 'SCOP Invoice', href: '#', active: false },
-]
-
-const fileFields = [
-  {
-    id: 'tracker',
-    label: 'Excel Tracker',
-    accept: '.xlsx',
-    hint: '.xlsx',
-  },
-  {
-    id: 'previous_deck',
-    label: 'Previous Deck',
-    accept: '.pptx',
-    hint: '.pptx',
-  },
-  {
-    id: 'snapshot',
-    label: 'Snapshot',
-    accept: '.json',
-    hint: '.json',
-  },
-  {
-    id: 'ntp_comments',
-    label: 'NTP Comments',
-    accept: '.xlsx',
-    hint: '.xlsx',
-  },
-]
+import { useRef, useState, useEffect } from 'react'
+import { loadTrackerSnapshot, getPreviousSnapshot } from '../lib/supabase'
 
 export default function DeckBuilderPage() {
   const [loading, setLoading] = useState(false)
@@ -42,21 +9,52 @@ export default function DeckBuilderPage() {
   const [error, setError] = useState(null)
   const [fileNames, setFileNames] = useState({})
 
+  const [trackerLoaded, setTrackerLoaded] = useState(false)
+  const [trackerInfo, setTrackerInfo] = useState(null)
+  const [prevSnapInfo, setPrevSnapInfo] = useState(null)
+  const [trackerRows, setTrackerRows] = useState(null)
+  const [prevSnapRows, setPrevSnapRows] = useState(null)
+  const [prevSnapDate, setPrevSnapDate] = useState(null)
+
   const fileRefs = useRef({})
   const dateRef = useRef(null)
 
-  function getRef(id) {
-    if (!fileRefs.current[id]) {
-      fileRefs.current[id] = { current: null }
+  useEffect(() => {
+    const loadFromSupabase = async () => {
+      try {
+        const [latest, previous] = await Promise.all([
+          loadTrackerSnapshot(),
+          getPreviousSnapshot()
+        ])
+        if (latest) {
+          setTrackerRows(latest.data)
+          setTrackerInfo({ filename: latest.filename, uploaded_at: latest.uploaded_at, hop_count: latest.hop_count })
+          setTrackerLoaded(true)
+        }
+        if (previous) {
+          setPrevSnapRows(previous.data)
+          setPrevSnapDate(previous.uploaded_at)
+          setPrevSnapInfo({ filename: previous.filename, uploaded_at: previous.uploaded_at })
+        }
+      } catch (err) {
+        console.error('Error loading from Supabase:', err)
+      }
     }
-    return fileRefs.current[id]
-  }
+    loadFromSupabase()
+  }, [])
 
   function handleFileChange(id, e) {
     const file = e.target.files?.[0]
     setFileNames((prev) => ({ ...prev, [id]: file ? file.name : null }))
     setSuccess(false)
     setError(null)
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return ''
+    const d = new Date(iso)
+    return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) +
+      ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
   }
 
   async function handleSubmit(e) {
@@ -66,11 +64,30 @@ export default function DeckBuilderPage() {
 
     const formData = new FormData()
 
-    for (const field of fileFields) {
-      const input = document.getElementById(field.id)
-      if (input?.files?.[0]) {
-        formData.append(field.id, input.files[0])
-      }
+    // Previous deck (still a file upload)
+    const prevDeckInput = document.getElementById('previous_deck')
+    if (prevDeckInput?.files?.[0]) {
+      formData.append('previous_deck', prevDeckInput.files[0])
+    } else {
+      setError('Previous deck (.pptx) is required.')
+      return
+    }
+
+    // NTP comments (optional file upload)
+    const ntpInput = document.getElementById('ntp_comments')
+    if (ntpInput?.files?.[0]) {
+      formData.append('ntp_comments', ntpInput.files[0])
+    }
+
+    // Tracker and snapshot from Supabase as JSON
+    if (trackerRows) {
+      formData.append('tracker_json', JSON.stringify(trackerRows))
+    }
+    if (prevSnapRows) {
+      formData.append('prev_snapshot_json', JSON.stringify({
+        rows: prevSnapRows,
+        uploaded_at: prevSnapDate
+      }))
     }
 
     const deckDate = dateRef.current?.value
@@ -127,7 +144,15 @@ export default function DeckBuilderPage() {
             </div>
 
             <nav className="space-y-2">
-              {navItems.map((item) => (
+              {[
+                { label: 'Dashboard', href: '/' },
+                { label: 'HOP Readiness', href: '/weekly-focus' },
+                { label: 'Deck Builder', href: '/deck-builder', active: true },
+                { label: 'GC Call View', href: '/gc-call' },
+                { label: 'CM Call View', href: '/cm-view' },
+                { label: 'NTP Tracker', href: '/ntp-tracker' },
+                { label: 'Change Log', href: '/change-log' },
+              ].map((item) => (
                 <a
                   key={item.label}
                   href={item.href}
@@ -154,14 +179,54 @@ export default function DeckBuilderPage() {
               <p className="text-sm uppercase tracking-[0.4em] text-emerald-300/80">Tools</p>
               <h2 className="mt-3 text-3xl font-semibold text-white">Deck Builder</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-400">
-                Upload your source files, set a deck date, and generate a packaged deck in one click.
+                Upload your previous deck and set a date. Tracker and snapshot load automatically from the Dashboard.
               </p>
             </section>
 
             <section className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-[0_24px_120px_-80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
               <form onSubmit={handleSubmit} className="space-y-6">
+
+                {/* Auto-loaded status cards */}
+                <div className="grid gap-4 sm:grid-cols-2">
+                  {/* Tracker status */}
+                  <div className="bg-gray-800 border border-gray-600 rounded-lg p-4">
+                    {trackerLoaded ? (
+                      <div>
+                        <p className="text-green-400 text-sm font-semibold">✅ Tracker loaded from Dashboard</p>
+                        <p className="text-gray-500 text-xs mt-1">
+                          {trackerInfo?.filename} · {trackerInfo?.hop_count} HOPs · {fmtDate(trackerInfo?.uploaded_at)}
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-red-400 text-sm font-semibold">⚠️ No tracker found — upload on Dashboard first</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Previous snapshot status */}
+                  <div className="bg-gray-800 border border-gray-600 rounded-lg p-4">
+                    {prevSnapInfo ? (
+                      <div>
+                        <p className="text-green-400 text-sm font-semibold">✅ Previous session loaded automatically</p>
+                        <p className="text-gray-500 text-xs mt-1">
+                          Comparing against: {fmtDate(prevSnapInfo.uploaded_at) || 'previous upload'}
+                        </p>
+                      </div>
+                    ) : (
+                      <div>
+                        <p className="text-yellow-400 text-sm font-semibold">⚠️ No previous session found — first build will have no delta</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* File uploads */}
                 <div className="grid gap-5 sm:grid-cols-2">
-                  {fileFields.map((field) => (
+                  {[
+                    { id: 'previous_deck', label: 'Previous Deck', accept: '.pptx', hint: '.pptx' },
+                    { id: 'ntp_comments', label: 'NTP Comments', accept: '.xlsx', hint: '.xlsx (optional)' },
+                  ].map((field) => (
                     <div key={field.id}>
                       <label
                         htmlFor={field.id}
@@ -234,30 +299,14 @@ export default function DeckBuilderPage() {
                 <div className="flex items-center gap-4">
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={!trackerLoaded || loading}
                     className="inline-flex items-center gap-2.5 rounded-2xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-zinc-950 shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {loading ? (
                       <>
-                        <svg
-                          className="h-4 w-4 animate-spin"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          aria-hidden="true"
-                        >
-                          <circle
-                            className="opacity-25"
-                            cx="12"
-                            cy="12"
-                            r="10"
-                            stroke="currentColor"
-                            strokeWidth="4"
-                          />
-                          <path
-                            className="opacity-75"
-                            fill="currentColor"
-                            d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"
-                          />
+                        <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z" />
                         </svg>
                         Building deck…
                       </>
@@ -266,9 +315,10 @@ export default function DeckBuilderPage() {
                     )}
                   </button>
                   {loading && (
-                    <p className="text-sm text-zinc-400">
-                      Processing — this may take a moment.
-                    </p>
+                    <p className="text-sm text-zinc-400">Processing — this may take a moment.</p>
+                  )}
+                  {!trackerLoaded && (
+                    <p className="text-sm text-red-400">Upload a tracker on the Dashboard to enable builds.</p>
                   )}
                 </div>
               </form>

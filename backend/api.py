@@ -1,6 +1,7 @@
 import io
 import os
 import sys
+import json
 import shutil
 import zipfile
 import tempfile
@@ -32,19 +33,29 @@ def _save_uploaded_file(uploaded, dest_dir, field_name):
 def build_endpoint():
 	tmpdir = tempfile.mkdtemp(prefix='ciege_build_')
 	try:
-		# Required files
-		tracker = request.files.get('tracker')
+		# Support both file upload and JSON data from Supabase
+		tracker_json = request.form.get('tracker_json')
+		prev_snapshot_json = request.form.get('prev_snapshot_json')
+
+		tracker_rows = json.loads(tracker_json) if tracker_json else None
+		prev_snapshot_data = json.loads(prev_snapshot_json) if prev_snapshot_json else None
+
 		previous_deck = request.files.get('previous_deck')
-		snapshot = request.files.get('snapshot')
 		ntp_comments = request.files.get('ntp_comments')
 		deck_date = request.form.get('deck_date') or request.args.get('deck_date')
 
-		if not tracker or not previous_deck or not snapshot or not deck_date:
-			return jsonify({'error': 'Missing required fields: tracker, previous_deck, snapshot, deck_date'}), 400
+		# Fall back to file uploads for tracker/snapshot if JSON not provided
+		tracker = request.files.get('tracker') if tracker_rows is None else None
+		snapshot = request.files.get('snapshot') if prev_snapshot_data is None else None
 
-		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx')
+		if not previous_deck or not deck_date:
+			return jsonify({'error': 'Missing required fields: previous_deck, deck_date'}), 400
+		if tracker_rows is None and tracker is None:
+			return jsonify({'error': 'Missing tracker: provide tracker_json or tracker file'}), 400
+
+		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx') if tracker else ''
 		previous_deck_path = _save_uploaded_file(previous_deck, tmpdir, 'previous_deck.pptx')
-		snapshot_path = _save_uploaded_file(snapshot, tmpdir, 'snapshot.json')
+		snapshot_path = _save_uploaded_file(snapshot, tmpdir, 'snapshot.json') if snapshot else ''
 		ntp_comments_path = _save_uploaded_file(ntp_comments, tmpdir, 'ntp_comments.xlsx') if ntp_comments else ''
 
 		# Normalize deck_date to expected format if possible (MM/DD/YYYY)
@@ -62,6 +73,8 @@ def build_endpoint():
 			ntp_comments_path=ntp_comments_path,
 			deck_date=deck_date_str,
 			output_dir=tmpdir,
+			tracker_rows=tracker_rows,
+			prev_snapshot_data=prev_snapshot_data,
 		)
 
 		# Create ZIP with outputs
@@ -95,4 +108,3 @@ def build_endpoint():
 if __name__ == '__main__':
 	port = int(os.environ.get('PORT', 8000))
 	app.run(host='0.0.0.0', port=port, debug=False)
-

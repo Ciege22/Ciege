@@ -214,7 +214,8 @@ def expand_table_rows(shape, needed_data_rows):
 # ─────────────────────────────────────────────
 
 def extract_data(tracker_path: str, snapshot_path: str,
-                 ntp_comments_path: str, deck_date: str) -> dict:
+                 ntp_comments_path: str, deck_date: str,
+                 tracker_rows=None, prev_snapshot_data=None) -> dict:
     """
     Read tracker, compute all metrics, return data dict.
     This is the single source of truth for everything in the deck.
@@ -222,7 +223,23 @@ def extract_data(tracker_path: str, snapshot_path: str,
     today = pd.Timestamp(datetime.strptime(deck_date, '%m/%d/%Y'))
 
     # Load tracker
-    df_raw = pd.read_excel(tracker_path, sheet_name='HOPs', header=1)
+    if tracker_rows is not None:
+        if isinstance(tracker_rows, str):
+            import json as _json
+            tracker_rows = _json.loads(tracker_rows)
+        header_idx = next((i for i, row in enumerate(tracker_rows) if any(str(c).strip() == 'HOP' for c in (row or []))), 1)
+        headers = [str(c).strip() if c is not None else '' for c in tracker_rows[header_idx]]
+        data_rows = tracker_rows[header_idx + 1:]
+        df_raw = pd.DataFrame(data_rows, columns=headers)
+        date_cols_pre = ['MS15 Implementation Start F', 'MS15 Implementation Start A',
+                         'MS16 Implementation Ends F', 'MS16 Implementation Ends A',
+                         'NTP A', 'Material Received A ', 'ITW Schedule Start', 'ITW Schedule Complete',
+                         'Samsung Schedule Start', 'Samsung Schedule Complete']
+        for col in date_cols_pre:
+            if col in df_raw.columns:
+                df_raw[col] = pd.to_datetime(df_raw[col], errors='coerce')
+    else:
+        df_raw = pd.read_excel(tracker_path, sheet_name='HOPs', header=1)
     df = df_raw[df_raw['DON 444'].astype(str).str.strip().str.upper() == 'DON 444'].copy()
     df = df.drop_duplicates(subset=['HOP'])
 
@@ -349,38 +366,65 @@ def extract_data(tracker_path: str, snapshot_path: str,
     ntp_display_str = str(ntp_count)
 
     # Load snapshot for deltas
-    with open(snapshot_path) as f:
-        snap = json.load(f)
+    if prev_snapshot_data is not None:
+        if isinstance(prev_snapshot_data, str):
+            import json as _json
+            prev_snapshot_data = _json.loads(prev_snapshot_data)
+        prev_rows = prev_snapshot_data.get('rows', [])
+        prev_uploaded_at = prev_snapshot_data.get('uploaded_at', '')
+        if prev_rows:
+            prev_header_idx = next((i for i, row in enumerate(prev_rows) if any(str(c).strip() == 'HOP' for c in (row or []))), 1)
+            prev_headers = [str(c).strip() if c is not None else '' for c in prev_rows[prev_header_idx]]
+            prev_data = prev_rows[prev_header_idx + 1:]
+            prev_df = pd.DataFrame(prev_data, columns=prev_headers)
+            prev_df = prev_df[prev_df['DON 444'].astype(str).str.strip().str.upper() == 'DON 444'].drop_duplicates(subset=['HOP'])
+            prev_df['MS15A'] = pd.to_datetime(prev_df.get('MS15 Implementation Start A', pd.Series()), errors='coerce')
+            prev_df['MS16A'] = pd.to_datetime(prev_df.get('MS16 Implementation Ends A', pd.Series()), errors='coerce')
+            prev_ip_hops = list(prev_df[prev_df['MS15A'].notna() & prev_df['MS16A'].isna()]['HOP'])
+        else:
+            prev_ip_hops = []
+        try:
+            snap_dt = pd.to_datetime(prev_uploaded_at)
+            snap_date = snap_dt.strftime('%-m/%-d/%Y') if hasattr(snap_dt, 'strftime') else str(snap_dt)[:10]
+        except Exception:
+            snap_date = ''
+        snap = {
+            'ip_hops': prev_ip_hops,
+            'date': snap_date,
+            'session_date': snap_date,
+            'total_starts': 0,
+            'total_complete': 0,
+            'in_progress': len(prev_ip_hops),
+            'total_ntp': 0,
+        }
+    elif snapshot_path:
+        with open(snapshot_path) as f:
+            snap = json.load(f)
+    else:
+        snap = {}
 
     curr_ip = set(df[df['in_progress']]['HOP'].tolist())
     prev_ip = set(snap.get('ip_hops', []))
     raw_new_starts = sorted(curr_ip - prev_ip)
 
-    # Filter to only HOPs where MS15 A is strictly after the snapshot date
-    snap_date_str = snap.get('session_date', snap.get('date', ''))
+    # Filter to HOPs where MS15 A is strictly after the previous snapshot date
     new_starts = []
-    for hop in raw_new_starts:
-        hop_rows = df[df['HOP'] == hop]
-        if hop_rows.empty:
-            continue
-        ms15a = hop_rows['MS15 Implementation Start A'].values[0]
-        ms15a_dt = pd.to_datetime(ms15a, errors='coerce')
-        if pd.isna(ms15a_dt):
-            continue
-        try:
-            snap_dt = pd.to_datetime(snap_date_str)
-            # Only show as new start if MS15A is strictly after 6/30 (the last call period end)
-            # This prevents HOPs that started between the snapshot date and 6/30 from appearing
-            call_period_end = pd.Timestamp('2026-06-30')
-            if ms15a_dt.normalize() > call_period_end.normalize():
+    try:
+        snap_date_str = snap.get('session_date', snap.get('date', ''))
+        snap_dt = pd.to_datetime(snap_date_str)
+        for hop in raw_new_starts:
+            hop_rows = df[df['HOP'] == hop]
+            if hop_rows.empty:
+                continue
+            ms15a = pd.to_datetime(hop_rows['MS15 Implementation Start A'].values[0], errors='coerce')
+            if pd.isna(ms15a):
+                continue
+            if ms15a.normalize() > snap_dt.normalize():
                 new_starts.append(hop)
-        except Exception as e:
-            print(f"Date parse error for {hop}: {e}")
-            # Skip HOPs where we can't verify the start date
-            pass
-
-    new_starts = sorted(new_starts)
-    print(f"DEBUG: snap_date_str={snap_date_str}, raw_new_starts={raw_new_starts}, filtered new_starts={new_starts}")
+        new_starts = sorted(new_starts)
+    except Exception as e:
+        print(f'new_starts filter error: {e}')
+        new_starts = raw_new_starts
     completions = sorted(prev_ip - curr_ip)
 
     # POR data
@@ -1620,8 +1664,9 @@ def generate_ntp_comments(data: dict, output_path: str):
 # MAIN ENTRY POINT
 # ─────────────────────────────────────────────
 
-def build(tracker_path: str, previous_deck_path: str, snapshot_path: str,
-          ntp_comments_path: str, deck_date: str, output_dir: str) -> dict:
+def build(tracker_path: str = '', previous_deck_path: str = '', snapshot_path: str = '',
+          ntp_comments_path: str = '', deck_date: str = '', output_dir: str = '',
+          tracker_rows=None, prev_snapshot_data=None) -> dict:
     """
     Main entry point called by the API route.
     Returns paths to all generated files + summary stats.
@@ -1630,7 +1675,8 @@ def build(tracker_path: str, previous_deck_path: str, snapshot_path: str,
     date_slug = deck_date.replace('/', '-')
 
     # Extract
-    data = extract_data(tracker_path, snapshot_path, ntp_comments_path, deck_date)
+    data = extract_data(tracker_path, snapshot_path, ntp_comments_path, deck_date,
+                        tracker_rows=tracker_rows, prev_snapshot_data=prev_snapshot_data)
 
     # Generate outputs
     deck_out = os.path.join(output_dir, f'Viaero_Construction_Update_{date_slug}.pptx')
