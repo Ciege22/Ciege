@@ -356,17 +356,28 @@ def extract_data(tracker_path: str, snapshot_path: str,
     prev_ip = set(snap.get('ip_hops', []))
     raw_new_starts = sorted(curr_ip - prev_ip)
 
-    # Only include HOPs where MS15 A is strictly after the snapshot date
+    # Filter to only HOPs where MS15 A is strictly after the snapshot date
     snap_date_str = snap.get('date', '')
-    try:
-        snap_dt = pd.to_datetime(snap_date_str)
-        new_starts = [
-            hop for hop in raw_new_starts
-            if pd.notna(df.loc[df['HOP']==hop, 'MS15 Implementation Start A'].values[0])
-            and pd.to_datetime(df.loc[df['HOP']==hop, 'MS15 Implementation Start A'].values[0]) > snap_dt
-        ]
-    except Exception:
-        new_starts = raw_new_starts
+    new_starts = []
+    for hop in raw_new_starts:
+        hop_rows = df[df['HOP'] == hop]
+        if hop_rows.empty:
+            continue
+        ms15a = hop_rows['MS15 Implementation Start A'].values[0]
+        ms15a_dt = pd.to_datetime(ms15a, errors='coerce')
+        if pd.isna(ms15a_dt):
+            continue
+        try:
+            snap_dt = pd.to_datetime(snap_date_str)
+            if ms15a_dt.normalize() > snap_dt.normalize():
+                new_starts.append(hop)
+        except Exception as e:
+            print(f"Date parse error for {hop}: {e}")
+            # Skip HOPs where we can't verify the start date
+            pass
+
+    new_starts = sorted(new_starts)
+    print(f"DEBUG: snap_date_str={snap_date_str}, raw_new_starts={raw_new_starts}, filtered new_starts={new_starts}")
     completions = sorted(prev_ip - curr_ip)
 
     # POR data
