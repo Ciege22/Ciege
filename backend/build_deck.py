@@ -354,7 +354,19 @@ def extract_data(tracker_path: str, snapshot_path: str,
 
     curr_ip = set(df[df['in_progress']]['HOP'].tolist())
     prev_ip = set(snap.get('ip_hops', []))
-    new_starts = sorted(curr_ip - prev_ip)
+    raw_new_starts = sorted(curr_ip - prev_ip)
+
+    # Only include HOPs where MS15 A is strictly after the snapshot date
+    snap_date_str = snap.get('date', '')
+    try:
+        snap_dt = pd.to_datetime(snap_date_str)
+        new_starts = [
+            hop for hop in raw_new_starts
+            if pd.notna(df.loc[df['HOP']==hop, 'MS15 Implementation Start A'].values[0])
+            and pd.to_datetime(df.loc[df['HOP']==hop, 'MS15 Implementation Start A'].values[0]) > snap_dt
+        ]
+    except Exception:
+        new_starts = raw_new_starts
     completions = sorted(prev_ip - curr_ip)
 
     # POR data
