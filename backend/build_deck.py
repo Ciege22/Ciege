@@ -930,6 +930,13 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     # Slide 4: Delta (index 2 after slide 3 deletion)
     shapes4 = list(prs.slides[2].shapes)
+    with open('/tmp/shapes4_debug.txt', 'w') as dbg:
+        for idx, shp in enumerate(shapes4):
+            try:
+                txt = shp.text_frame.text[:60].replace('\n', ' ') if shp.has_text_frame else '[no text]'
+            except:
+                txt = '[error]'
+            dbg.write(f"shapes4[{idx}] name={shp.name!r} text={txt!r}\n")
     snap = d['snap']
     delta_starts = d['started_count'] - snap.get('total_starts', 0)
     delta_complete = d['complete_count'] - snap.get('total_complete', 0)
