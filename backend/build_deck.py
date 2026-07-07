@@ -395,35 +395,82 @@ def extract_data(tracker_path: str, snapshot_path: str,
 
     # Load snapshot for deltas
     if prev_snapshot_data is not None:
-        if isinstance(prev_snapshot_data, str):
-            import json as _json
-            prev_snapshot_data = _json.loads(prev_snapshot_data)
         prev_rows = prev_snapshot_data.get('rows', [])
         prev_uploaded_at = prev_snapshot_data.get('uploaded_at', '')
+
+        # Format the comparison date from Supabase upload timestamp
+        try:
+            snap_dt = pd.to_datetime(prev_uploaded_at).tz_localize(None) if pd.to_datetime(prev_uploaded_at).tzinfo else pd.to_datetime(prev_uploaded_at)
+            snap_date = snap_dt.strftime('%-m/%-d/%Y')
+        except:
+            snap_date = ''
+
         if prev_rows:
+            # Build previous DataFrame
             prev_header_idx = next((i for i, row in enumerate(prev_rows) if any(str(c).strip() == 'HOP' for c in (row or []))), 1)
-            prev_headers = [str(c).strip() if c is not None else '' for c in prev_rows[prev_header_idx]]
+            prev_headers_raw = [str(c).strip() if c is not None else '' for c in prev_rows[prev_header_idx]]
+            # Deduplicate headers
+            seen = {}
+            prev_headers = []
+            for h in prev_headers_raw:
+                if h in seen:
+                    seen[h] += 1
+                    prev_headers.append(f"{h}.{seen[h]}")
+                else:
+                    seen[h] = 0
+                    prev_headers.append(h)
+
             prev_data = prev_rows[prev_header_idx + 1:]
             prev_df = pd.DataFrame(prev_data, columns=prev_headers)
-            prev_df = prev_df[prev_df['DON 444'].astype(str).str.strip().str.upper() == 'DON 444'].drop_duplicates(subset=['HOP'])
-            prev_df['MS15A'] = pd.to_datetime(prev_df.get('MS15 Implementation Start A', pd.Series()), errors='coerce')
-            prev_df['MS16A'] = pd.to_datetime(prev_df.get('MS16 Implementation Ends A', pd.Series()), errors='coerce')
-            prev_ip_hops = list(prev_df[prev_df['MS15A'].notna() & prev_df['MS16A'].isna()]['HOP'])
+
+            don_col = next((c for c in prev_df.columns if c.strip() == 'DON 444'), None)
+            if don_col:
+                prev_df = prev_df[prev_df[don_col].astype(str).str.strip().str.upper() == 'DON 444']
+            prev_df = prev_df.drop_duplicates(subset=['HOP']) if 'HOP' in prev_df.columns else prev_df
+
+            # Parse date columns
+            for dc in ['MS15 Implementation Start A', 'MS16 Implementation Ends A', 'NTP A',
+                       'MS15 Implementation Start F', 'MS16 Implementation Ends F']:
+                if dc in prev_df.columns:
+                    prev_df[dc] = pd.to_datetime(prev_df[dc], errors='coerce')
+                    if hasattr(prev_df[dc].dtype, 'tz') and prev_df[dc].dtype.tz:
+                        prev_df[dc] = prev_df[dc].dt.tz_localize(None)
+
+            prev_df['ms15a'] = pd.to_datetime(prev_df.get('MS15 Implementation Start A', pd.Series()), errors='coerce')
+            prev_df['ms16a'] = pd.to_datetime(prev_df.get('MS16 Implementation Ends A', pd.Series()), errors='coerce')
+            prev_df['ntp_a'] = pd.to_datetime(prev_df.get('NTP A', pd.Series()), errors='coerce')
+
+            prev_ip_hops = list(prev_df[prev_df['ms15a'].notna() & prev_df['ms16a'].isna()]['HOP'])
+            prev_total_starts = int(prev_df['ms15a'].notna().sum())
+            prev_total_complete = int(prev_df['ms16a'].notna().sum())
+            prev_in_progress = len(prev_ip_hops)
+            prev_total_ntp = int((prev_df['ntp_a'].notna() & (prev_df['ntp_a'].dt.year >= 2025)).sum())
+
+            # POR NTP counts from previous snapshot
+            month_map = {'may': 5, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+            prev_por = {}
+            if 'MS15 Implementation Start F' in prev_df.columns:
+                for m, mn in month_map.items():
+                    month_hops = prev_df[prev_df['MS15 Implementation Start F'].dt.month == mn]
+                    prev_por[f'{m}_por_ntp'] = int((month_hops['ntp_a'].notna() & (month_hops['ntp_a'].dt.year >= 2025)).sum())
         else:
             prev_ip_hops = []
-        try:
-            snap_dt = pd.to_datetime(prev_uploaded_at)
-            snap_date = snap_dt.strftime('%-m/%-d/%Y') if hasattr(snap_dt, 'strftime') else str(snap_dt)[:10]
-        except Exception:
-            snap_date = ''
+            prev_total_starts = 0
+            prev_total_complete = 0
+            prev_in_progress = 0
+            prev_total_ntp = 0
+            prev_por = {}
+
         snap = {
             'ip_hops': prev_ip_hops,
             'date': snap_date,
             'session_date': snap_date,
-            'total_starts': 0,
-            'total_complete': 0,
-            'in_progress': len(prev_ip_hops),
-            'total_ntp': 0,
+            'session_date_display': snap_date,
+            'total_starts': prev_total_starts,
+            'total_complete': prev_total_complete,
+            'in_progress': prev_in_progress,
+            'total_ntp': prev_total_ntp,
+            **prev_por
         }
     elif snapshot_path:
         with open(snapshot_path) as f:
