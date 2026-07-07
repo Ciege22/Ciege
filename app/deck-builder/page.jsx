@@ -82,7 +82,11 @@ export default function DeckBuilderPage() {
 
     const formData = new FormData()
 
-    // Previous deck (still a file upload)
+    const trackerInput = document.getElementById('tracker')
+    if (trackerInput?.files?.[0]) {
+      formData.append('tracker', trackerInput.files[0])
+    }
+
     const prevDeckInput = document.getElementById('previous_deck')
     if (prevDeckInput?.files?.[0]) {
       formData.append('previous_deck', prevDeckInput.files[0])
@@ -91,13 +95,15 @@ export default function DeckBuilderPage() {
       return
     }
 
-    // NTP comments (optional file upload)
+    const snapshotInput = document.getElementById('snapshot')
+    if (snapshotInput?.files?.[0]) {
+      formData.append('snapshot', snapshotInput.files[0])
+    }
+
     const ntpInput = document.getElementById('ntp_comments')
     if (ntpInput?.files?.[0]) {
       formData.append('ntp_comments', ntpInput.files[0])
     }
-
-    // Tracker and snapshot are fetched by Railway directly from Supabase
 
     const deckDate = dateRef.current?.value
     if (deckDate) {
@@ -196,7 +202,7 @@ export default function DeckBuilderPage() {
               <p className="text-sm uppercase tracking-[0.4em] text-emerald-300/80">Tools</p>
               <h2 className="mt-3 text-3xl font-semibold text-white">Deck Builder</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-400">
-                Upload your previous deck and set a date. Tracker and snapshot load automatically from the Dashboard.
+                Upload your source files and set a deck date. Tracker and snapshot status shown below — upload manually to override.
               </p>
             </section>
 
@@ -241,7 +247,9 @@ export default function DeckBuilderPage() {
                 {/* File uploads */}
                 <div className="grid gap-5 sm:grid-cols-2">
                   {[
+                    { id: 'tracker', label: 'Tracker', accept: '.xlsx', hint: '.xlsx (overrides Supabase)' },
                     { id: 'previous_deck', label: 'Previous Deck', accept: '.pptx', hint: '.pptx' },
+                    { id: 'snapshot', label: 'Previous Session', accept: '.json', hint: '.json (overrides Supabase)' },
                     { id: 'ntp_comments', label: 'NTP Comments', accept: '.xlsx', hint: '.xlsx (optional)' },
                   ].map((field) => (
                     <div key={field.id}>
@@ -316,7 +324,7 @@ export default function DeckBuilderPage() {
                 <div className="flex items-center gap-4">
                   <button
                     type="submit"
-                    disabled={!trackerLoaded || loading}
+                    disabled={loading}
                     className="inline-flex items-center gap-2.5 rounded-2xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-zinc-950 shadow-lg shadow-emerald-900/30 transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     {loading ? (
@@ -333,9 +341,6 @@ export default function DeckBuilderPage() {
                   </button>
                   {loading && (
                     <p className="text-sm text-zinc-400">Processing — this may take a moment.</p>
-                  )}
-                  {!trackerLoaded && (
-                    <p className="text-sm text-red-400">Upload a tracker on the Dashboard to enable builds.</p>
                   )}
                 </div>
               </form>

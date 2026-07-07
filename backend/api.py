@@ -38,46 +38,42 @@ def _save_uploaded_file(uploaded, dest_dir, field_name):
 def build_endpoint():
 	tmpdir = tempfile.mkdtemp(prefix='ciege_build_')
 	try:
-		# Fetch tracker and previous snapshot directly from Supabase
-		tracker_rows = None
-		prev_snapshot_data = None
-
-		if supabase_client:
-			try:
-				# Get latest snapshot
-				latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
-				if latest.data:
-					tracker_rows = json.loads(latest.data['data'])
-
-				# Get previous snapshot
-				previous = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).range(1, 1).execute()
-				if previous.data:
-					prev_rows = json.loads(previous.data[0]['data'])
-					prev_uploaded_at = previous.data[0]['uploaded_at']
-					prev_snapshot_data = {
-						'rows': prev_rows,
-						'uploaded_at': prev_uploaded_at
-					}
-			except Exception as e:
-				print(f'Supabase fetch error: {e}')
-
+		# Read uploaded files
+		tracker = request.files.get('tracker')
 		previous_deck = request.files.get('previous_deck')
+		snapshot = request.files.get('snapshot')
 		ntp_comments = request.files.get('ntp_comments')
 		deck_date = request.form.get('deck_date') or request.args.get('deck_date')
 
-		# Fall back to file uploads for tracker/snapshot if JSON not provided
-		tracker = request.files.get('tracker') if tracker_rows is None else None
-		snapshot = request.files.get('snapshot') if prev_snapshot_data is None else None
-
 		if not previous_deck or not deck_date:
 			return jsonify({'error': 'Missing required fields: previous_deck, deck_date'}), 400
-		if tracker_rows is None and tracker is None:
-			return jsonify({'error': 'Missing tracker: provide tracker_json or tracker file'}), 400
 
 		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx') if tracker else ''
 		previous_deck_path = _save_uploaded_file(previous_deck, tmpdir, 'previous_deck.pptx')
 		snapshot_path = _save_uploaded_file(snapshot, tmpdir, 'snapshot.json') if snapshot else ''
 		ntp_comments_path = _save_uploaded_file(ntp_comments, tmpdir, 'ntp_comments.xlsx') if ntp_comments else ''
+
+		# Fall back to Supabase if tracker or snapshot not uploaded
+		tracker_rows = None
+		prev_snapshot_data = None
+		if (not tracker or not snapshot) and supabase_client:
+			try:
+				if not tracker:
+					latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
+					if latest.data:
+						tracker_rows = json.loads(latest.data['data'])
+				if not snapshot:
+					previous = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).range(1, 1).execute()
+					if previous.data:
+						prev_snapshot_data = {
+							'rows': json.loads(previous.data[0]['data']),
+							'uploaded_at': previous.data[0]['uploaded_at']
+						}
+			except Exception as e:
+				print(f'Supabase fetch error: {e}')
+
+		if not tracker_path and tracker_rows is None:
+			return jsonify({'error': 'Missing tracker: upload a .xlsx file or ensure Supabase has a snapshot'}), 400
 
 		# Normalize deck_date to expected format if possible (MM/DD/YYYY)
 		try:
