@@ -486,20 +486,36 @@ def extract_data(tracker_path: str, snapshot_path: str,
     new_starts = []
     try:
         snap_date_str = snap.get('session_date', snap.get('date', ''))
-        snap_dt = pd.to_datetime(snap_date_str)
-        for hop in raw_new_starts:
-            hop_rows = df[df['HOP'] == hop]
-            if hop_rows.empty:
-                continue
-            ms15a = pd.to_datetime(hop_rows['MS15 Implementation Start A'].values[0], errors='coerce')
-            if pd.isna(ms15a):
-                continue
-            if ms15a.normalize() > snap_dt.normalize():
-                new_starts.append(hop)
-        new_starts = sorted(new_starts)
+        print(f'DEBUG new_starts: snap_date_str={snap_date_str!r}, raw_new_starts={raw_new_starts}')
+
+        if snap_date_str:
+            snap_dt = pd.to_datetime(snap_date_str, dayfirst=False)
+            snap_dt = snap_dt.tz_localize(None) if snap_dt.tzinfo else snap_dt
+
+            for hop in raw_new_starts:
+                hop_rows = df[df['HOP'] == hop]
+                if hop_rows.empty:
+                    continue
+                ms15a_raw = hop_rows['MS15 Implementation Start A'].values[0]
+                ms15a = pd.to_datetime(ms15a_raw, errors='coerce')
+                if pd.isna(ms15a):
+                    continue
+                ms15a = ms15a.tz_localize(None) if ms15a.tzinfo else ms15a
+                print(f'DEBUG: {hop} ms15a={ms15a} snap_dt={snap_dt} include={ms15a.normalize() > snap_dt.normalize()}')
+                if ms15a.normalize() > snap_dt.normalize():
+                    new_starts.append(hop)
+            new_starts = sorted(new_starts)
+        else:
+            print('DEBUG: snap_date_str is empty — using raw_new_starts')
+            new_starts = raw_new_starts
+
     except Exception as e:
         print(f'new_starts filter error: {e}')
+        import traceback
+        traceback.print_exc()
         new_starts = raw_new_starts
+
+    print(f'DEBUG final new_starts={new_starts}')
     completions = sorted(prev_ip - curr_ip)
 
     # POR data
