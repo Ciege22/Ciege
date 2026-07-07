@@ -228,7 +228,17 @@ def extract_data(tracker_path: str, snapshot_path: str,
             import json as _json
             tracker_rows = _json.loads(tracker_rows)
         header_idx = next((i for i, row in enumerate(tracker_rows) if any(str(c).strip() == 'HOP' for c in (row or []))), 1)
-        headers = [str(c).strip() if c is not None else '' for c in tracker_rows[header_idx]]
+        # Deduplicate column names by appending suffix to duplicates
+        raw_headers = [str(c).strip() if c is not None else '' for c in tracker_rows[header_idx]]
+        seen = {}
+        headers = []
+        for h in raw_headers:
+            if h in seen:
+                seen[h] += 1
+                headers.append(f"{h}.{seen[h]}")
+            else:
+                seen[h] = 0
+                headers.append(h)
         data_rows = tracker_rows[header_idx + 1:]
         df_raw = pd.DataFrame(data_rows, columns=headers)
         date_cols_pre = ['MS15 Implementation Start F', 'MS15 Implementation Start A',
