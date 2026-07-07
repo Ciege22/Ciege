@@ -251,8 +251,14 @@ def extract_data(tracker_path: str, snapshot_path: str,
         mat_col = next((c for c in df_raw.columns if c.strip() == 'Material Received A'), None)
         if mat_col:
             df_raw[mat_col] = pd.to_datetime(df_raw[mat_col], errors='coerce')
+        # Strip timezone from all datetime columns to avoid tz-naive vs tz-aware errors
+        for col in df_raw.select_dtypes(include=['datetimetz']).columns:
+            df_raw[col] = df_raw[col].dt.tz_localize(None)
     else:
         df_raw = pd.read_excel(tracker_path, sheet_name='HOPs', header=1)
+        # Strip timezone from all datetime columns
+        for col in df_raw.select_dtypes(include=['datetimetz']).columns:
+            df_raw[col] = df_raw[col].dt.tz_localize(None)
     df = df_raw[df_raw['DON 444'].astype(str).str.strip().str.upper() == 'DON 444'].copy()
     df = df.drop_duplicates(subset=['HOP'])
 
