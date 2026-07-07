@@ -502,7 +502,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
                     continue
                 ms15a = ms15a.tz_localize(None) if ms15a.tzinfo else ms15a
                 print(f'DEBUG: {hop} ms15a={ms15a} snap_dt={snap_dt} include={ms15a.normalize() > snap_dt.normalize()}')
-                if ms15a.normalize() > snap_dt.normalize():
+                if ms15a.normalize() >= snap_dt.normalize():
                     new_starts.append(hop)
             new_starts = sorted(new_starts)
         else:
