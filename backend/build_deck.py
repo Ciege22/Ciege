@@ -243,18 +243,21 @@ def extract_data(tracker_path: str, snapshot_path: str,
         df_raw = pd.DataFrame(data_rows, columns=headers)
         date_cols_pre = ['MS15 Implementation Start F', 'MS15 Implementation Start A',
                          'MS16 Implementation Ends F', 'MS16 Implementation Ends A',
-                         'NTP A', 'Material Received A ', 'ITW Schedule Start', 'ITW Schedule Complete',
+                         'NTP A', 'ITW Schedule Start', 'ITW Schedule Complete',
                          'Samsung Schedule Start', 'Samsung Schedule Complete']
         for col in date_cols_pre:
             if col in df_raw.columns:
                 df_raw[col] = pd.to_datetime(df_raw[col], errors='coerce')
+        mat_col = next((c for c in df_raw.columns if c.strip() == 'Material Received A'), None)
+        if mat_col:
+            df_raw[mat_col] = pd.to_datetime(df_raw[mat_col], errors='coerce')
     else:
         df_raw = pd.read_excel(tracker_path, sheet_name='HOPs', header=1)
     df = df_raw[df_raw['DON 444'].astype(str).str.strip().str.upper() == 'DON 444'].copy()
     df = df.drop_duplicates(subset=['HOP'])
 
     # Parse dates
-    date_cols = ['NTP A', 'Material Received A ', 'MS15 Implementation Start A',
+    date_cols = ['NTP A', 'MS15 Implementation Start A',
                  'MS16 Implementation Ends A', 'MS15 Implementation Start F',
                  'MS16 Implementation Ends F', 'ITW Schedule Start',
                  'ITW Schedule Complete', 'Samsung Schedule Start',
@@ -262,13 +265,20 @@ def extract_data(tracker_path: str, snapshot_path: str,
     for col in date_cols:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], errors='coerce')
+    mat_col = next((c for c in df_raw.columns if c.strip() == 'Material Received A'), None)
+    if mat_col:
+        df_raw[mat_col] = pd.to_datetime(df_raw[mat_col], errors='coerce')
 
     # Status flags
     df['has_ntp'] = df['NTP A'].dt.year >= 2025
     # Fallback: if NTP A column is entirely empty, proxy via NTP Action Owner being blank
     if df['has_ntp'].sum() == 0 and 'NTP Action Owner' in df.columns:
         df['has_ntp'] = df['NTP Action Owner'].isna() | (df['NTP Action Owner'].astype(str).str.strip() == '')
-    df['has_mat'] = df['Material Received A '].dt.year >= 2025
+    mat_col = next((c for c in df.columns if c.strip() == 'Material Received A'), None)
+    if mat_col:
+        df['has_mat'] = df[mat_col].dt.year >= 2025
+    else:
+        df['has_mat'] = False
     df['started'] = df['MS15 Implementation Start A'].notna()
     df['complete'] = df['MS16 Implementation Ends A'].notna()
     df['in_progress'] = df['started'] & ~df['complete']
