@@ -327,6 +327,8 @@ def extract_data(tracker_path: str, snapshot_path: str,
     df['_cx'] = df.apply(lambda r: gv(r, _cx_col) if _cx_col else '', axis=1)
 
     # Computed fields
+    df['MS15 Implementation Start F'] = pd.to_datetime(df['MS15 Implementation Start F'], errors='coerce').dt.tz_localize(None)
+    df['MS15 Implementation Start A'] = pd.to_datetime(df['MS15 Implementation Start A'], errors='coerce').dt.tz_localize(None)
     df['days_to_start'] = (df['MS15 Implementation Start F'] - today).dt.days
     df['days_elapsed'] = np.where(
         df['in_progress'],
