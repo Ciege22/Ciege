@@ -654,7 +654,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     debug_log_path = '/tmp/debug_new_starts.txt'
     with open(debug_log_path, 'w') as _f:
         _f.write(f"snap_date_str: {snap.get('session_date', snap.get('date', ''))}\n")
-        _f.write(f"raw_new_starts: {raw_new_starts}\n")
+        _f.write(f"raw_new_starts: n/a (using MS15A date method)\n")
         _f.write(f"final new_starts: {new_starts}\n")
         _f.write(f"snap keys: {list(snap.keys())}\n")
 
