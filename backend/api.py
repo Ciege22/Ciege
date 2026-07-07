@@ -97,7 +97,7 @@ def build_endpoint():
 		# Create ZIP with outputs
 		zip_buffer = io.BytesIO()
 		with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as z:
-			for key in ('deck_path', 'snapshot_path', 'ntp_comments_path'):
+			for key in ('deck_path', 'snapshot_path', 'ntp_comments_path', 'debug_log_path'):
 				path = out.get(key)
 				if path and os.path.exists(path):
 					z.write(path, arcname=os.path.basename(path))
