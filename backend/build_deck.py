@@ -480,43 +480,36 @@ def extract_data(tracker_path: str, snapshot_path: str,
 
     curr_ip = set(df[df['in_progress']]['HOP'].tolist())
     prev_ip = set(snap.get('ip_hops', []))
-    raw_new_starts = sorted(curr_ip - prev_ip)
+    completions = sorted(prev_ip - curr_ip)
 
-    # Filter to HOPs where MS15 A is strictly after the previous snapshot date
+    # Build new_starts based purely on MS15 A date vs snapshot date
+    # This catches HOPs that may have been in prev_ip but got their actual start date confirmed
     new_starts = []
     try:
         snap_date_str = snap.get('session_date', snap.get('date', ''))
-        print(f'DEBUG new_starts: snap_date_str={snap_date_str!r}, raw_new_starts={raw_new_starts}')
+        snap_dt = pd.to_datetime(snap_date_str, dayfirst=False)
+        snap_dt = snap_dt.tz_localize(None) if snap_dt.tzinfo else snap_dt
 
-        if snap_date_str:
-            snap_dt = pd.to_datetime(snap_date_str, dayfirst=False)
-            snap_dt = snap_dt.tz_localize(None) if snap_dt.tzinfo else snap_dt
+        # Look at ALL in-progress HOPs and find ones where MS15A >= snapshot date
+        in_progress_hops = df[df['in_progress']].copy()
+        for _, row in in_progress_hops.iterrows():
+            hop = row['HOP']
+            ms15a_raw = row['MS15 Implementation Start A']
+            ms15a = pd.to_datetime(ms15a_raw, errors='coerce')
+            if pd.isna(ms15a):
+                continue
+            ms15a = ms15a.tz_localize(None) if ms15a.tzinfo else ms15a
+            if ms15a.normalize() >= snap_dt.normalize():
+                new_starts.append(hop)
 
-            for hop in raw_new_starts:
-                hop_rows = df[df['HOP'] == hop]
-                if hop_rows.empty:
-                    continue
-                ms15a_raw = hop_rows['MS15 Implementation Start A'].values[0]
-                ms15a = pd.to_datetime(ms15a_raw, errors='coerce')
-                if pd.isna(ms15a):
-                    continue
-                ms15a = ms15a.tz_localize(None) if ms15a.tzinfo else ms15a
-                print(f'DEBUG: {hop} ms15a={ms15a} snap_dt={snap_dt} include={ms15a.normalize() > snap_dt.normalize()}')
-                if ms15a.normalize() >= snap_dt.normalize():
-                    new_starts.append(hop)
-            new_starts = sorted(new_starts)
-        else:
-            print('DEBUG: snap_date_str is empty — using raw_new_starts')
-            new_starts = raw_new_starts
+        new_starts = sorted(set(new_starts))
+        print(f'DEBUG final new_starts={new_starts}')
 
     except Exception as e:
         print(f'new_starts filter error: {e}')
         import traceback
         traceback.print_exc()
-        new_starts = raw_new_starts
-
-    print(f'DEBUG final new_starts={new_starts}')
-    completions = sorted(prev_ip - curr_ip)
+        new_starts = sorted(curr_ip - prev_ip)
 
     # POR data
     ms15f_col = 'MS15 Implementation Start F'
