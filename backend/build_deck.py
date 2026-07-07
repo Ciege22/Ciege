@@ -651,17 +651,9 @@ def extract_data(tracker_path: str, snapshot_path: str,
         v = r.get('MS16 Implementation Ends F')
         hop_ms16f[hop] = pd.Timestamp(v) if pd.notna(v) else None
 
-    debug_log_path = '/tmp/debug_new_starts.txt'
-    with open(debug_log_path, 'w') as _f:
-        _f.write(f"snap_date_str: {snap.get('session_date', snap.get('date', ''))}\n")
-        _f.write(f"raw_new_starts: n/a (using MS15A date method)\n")
-        _f.write(f"final new_starts: {new_starts}\n")
-        _f.write(f"snap keys: {list(snap.keys())}\n")
-
     return {
         'df': df, 'por': por, 'la': la, 'mss': mss, 'ip_df': ip_df, '_cx_col': _cx_col,
         'total': total, 'ntp_count': ntp_count, 'mat_count': mat_count,
-        'debug_log_path': debug_log_path,
         'mat_display_str': mat_display_str, 'ntp_display_str': ntp_display_str,
         'started_count': started_count, 'complete_count': complete_count,
         'ip_count': ip_count, 'new_starts': new_starts, 'completions': completions,
@@ -1783,7 +1775,6 @@ def build(tracker_path: str = '', previous_deck_path: str = '', snapshot_path: s
         'deck_path': deck_out,
         'snapshot_path': snap_out,
         'ntp_comments_path': ntp_out,
-        'debug_log_path': data.get('debug_log_path', ''),
         'summary': {
             'deck_date': deck_date,
             'total_hops': data['total'],
