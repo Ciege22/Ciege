@@ -340,10 +340,11 @@ export default function CMViewPage() {
     const ntpOwnCol   = col('NTP Action Owner')
     const ntpWaitCol  = col('NTP is waiting on')
     const matLocCol   = col('Material Current Location')
-    const steelCol     = headers.findIndex(h => {
-        const cleaned = String(h).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
-        return cleaned.includes('steel from') && cleaned.includes('nokia')
-      })
+    const steelCol     = headers.findIndex(h =>
+        String(h).replace(/\n/g, ' ').trim() === 'Steel From (Nokia/ITW)' ||
+        String(h).trim() === 'Steel From\n(Nokia/ITW)' ||
+        String(h).replace(/\s+/g, ' ').trim().toLowerCase() === 'steel from (nokia/itw)'
+      )
     const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
     const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
     const itwSCol     = col('ITW Schedule Start')
@@ -727,7 +728,7 @@ export default function CMViewPage() {
                   <th className="text-left p-2">Mat Location</th>
                   <th className="text-left p-2">GC Pickup F</th>
                   <th className="text-left p-2">GC Pickup A</th>
-                  <th className="text-left p-2">Pickup Override</th>
+                  <th className="text-left p-2">Edit GC Pickup F</th>
                   <th className="text-left p-2">FC Start</th>
                   <th className="text-left p-2">Edit FC Start</th>
                   <th className="text-left p-2">AC Start</th>
@@ -786,7 +787,7 @@ export default function CMViewPage() {
                         }
                       </td>
                       <td className="p-2">
-                        <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value={h.gcPickupA} alwaysEditable={true} />
+                        <EditableDate hop={h.hop} field="GC Material Pick-up (F)" value={h.gcPickupF} alwaysEditable={true} />
                       </td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
                       <td className="p-2">
