@@ -471,14 +471,9 @@ export default function CMViewPage() {
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
         steelFrom:    (() => {
-            // Debug — show values at indices 57-62
-            const debug = []
-            for (let di = 57; di <= 62; di++) {
-              debug.push(`[${di}]=${String(row[di] || '')}`)
-            }
-            console.log(`STEEL DEBUG row indices 57-62:`, debug.join(' | '))
-            console.log(`steelCol=${steelCol} value=${row[steelCol]}`)
-            return `col${steelCol}:${String(row[steelCol] || 'EMPTY')}`
+            const headerAtIdx = String(headers[steelCol] || 'NO HEADER')
+            const valueAtIdx = String(row[steelCol] || 'EMPTY')
+            return `HDR:${headerAtIdx.slice(0,20)} VAL:${valueAtIdx.slice(0,20)}`
           })(),
         gcPickupF:    fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA:    fmtDate(parseDateAny(row[gcPickupACol])),
