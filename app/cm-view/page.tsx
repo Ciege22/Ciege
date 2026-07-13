@@ -217,7 +217,7 @@ export default function CMViewPage() {
     logDateEdit(hop, field, '', 'N/A')
   }
 
-  const EditableDate = ({ hop, field, value }: { hop: string, field: string, value: string }) => {
+  const EditableDate = ({ hop, field, value, alwaysEditable = false }: { hop: string, field: string, value: string, alwaysEditable?: boolean }) => {
     const edited = editedDates[hop]?.[field]
 
     const toInputFormat = (dateStr: string) => {
@@ -235,7 +235,7 @@ export default function CMViewPage() {
     }
 
     // If tracker already has a date — show read only in green
-    if (value && value !== 'N/A' && !edited) {
+    if (value && value !== 'N/A' && !edited && !alwaysEditable) {
       return <span className="text-green-400 text-xs font-semibold">{value}</span>
     }
 
@@ -340,7 +340,10 @@ export default function CMViewPage() {
     const ntpOwnCol   = col('NTP Action Owner')
     const ntpWaitCol  = col('NTP is waiting on')
     const matLocCol   = col('Material Current Location')
-    const steelCol     = headers.findIndex(h => String(h).replace(/\n/g, ' ').trim().toLowerCase().includes('steel from'))
+    const steelCol     = headers.findIndex(h => {
+        const cleaned = String(h).replace(/\n/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+        return cleaned.includes('steel from') && cleaned.includes('nokia')
+      })
     const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
     const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
     const itwSCol     = col('ITW Schedule Start')
@@ -719,14 +722,15 @@ export default function CMViewPage() {
                   <th className="text-left p-2">Days Out</th>
                   <th className="text-left p-2">NTP</th>
                   <th className="text-left p-2">Mat</th>
+                  <th className="text-left p-2">NTP Waiting On</th>
                   <th className="text-left p-2">Steel From</th>
                   <th className="text-left p-2">Mat Location</th>
                   <th className="text-left p-2">GC Pickup F</th>
                   <th className="text-left p-2">GC Pickup A</th>
+                  <th className="text-left p-2">Pickup Override</th>
                   <th className="text-left p-2">FC Start</th>
                   <th className="text-left p-2">Edit FC Start</th>
                   <th className="text-left p-2">AC Start</th>
-                  <th className="text-left p-2">NTP Waiting On</th>
                   <th className="text-left p-2">Vendor Window</th>
                   <th className="text-left p-2">CM Action</th>
                   <th className="text-left p-2">Call Notes</th>
@@ -763,6 +767,13 @@ export default function CMViewPage() {
                             : <span className="text-red-400 font-bold">✗</span>}
                         </span>
                       </td>
+                      <td className="p-2 text-xs max-w-48">
+                        <span className="text-yellow-300 text-xs" title={h.ntpWaitingOn}>
+                          {h.ntpWaitingOn
+                            ? (h.ntpWaitingOn.length > 30 ? h.ntpWaitingOn.slice(0, 30) + '...' : h.ntpWaitingOn)
+                            : '—'}
+                        </span>
+                      </td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.steelFrom || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.matLocation || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">
@@ -774,19 +785,15 @@ export default function CMViewPage() {
                           : <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value="" />
                         }
                       </td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value={h.gcPickupA} alwaysEditable={true} />
+                      </td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
                       <td className="p-2">
-                        <EditableDate hop={h.hop} field="MS15 Implementation Start F" value={h.ms15f} />
+                        <EditableDate hop={h.hop} field="MS15 Implementation Start F" value={h.ms15f} alwaysEditable={true} />
                       </td>
                       <td className="p-2">
                         <EditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} />
-                      </td>
-                      <td className="p-2 text-xs max-w-48">
-                        <span className="text-yellow-300 text-xs" title={h.ntpWaitingOn}>
-                          {h.ntpWaitingOn
-                            ? (h.ntpWaitingOn.length > 30 ? h.ntpWaitingOn.slice(0, 30) + '...' : h.ntpWaitingOn)
-                            : '—'}
-                        </span>
                       </td>
                       <td className="p-2 text-xs max-w-40">
                         <span
