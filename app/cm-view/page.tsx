@@ -128,6 +128,30 @@ function getCmAction(h: HOP): string {
   return '👀 Pipeline — monitor'
 }
 
+interface NoteCellProps {
+  hop: string
+  noteValue: string
+  onNoteChange: (hop: string, val: string) => void
+  onSave: (hop: string, note: string) => void
+}
+
+function NoteCell({ hop, noteValue, onNoteChange, onSave }: NoteCellProps) {
+  return (
+    <td className="p-2">
+      <div className="flex gap-1">
+        <input type="text" placeholder="Type note..."
+          value={noteValue}
+          onChange={(e) => onNoteChange(hop, e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter') onSave(hop, noteValue) }}
+          className="w-32 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+        />
+        <button onClick={() => onSave(hop, noteValue)}
+          className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-2 py-1 rounded">💾</button>
+      </div>
+    </td>
+  )
+}
+
 export default function CMViewPage() {
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -249,21 +273,6 @@ export default function CMViewPage() {
       </div>
     )
   }
-
-  const NoteCell = ({ hop }: { hop: string }) => (
-    <td className="p-2">
-      <div className="flex gap-1">
-        <input type="text" placeholder="Type note..."
-          value={sessionNotes[hop] || ''}
-          onChange={(e) => setSessionNotes(n => ({ ...n, [hop]: e.target.value }))}
-          onKeyDown={(e) => { if (e.key === 'Enter') saveCallNote(hop, sessionNotes[hop] || '') }}
-          className="w-32 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
-        />
-        <button onClick={() => saveCallNote(hop, sessionNotes[hop] || '')}
-          className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-2 py-1 rounded">💾</button>
-      </div>
-    </td>
-  )
 
   const HistoryCell = ({ hop }: { hop: string }) => (
     <td className="p-2 max-w-48">
@@ -767,7 +776,12 @@ export default function CMViewPage() {
                           {h.cmAction.length > 40 ? h.cmAction.slice(0, 40) + '...' : h.cmAction}
                         </span>
                       </td>
-                      <NoteCell hop={h.hop} />
+                      <NoteCell
+                        hop={h.hop}
+                        noteValue={sessionNotes[h.hop] || ''}
+                        onNoteChange={(hop, val) => setSessionNotes(n => ({ ...n, [hop]: val }))}
+                        onSave={saveCallNote}
+                      />
                       <HistoryCell hop={h.hop} />
                     </tr>
                   )
@@ -821,11 +835,11 @@ export default function CMViewPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...pmUpdates].sort((a, b) => pmSortAsc ? a.field.localeCompare(b.field) : b.field.localeCompare(a.field)).map((u, i) => (
-                  <tr key={i} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
+                {[...pmUpdates].sort((a, b) => pmSortAsc ? a.field.localeCompare(b.field) : b.field.localeCompare(a.field)).map((u) => (
+                  <tr key={`${u.hop}-${u.field}-${u.timestamp}`} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
                     <td className="p-2">
                       <input type="checkbox" checked={u.completed || false}
-                        onChange={() => setPmUpdates(prev => prev.map((item, idx) => idx === i ? { ...item, completed: !item.completed } : item))}
+                        onChange={() => setPmUpdates(prev => prev.map((item) => item.hop === u.hop && item.field === u.field && item.timestamp === u.timestamp ? { ...item, completed: !item.completed } : item))}
                         className="w-4 h-4 cursor-pointer accent-green-500" />
                     </td>
                     <td className={`p-2 font-semibold ${u.completed ? 'line-through text-gray-500' : 'text-white'}`}>{u.hop}</td>
@@ -972,7 +986,12 @@ export default function CMViewPage() {
                                 <td className="p-2">
                                   <EditableDate hop={h.hop} field="Decom Complete" value={h.decom} />
                                 </td>
-                                <NoteCell hop={h.hop} />
+                                <NoteCell
+                        hop={h.hop}
+                        noteValue={sessionNotes[h.hop] || ''}
+                        onNoteChange={(hop, val) => setSessionNotes(n => ({ ...n, [hop]: val }))}
+                        onSave={saveCallNote}
+                      />
                                 <HistoryCell hop={h.hop} />
                               </tr>
                             ))}
