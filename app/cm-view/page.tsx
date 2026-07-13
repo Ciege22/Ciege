@@ -471,16 +471,19 @@ export default function CMViewPage() {
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
         steelFrom:    (() => {
-            const v1 = String(row[steelCol] || '').trim()
-            const v2 = String(row2?.[steelCol] || '').trim()
-            // Check both rows — use whichever looks like Nokia or ITW text
-            for (const v of [v1, v2]) {
-              if (!v || v === 'nan' || v === 'undefined') continue
-              // Skip if it looks like a date or number
-              if (v.match(/^\d{4}-/) || v.match(/^\d+\/\d+\//) || !isNaN(Number(v))) continue
-              // Skip ISO date strings from JSON
-              if (v.includes('T00:00:00') || v.includes('T04:00:00')) continue
-              return v
+            // Find steel value by matching header name at runtime, not by index
+            for (let i = 0; i < headers.length; i++) {
+              const h = String(headers[i])
+              if (h.includes('Steel From') || h.includes('steel from')) {
+                const v1 = String(row[i] || '').trim()
+                const v2 = String(row2?.[i] || '').trim()
+                for (const v of [v1, v2]) {
+                  if (!v || v === 'nan' || v === 'undefined') continue
+                  if (v.match(/^\d{4}-/) || v.includes('T00:00') || v.includes('T04:00') || !isNaN(Number(v))) continue
+                  if (v.match(/^\d+\/\d+\//)) continue
+                  return v
+                }
+              }
             }
             return ''
           })(),
