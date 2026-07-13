@@ -471,13 +471,14 @@ export default function CMViewPage() {
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
         steelFrom:    (() => {
-            const v1 = String(row[steelCol] || '').trim()
-            const v2 = String(row2?.[steelCol] || '').trim()
-            const val = v1 || v2
-            // If value looks like a date or number discard it
-            if (!val || val === 'nan' || val === 'undefined' || !isNaN(Number(val))) return ''
-            if (val.match(/^\d{4}-\d{2}-\d{2}/) || val.match(/^\d+\/\d+\/\d+/)) return ''
-            return val
+            // Debug — show values at indices 57-62
+            const debug = []
+            for (let di = 57; di <= 62; di++) {
+              debug.push(`[${di}]=${String(row[di] || '')}`)
+            }
+            console.log(`STEEL DEBUG row indices 57-62:`, debug.join(' | '))
+            console.log(`steelCol=${steelCol} value=${row[steelCol]}`)
+            return `col${steelCol}:${String(row[steelCol] || 'EMPTY')}`
           })(),
         gcPickupF:    fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA:    fmtDate(parseDateAny(row[gcPickupACol])),
