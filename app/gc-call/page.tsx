@@ -188,6 +188,8 @@ export default function GCCallPage() {
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
   const [showPmUpdates, setShowPmUpdates] = useState(false)
   const [pmSortAsc, setPmSortAsc] = useState(true)
+  const [pmSortField, setPmSortField] = useState<'hop' | 'field'>('field')
+  const [pmSearch, setPmSearch] = useState('')
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const today = new Date()
 
@@ -788,13 +790,21 @@ export default function GCCallPage() {
         {/* PM Daily Updates Panel */}
         {showPmUpdates && pmUpdates.length > 0 && (
           <div className="mb-6 bg-yellow-950 border border-yellow-600 rounded-xl p-5">
-            <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h2 className="text-yellow-300 font-bold text-lg">📋 PM Daily Updates — Update These in Your Tracker</h2>
-              <button
-                onClick={() => setPmSortAsc(prev => !prev)}
-                className="bg-yellow-800 hover:bg-yellow-700 text-yellow-200 text-xs px-3 py-1 rounded font-semibold">
-                Sort by Field {pmSortAsc ? '↑ A→Z' : '↓ Z→A'}
-              </button>
+              <div className="flex gap-2 items-center flex-wrap">
+                <input
+                  type="text"
+                  placeholder="Search HOP or field..."
+                  value={pmSearch}
+                  onChange={(e) => setPmSearch(e.target.value)}
+                  className="bg-yellow-900 border border-yellow-700 text-yellow-100 text-xs rounded px-2 py-1 w-44 focus:outline-none focus:border-yellow-400"
+                />
+                <button onClick={() => setPmSortField(prev => prev === 'field' ? 'hop' : 'field')}
+                  className="bg-yellow-800 hover:bg-yellow-700 text-yellow-200 text-xs px-3 py-1 rounded font-semibold">
+                  Sort by {pmSortField === 'field' ? 'Field ↑' : 'HOP ↑'}
+                </button>
+              </div>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -808,17 +818,22 @@ export default function GCCallPage() {
                 </tr>
               </thead>
               <tbody>
-                {[...pmUpdates].sort((a, b) => pmSortAsc ? a.field.localeCompare(b.field) : b.field.localeCompare(a.field)).map((u, i) => (
-                  <tr key={i} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
+                {[...pmUpdates]
+                  .filter(u => {
+                    if (!pmSearch) return true
+                    return u.hop.toLowerCase().includes(pmSearch.toLowerCase()) ||
+                           u.field.toLowerCase().includes(pmSearch.toLowerCase())
+                  })
+                  .sort((a, b) => pmSortField === 'field'
+                    ? a.field.localeCompare(b.field)
+                    : a.hop.localeCompare(b.hop))
+                  .map((u) => (
+                  <tr key={`${u.hop}-${u.field}-${u.timestamp}`} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
                     <td className="p-2">
                       <input
                         type="checkbox"
                         checked={u.completed || false}
-                        onChange={() => {
-                          setPmUpdates(prev => prev.map((item, idx) =>
-                            idx === i ? { ...item, completed: !item.completed } : item
-                          ))
-                        }}
+                        onChange={() => setPmUpdates(prev => prev.map((item) => item.hop === u.hop && item.field === u.field && item.timestamp === u.timestamp ? { ...item, completed: !item.completed } : item))}
                         className="w-4 h-4 cursor-pointer accent-green-500"
                       />
                     </td>
