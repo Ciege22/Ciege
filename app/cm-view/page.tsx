@@ -31,6 +31,9 @@ interface HOP {
   matReceived: string
   matLocation: string
   steelFrom: string
+  gcPickupF: string
+  gcPickupA: string
+  ms16fEdited: string
   vendorWindow: string
   blockers: string[]
   daysOut: number | null
@@ -337,7 +340,9 @@ export default function CMViewPage() {
     const ntpOwnCol   = col('NTP Action Owner')
     const ntpWaitCol  = col('NTP is waiting on')
     const matLocCol   = col('Material Current Location')
-    const steelCol    = headers.findIndex(h => String(h).trim().toLowerCase().includes('steel from'))
+    const steelCol     = headers.findIndex(h => String(h).replace(/\n/g, ' ').trim().toLowerCase().includes('steel from'))
+    const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
+    const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
     const itwSCol     = col('ITW Schedule Start')
     const itwECol     = col('ITW Schedule Complete')
     const ssSCol      = col('Samsung Schedule Start')
@@ -453,6 +458,9 @@ export default function CMViewPage() {
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
         steelFrom:    String(row[steelCol] || '').trim() || String(row2?.[steelCol] || '').trim(),
+        gcPickupF:    fmtDate(parseDateAny(row[gcPickupFCol])),
+        gcPickupA:    fmtDate(parseDateAny(row[gcPickupACol])),
+        ms16fEdited:  '',
         vendorWindow, blockers,
         daysOut, daysElapsed, inProgress, complete,
         statuses: [],
@@ -713,9 +721,12 @@ export default function CMViewPage() {
                   <th className="text-left p-2">Mat</th>
                   <th className="text-left p-2">Steel From</th>
                   <th className="text-left p-2">Mat Location</th>
-                  <th className="text-left p-2">GC Pickup</th>
+                  <th className="text-left p-2">GC Pickup F</th>
+                  <th className="text-left p-2">GC Pickup A</th>
                   <th className="text-left p-2">FC Start</th>
+                  <th className="text-left p-2">Edit FC Start</th>
                   <th className="text-left p-2">AC Start</th>
+                  <th className="text-left p-2">NTP Waiting On</th>
                   <th className="text-left p-2">Vendor Window</th>
                   <th className="text-left p-2">CM Action</th>
                   <th className="text-left p-2">Call Notes</th>
@@ -754,15 +765,28 @@ export default function CMViewPage() {
                       </td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.steelFrom || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.matLocation || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">
+                        {h.gcPickupF || '—'}
+                      </td>
                       <td className="p-2">
-                        {h.gcPickupDate
-                          ? <span className="text-green-400 text-xs">✓ {h.gcPickupDate}</span>
+                        {h.gcPickupA
+                          ? <span className="text-green-400 text-xs">✓ {h.gcPickupA}</span>
                           : <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value="" />
                         }
                       </td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
                       <td className="p-2">
+                        <EditableDate hop={h.hop} field="MS15 Implementation Start F" value={h.ms15f} />
+                      </td>
+                      <td className="p-2">
                         <EditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} />
+                      </td>
+                      <td className="p-2 text-xs max-w-48">
+                        <span className="text-yellow-300 text-xs" title={h.ntpWaitingOn}>
+                          {h.ntpWaitingOn
+                            ? (h.ntpWaitingOn.length > 30 ? h.ntpWaitingOn.slice(0, 30) + '...' : h.ntpWaitingOn)
+                            : '—'}
+                        </span>
                       </td>
                       <td className="p-2 text-xs max-w-40">
                         <span
@@ -959,6 +983,7 @@ export default function CMViewPage() {
                               <th className="text-left p-2">Main Cutover</th>
                               <th className="text-left p-2">Diversity Cutover</th>
                               <th className="text-left p-2">MS16 Fc</th>
+                              <th className="text-left p-2">Edit MS16 Fc</th>
                               <th className="text-left p-2">MS16 Act</th>
                               <th className="text-left p-2">Decom</th>
                               <th className="text-left p-2">Call Notes</th>
@@ -996,6 +1021,7 @@ export default function CMViewPage() {
                                 <td className="p-2">
                                   <EditableDate hop={h.hop} field="Diversity Cutover Completed" value={h.divCutover} />
                                 </td>
+                                <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f || '—'}</td>
                                 <td className="p-2">
                                   <EditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} />
                                 </td>
