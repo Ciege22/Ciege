@@ -267,11 +267,19 @@ export default function GCCallPage() {
     const wpCol     = col('Work Package Approved in QB')
     const pickupCol = col('GC Material Pick-up (A)')
     const spoCol    = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
-    const steelCol = (() => {
-        let idx = headers.findIndex(h => String(h).replace(/\n/g, ' ').trim() === 'Steel From (Nokia/ITW)')
-        if (idx === -1) idx = headers.findIndex(h => String(h).includes('Steel From'))
-        if (idx === -1) idx = headers.findIndex(h => String(h).toLowerCase().includes('steel from'))
-        return idx
+      // Steel From (Nokia/ITW) is at a known position — find by exact index match
+      const steelCol = (() => {
+        // First try exact match with newline
+        let idx = headers.findIndex(h => String(h) === 'Steel From\n(Nokia/ITW)')
+        if (idx !== -1) return idx
+        // Try without newline
+        idx = headers.findIndex(h => String(h) === 'Steel From (Nokia/ITW)')
+        if (idx !== -1) return idx
+        // Try contains Steel From
+        idx = headers.findIndex(h => String(h).includes('Steel From'))
+        if (idx !== -1) return idx
+        // Fallback — known position from tracker
+        return 59
       })()
     const ntpOwnCol = col('NTP Action Owner')
     const ntpWaitCol= col('NTP is waiting on')
@@ -336,7 +344,14 @@ export default function GCCallPage() {
       const wpDate  = parseDateAny(row[wpCol])
       const pickupD = parseDateAny(row[pickupCol])
       const spoDate  = parseDateAny(row[spoCol]) || (row2 ? parseDateAny(row2[spoCol]) : null)
-      const steelFrom = String(row[steelCol] || row2?.[steelCol] || '').trim()
+      const steelFrom = (() => {
+        const v1 = String(row[steelCol] || '').trim()
+        const v2 = String(row2?.[steelCol] || '').trim()
+        const val = v1 || v2
+        if (!val || val === 'nan' || val === 'undefined' || !isNaN(Number(val))) return ''
+        if (val.match(/^\d{4}-\d{2}-\d{2}/) || val.match(/^\d+\/\d+\/\d+/)) return ''
+        return val
+      })()
       const itwS    = parseDateAny(row[itwSCol]) || (row2 ? parseDateAny(row2[itwSCol]) : null)
       const itwE    = parseDateAny(row[itwECol]) || (row2 ? parseDateAny(row2[itwECol]) : null)
       const ssS     = parseDateAny(row[ssSCol])  || (row2 ? parseDateAny(row2[ssSCol])  : null)
@@ -448,7 +463,7 @@ export default function GCCallPage() {
         gcPickupDate: fmtDate(pickupD),
         hasSpo:       !!(spoDate && spoDate.getFullYear() >= 2020),
         spoIssued:    spoDate ? fmtDate(spoDate) : '',
-        steelFrom:    steelFrom === 'nan' ? '' : steelFrom,
+        steelFrom:    steelFrom,
         itwStart:     fmtDate(itwS),
         itwEnd:       fmtDate(itwE),
         ssStart:      fmtDate(ssS),

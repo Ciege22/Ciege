@@ -340,11 +340,19 @@ export default function CMViewPage() {
     const ntpOwnCol   = col('NTP Action Owner')
     const ntpWaitCol  = col('NTP is waiting on')
     const matLocCol   = col('Material Current Location')
-    const steelCol = (() => {
-        let idx = headers.findIndex(h => String(h).replace(/\n/g, ' ').trim() === 'Steel From (Nokia/ITW)')
-        if (idx === -1) idx = headers.findIndex(h => String(h).includes('Steel From'))
-        if (idx === -1) idx = headers.findIndex(h => String(h).toLowerCase().includes('steel from'))
-        return idx
+      // Steel From (Nokia/ITW) is at a known position — find by exact index match
+      const steelCol = (() => {
+        // First try exact match with newline
+        let idx = headers.findIndex(h => String(h) === 'Steel From\n(Nokia/ITW)')
+        if (idx !== -1) return idx
+        // Try without newline
+        idx = headers.findIndex(h => String(h) === 'Steel From (Nokia/ITW)')
+        if (idx !== -1) return idx
+        // Try contains Steel From
+        idx = headers.findIndex(h => String(h).includes('Steel From'))
+        if (idx !== -1) return idx
+        // Fallback — known position from tracker
+        return 59
       })()
     const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
     const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
@@ -462,7 +470,15 @@ export default function CMViewPage() {
         matForecast:  fmtDate(parseDateAny(row[matFcCol])),
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
-        steelFrom:    String(row[steelCol] || '').trim() || String(row2?.[steelCol] || '').trim(),
+        steelFrom:    (() => {
+            const v1 = String(row[steelCol] || '').trim()
+            const v2 = String(row2?.[steelCol] || '').trim()
+            const val = v1 || v2
+            // If value looks like a date or number discard it
+            if (!val || val === 'nan' || val === 'undefined' || !isNaN(Number(val))) return ''
+            if (val.match(/^\d{4}-\d{2}-\d{2}/) || val.match(/^\d+\/\d+\/\d+/)) return ''
+            return val
+          })(),
         gcPickupF:    fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA:    fmtDate(parseDateAny(row[gcPickupACol])),
         ms16fEdited:  '',
