@@ -267,7 +267,12 @@ export default function GCCallPage() {
     const wpCol     = col('Work Package Approved in QB')
     const pickupCol = col('GC Material Pick-up (A)')
     const spoCol    = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
-    const steelCol  = headers.findIndex(h => String(h).trim().toLowerCase().includes('steel from'))
+    const steelCol = (() => {
+        let idx = headers.findIndex(h => String(h).replace(/\n/g, ' ').trim() === 'Steel From (Nokia/ITW)')
+        if (idx === -1) idx = headers.findIndex(h => String(h).includes('Steel From'))
+        if (idx === -1) idx = headers.findIndex(h => String(h).toLowerCase().includes('steel from'))
+        return idx
+      })()
     const ntpOwnCol = col('NTP Action Owner')
     const ntpWaitCol= col('NTP is waiting on')
     const don444Col = col('DON 444')

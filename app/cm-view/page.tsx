@@ -340,11 +340,12 @@ export default function CMViewPage() {
     const ntpOwnCol   = col('NTP Action Owner')
     const ntpWaitCol  = col('NTP is waiting on')
     const matLocCol   = col('Material Current Location')
-    const steelCol     = headers.findIndex(h =>
-        String(h).replace(/\n/g, ' ').trim() === 'Steel From (Nokia/ITW)' ||
-        String(h).trim() === 'Steel From\n(Nokia/ITW)' ||
-        String(h).replace(/\s+/g, ' ').trim().toLowerCase() === 'steel from (nokia/itw)'
-      )
+    const steelCol = (() => {
+        let idx = headers.findIndex(h => String(h).replace(/\n/g, ' ').trim() === 'Steel From (Nokia/ITW)')
+        if (idx === -1) idx = headers.findIndex(h => String(h).includes('Steel From'))
+        if (idx === -1) idx = headers.findIndex(h => String(h).toLowerCase().includes('steel from'))
+        return idx
+      })()
     const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
     const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
     const itwSCol     = col('ITW Schedule Start')
@@ -727,8 +728,8 @@ export default function CMViewPage() {
                   <th className="text-left p-2">Steel From</th>
                   <th className="text-left p-2">Mat Location</th>
                   <th className="text-left p-2">GC Pickup F</th>
-                  <th className="text-left p-2">GC Pickup A</th>
                   <th className="text-left p-2">Edit GC Pickup F</th>
+                  <th className="text-left p-2">GC Pickup A</th>
                   <th className="text-left p-2">FC Start</th>
                   <th className="text-left p-2">Edit FC Start</th>
                   <th className="text-left p-2">AC Start</th>
@@ -781,13 +782,13 @@ export default function CMViewPage() {
                         {h.gcPickupF || '—'}
                       </td>
                       <td className="p-2">
+                        <EditableDate hop={h.hop} field="GC Material Pick-up (F)" value={h.gcPickupF} alwaysEditable={true} />
+                      </td>
+                      <td className="p-2">
                         {h.gcPickupA
                           ? <span className="text-green-400 text-xs">✓ {h.gcPickupA}</span>
                           : <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value="" />
                         }
-                      </td>
-                      <td className="p-2">
-                        <EditableDate hop={h.hop} field="GC Material Pick-up (F)" value={h.gcPickupF} alwaysEditable={true} />
                       </td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
                       <td className="p-2">
