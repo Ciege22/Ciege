@@ -471,9 +471,18 @@ export default function CMViewPage() {
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
         steelFrom:    (() => {
-            const headerAtIdx = String(headers[steelCol] || 'NO HEADER')
-            const valueAtIdx = String(row[steelCol] || 'EMPTY')
-            return `HDR:${headerAtIdx.slice(0,20)} VAL:${valueAtIdx.slice(0,20)}`
+            const v1 = String(row[steelCol] || '').trim()
+            const v2 = String(row2?.[steelCol] || '').trim()
+            // Check both rows — use whichever looks like Nokia or ITW text
+            for (const v of [v1, v2]) {
+              if (!v || v === 'nan' || v === 'undefined') continue
+              // Skip if it looks like a date or number
+              if (v.match(/^\d{4}-/) || v.match(/^\d+\/\d+\//) || !isNaN(Number(v))) continue
+              // Skip ISO date strings from JSON
+              if (v.includes('T00:00:00') || v.includes('T04:00:00')) continue
+              return v
+            }
+            return ''
           })(),
         gcPickupF:    fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA:    fmtDate(parseDateAny(row[gcPickupACol])),

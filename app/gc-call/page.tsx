@@ -347,10 +347,16 @@ export default function GCCallPage() {
       const steelFrom = (() => {
         const v1 = String(row[steelCol] || '').trim()
         const v2 = String(row2?.[steelCol] || '').trim()
-        const val = v1 || v2
-        if (!val || val === 'nan' || val === 'undefined' || !isNaN(Number(val))) return ''
-        if (val.match(/^\d{4}-\d{2}-\d{2}/) || val.match(/^\d+\/\d+\/\d+/)) return ''
-        return val
+        // Check both rows — use whichever looks like Nokia or ITW text
+        for (const v of [v1, v2]) {
+          if (!v || v === 'nan' || v === 'undefined') continue
+          // Skip if it looks like a date or number
+          if (v.match(/^\d{4}-/) || v.match(/^\d+\/\d+\//) || !isNaN(Number(v))) continue
+          // Skip ISO date strings from JSON
+          if (v.includes('T00:00:00') || v.includes('T04:00:00')) continue
+          return v
+        }
+        return ''
       })()
       const itwS    = parseDateAny(row[itwSCol]) || (row2 ? parseDateAny(row2[itwSCol]) : null)
       const itwE    = parseDateAny(row[itwECol]) || (row2 ? parseDateAny(row2[itwECol]) : null)
