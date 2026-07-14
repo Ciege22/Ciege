@@ -1549,6 +1549,9 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
         update_por_pending(18, 'September', 'sep', 'Sep Pending NTP')
 
     # October
+    print(f"DEBUG: por keys available: {list(d['por'].keys())}")
+    print(f"DEBUG: oct data: total={d['por'].get('oct', {}).get('total', 'MISSING')} ntp={d['por'].get('oct', {}).get('ntp', 'MISSING')}")
+    print(f"DEBUG: slide count: {len(prs.slides)}")
     if len(prs.slides) > 19:
         update_por_overview(19, 'October', 'oct')
     if len(prs.slides) > 20:
