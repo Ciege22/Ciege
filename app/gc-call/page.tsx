@@ -345,19 +345,11 @@ export default function GCCallPage() {
       const pickupD = parseDateAny(row[pickupCol])
       const spoDate  = parseDateAny(row[spoCol]) || (row2 ? parseDateAny(row2[spoCol]) : null)
       const steelFrom = (() => {
-        for (let i = 0; i < headers.length; i++) {
-          const h = String(headers[i])
-          if (h.includes('Steel From') || h.includes('steel from')) {
-            const v1 = String(row[i] || '').trim().replace(/^'+|'+$/g, '').trim()
-            const v2 = String(row2?.[i] || '').trim().replace(/^'+|'+$/g, '').trim()
-            for (const v of [v1, v2]) {
-              if (!v || v === 'nan' || v === 'undefined' || v === ' ') continue
-              if (v.match(/^\d{4}-/) || v.includes('T00:00') || v.includes('T04:00') || !isNaN(Number(v))) continue
-              return v
-            }
-          }
-        }
-        return ''
+        const idx = headers.findIndex(h => String(h).trim() === 'Steel From')
+        if (idx === -1) return ''
+        const v1 = String(row[idx] || '').trim().replace(/^'+|'+$/g, '').trim()
+        const v2 = String(row2?.[idx] || '').trim().replace(/^'+|'+$/g, '').trim()
+        return v1 || v2 || ''
       })()
       const itwS    = parseDateAny(row[itwSCol]) || (row2 ? parseDateAny(row2[itwSCol]) : null)
       const itwE    = parseDateAny(row[itwECol]) || (row2 ? parseDateAny(row2[itwECol]) : null)
