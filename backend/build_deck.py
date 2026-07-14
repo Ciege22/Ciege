@@ -1813,10 +1813,27 @@ def build(tracker_path: str = '', previous_deck_path: str = '', snapshot_path: s
     generate_snapshot(data, snap_out)
     generate_ntp_comments(data, ntp_out)
 
+    debug_slides_path = '/tmp/slide_debug.txt'
+    try:
+        import pptx as _pptx_mod
+        _prs_check = _pptx_mod.Presentation(deck_out)
+        with open(debug_slides_path, 'w') as f:
+            f.write(f"Total slides: {len(_prs_check.slides)}\n")
+            for i, slide in enumerate(_prs_check.slides):
+                try:
+                    title = slide.shapes[1].text_frame.text[:50] if slide.shapes[1].has_text_frame else '[no text]'
+                except:
+                    title = '[error]'
+                f.write(f"Slide {i}: {title!r}\n")
+    except Exception as _e:
+        with open(debug_slides_path, 'w') as f:
+            f.write(f"Error reading saved deck: {_e}\n")
+
     return {
         'deck_path': deck_out,
         'snapshot_path': snap_out,
         'ntp_comments_path': ntp_out,
+        'debug_slides_path': debug_slides_path,
         'summary': {
             'deck_date': deck_date,
             'total_hops': data['total'],
