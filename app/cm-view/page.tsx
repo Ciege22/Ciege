@@ -662,7 +662,8 @@ export default function CMViewPage() {
   const generateAllCMsEmail = () => {
     const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    const div = '─'.repeat(60)
+    const div  = '─'.repeat(60)
+    const starDiv = '═'.repeat(60)
     const subj = `Viaero MW Program — CM Call Follow-Up | All CMs | ${date}`
 
     let body = `Hap, Steve, Benny,\n\n`
@@ -674,39 +675,51 @@ export default function CMViewPage() {
       const cmHops = hops.filter(h => h.cm === cm && !h.complete)
       if (cmHops.length === 0) return
 
-      const active = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
+      const active   = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
       const upcoming = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
 
-      body += `${cm.toUpperCase()}\n${div}\n`
+      body += `${starDiv}\n`
+      body += `★★★  ${cm.toUpperCase()}  ★★★\n`
+      body += `${starDiv}\n\n`
 
       if (active.length > 0) {
-        body += `Active Sites (${active.length}):\n`
+        body += `Active Sites (${active.length}):\n\n`
         active.forEach(h => {
           const status = (h.daysElapsed ?? 0) > 18
-            ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — please confirm completion date with crew and advise`
+            ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
             : `✅ On track — ${h.daysElapsed}d elapsed`
-          body += `• ${h.hop}  |  GC: ${h.gc}  |  ${status}\n`
+          body += `• ${h.hop}  |  GC: ${h.gc}  |  FC End: ${h.ms16f || '—'}\n`
+          body += `  ${status}\n`
           const note = sessionNotes[h.hop]
           if (note) body += `  Note: ${note}\n`
+          body += '\n'
         })
-        body += '\n'
       }
 
       if (upcoming.length > 0) {
-        body += `Starting Within 2 Weeks (${upcoming.length}):\n`
+        body += `Starting Within 2 Weeks (${upcoming.length}):\n\n`
         upcoming.forEach(h => {
-          body += `• ${h.hop}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out\n`
-          body += `  NTP: ${h.hasNtp ? '✓' : '✗ Pending'}  |  Mat: ${h.hasMat ? '✓' : '✗ Pending'}  |  GC Pickup: ${h.gcPickupDate || '✗'}\n`
-          if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join(' | ')}\n`
+          body += `• ${h.hop}  |  GC: ${h.gc}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out\n`
+          body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
+          if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
+          body += '\n'
+          body += `  Mat: ${h.hasMat ? '✓' : '✗'}  |  GC Pickup F: ${h.gcPickupF || '—'}  |  GC Pickup A: ${h.gcPickupA || '✗'}\n`
+          if (h.blockers.length > 0) {
+            const blockerText = h.blockers.map(b => {
+              if (b.includes('NTP') && h.ntpWaitingOn) return `${b} — Waiting On: ${h.ntpWaitingOn}`
+              return b
+            }).join(' | ')
+            body += `  Blockers: ${blockerText}\n`
+          }
           const note = sessionNotes[h.hop]
           if (note) body += `  Note: ${note}\n`
+          body += '\n'
         })
-        body += '\n'
       }
 
       const actionNotes = Object.entries(sessionNotes).filter(([hop, note]) => note.trim() && cmHops.some(h => h.hop === hop))
       if (actionNotes.length > 0) {
-        body += `Action Items:\n`
+        body += `Action Items:\n\n`
         actionNotes.forEach(([hop, note], i) => {
           body += `${i + 1}. ${hop} — ${note}\n`
         })
@@ -715,10 +728,6 @@ export default function CMViewPage() {
 
       body += `${div}\n\n`
     })
-
-    body += `Please confirm receipt and advise on any open items.\n\n`
-    body += `Respectfully,\nCJ\nNokia Program Manager — Viaero MW Construction Program\nCC: Thomas M. — Lead CM\n\n`
-    body += `** Please see attached Excel file for your full pipeline detail **`
 
     window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
