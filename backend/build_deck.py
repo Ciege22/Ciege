@@ -1523,46 +1523,54 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                               key=lambda s: s.top, default=None)
                     if _sh: set_shape_text(_sh, _prog_label_str)
 
-    # POR slides — indices shifted +1 again after cx chart split into two slides
+    # POR slides
+    # July
+    if len(prs.slides) > 10:
+        update_por_overview(10, 'July', 'jul')
     if len(prs.slides) > 11:
-        update_por_overview(9,  'June',      'jun')
-    if len(prs.slides) > 11:
-        update_por_confirmed(10, 'June',      'jun', 'Jun Pending NTP')
-    if len(prs.slides) > 11:
-        update_por_pending(11, 'June',      'jun', 'Jun Pending NTP')
-    update_por_overview(12, 'July',      'jul')
-    update_por_overview(15, 'August',    'aug')
-    update_por_overview(18, 'September', 'sep')
-    update_por_confirmed(13, 'July',      'jul', 'Jul Pending NTP')
-    update_por_confirmed(16, 'August',    'aug', 'Aug Pending NTP')
-    update_por_confirmed(19, 'September', 'sep', 'Sep Pending NTP')
-    update_por_pending(14, 'July',      'jul', 'Jul Pending NTP')
-    update_por_pending(17, 'August',    'aug', 'Aug Pending NTP')
-    update_por_pending(20, 'September', 'sep', 'Sep Pending NTP')
+        update_por_confirmed(11, 'July', 'jul', 'Jul Pending NTP')
+    if len(prs.slides) > 12:
+        update_por_pending(12, 'July', 'jul', 'Jul Pending NTP')
+
+    # August
+    if len(prs.slides) > 13:
+        update_por_overview(13, 'August', 'aug')
+    if len(prs.slides) > 14:
+        update_por_confirmed(14, 'August', 'aug', 'Aug Pending NTP')
+    if len(prs.slides) > 15:
+        update_por_pending(15, 'August', 'aug', 'Aug Pending NTP')
+
+    # September
+    if len(prs.slides) > 16:
+        update_por_overview(16, 'September', 'sep')
+    if len(prs.slides) > 17:
+        update_por_confirmed(17, 'September', 'sep', 'Sep Pending NTP')
+    if len(prs.slides) > 18:
+        update_por_pending(18, 'September', 'sep', 'Sep Pending NTP')
 
     # October
+    if len(prs.slides) > 19:
+        update_por_overview(19, 'October', 'oct')
+    if len(prs.slides) > 20:
+        update_por_confirmed(20, 'October', 'oct', 'Oct Pending NTP')
     if len(prs.slides) > 21:
-        update_por_overview(21, 'October', 'oct')
-    if len(prs.slides) > 22:
-        update_por_confirmed(22, 'October', 'oct', 'Oct Pending NTP')
-    if len(prs.slides) > 23:
-        update_por_pending(23, 'October', 'oct', 'Oct Pending NTP')
+        update_por_pending(21, 'October', 'oct', 'Oct Pending NTP')
 
     # November
+    if len(prs.slides) > 22:
+        update_por_overview(22, 'November', 'nov')
+    if len(prs.slides) > 23:
+        update_por_confirmed(23, 'November', 'nov', 'Nov Pending NTP')
     if len(prs.slides) > 24:
-        update_por_overview(24, 'November', 'nov')
-    if len(prs.slides) > 25:
-        update_por_confirmed(25, 'November', 'nov', 'Nov Pending NTP')
-    if len(prs.slides) > 26:
-        update_por_pending(26, 'November', 'nov', 'Nov Pending NTP')
+        update_por_pending(24, 'November', 'nov', 'Nov Pending NTP')
 
     # December
+    if len(prs.slides) > 25:
+        update_por_overview(25, 'December', 'dec')
+    if len(prs.slides) > 26:
+        update_por_confirmed(26, 'December', 'dec', 'Dec Pending NTP')
     if len(prs.slides) > 27:
-        update_por_overview(27, 'December', 'dec')
-    if len(prs.slides) > 28:
-        update_por_confirmed(28, 'December', 'dec', 'Dec Pending NTP')
-    if len(prs.slides) > 29:
-        update_por_pending(29, 'December', 'dec', 'Dec Pending NTP')
+        update_por_pending(27, 'December', 'dec', 'Dec Pending NTP')
 
     # Cycle time slides — auto-detected by "YYYY Mon. Average" label, any position in deck
     import sys as _sys
