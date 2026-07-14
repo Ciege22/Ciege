@@ -276,10 +276,15 @@ def extract_data(tracker_path: str, snapshot_path: str,
         df_raw[mat_col] = pd.to_datetime(df_raw[mat_col], errors='coerce')
 
     # Status flags
-    df['has_ntp'] = df['NTP A'].dt.year >= 2025
-    # Fallback: if NTP A column is entirely empty, proxy via NTP Action Owner being blank
-    if df['has_ntp'].sum() == 0 and 'NTP Action Owner' in df.columns:
-        df['has_ntp'] = df['NTP Action Owner'].isna() | (df['NTP Action Owner'].astype(str).str.strip() == '')
+    try:
+        ntp_raw = pd.to_datetime(df['NTP A'], errors='coerce')
+        if hasattr(ntp_raw.dtype, 'tz') and ntp_raw.dtype.tz is not None:
+            ntp_raw = ntp_raw.dt.tz_localize(None)
+        df['has_ntp'] = ntp_raw.dt.year >= 2025
+        print(f"DEBUG has_ntp: {df['has_ntp'].sum()} HOPs with NTP confirmed")
+    except Exception as e:
+        print(f"NTP parse error: {e}")
+        df['has_ntp'] = False
     mat_col = next((c for c in df.columns if c.strip() == 'Material Received A'), None)
     if mat_col:
         df['has_mat'] = df[mat_col].dt.year >= 2025
@@ -316,11 +321,6 @@ def extract_data(tracker_path: str, snapshot_path: str,
             return cols[53]
         return None
     _ntp_wait_col = _find_ntp_wait_col()
-    import sys
-    cx_candidates = [c for c in df.columns if 'cx' in c.lower()]
-    print(f'[extract_data] _cx_col={_cx_col!r}  cx_candidates={cx_candidates}', file=sys.stderr, flush=True)
-    print(f'[extract_data] _ntp_wait_col={_ntp_wait_col!r}', file=sys.stderr, flush=True)
-    print(f'[extract_data] ALL HOPs columns: {list(df.columns)}', file=sys.stderr, flush=True)
 
     # String columns
     str_cols = {
@@ -514,7 +514,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     # POR data
     ms15f_col = 'MS15 Implementation Start F'
     por = {}
-    for mo, name in [(5, 'may'), (6, 'jun'), (7, 'jul'), (8, 'aug'), (9, 'sep')]:
+    for mo, name in [(5, 'may'), (6, 'jun'), (7, 'jul'), (8, 'aug'), (9, 'sep'), (10, 'oct'), (11, 'nov'), (12, 'dec')]:
         grp = df[(df[ms15f_col].dt.month == mo) & (df[ms15f_col].dt.year == 2026)]
         with_ntp = grp[grp['has_ntp']]
         pending = grp[~grp['has_ntp']]
@@ -1613,6 +1613,9 @@ def generate_snapshot(data: dict, output_path: str):
         "jul_por_total": por['jul']['total'], "jul_por_ntp": por['jul']['ntp'],
         "aug_por_total": por['aug']['total'], "aug_por_ntp": por['aug']['ntp'],
         "sep_por_total": por['sep']['total'], "sep_por_ntp": por['sep']['ntp'],
+        "oct_por_total": por['oct']['total'], "oct_por_ntp": por['oct']['ntp'],
+        "nov_por_total": por['nov']['total'], "nov_por_ntp": por['nov']['ntp'],
+        "dec_por_total": por['dec']['total'], "dec_por_ntp": por['dec']['ntp'],
         "ip_hops": df[df['in_progress']]['HOP'].tolist(),
         "la_hops": la['HOP'].tolist(),
         "scop_accepted": data.get('scop_accepted', 0),
