@@ -1322,6 +1322,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     def update_por_overview(slide_idx, mo_name, mo_key):
         s = prs.slides[slide_idx]; p = por[mo_key]
+        print(f"DEBUG update_por_overview: mo_key={mo_key} total={p['total']} ntp={p['ntp']} pending={p['pending']}")
         shapes = list(s.shapes)
         set_shape_text(shapes[1], f'{p["total"]} Forecasted {mo_name} POR')
         for idx, val in [(6, p['total']), (9, p['ntp']), (12, p['pending']),
