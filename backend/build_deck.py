@@ -277,14 +277,18 @@ def extract_data(tracker_path: str, snapshot_path: str,
 
     # Status flags
     try:
-        ntp_raw = pd.to_datetime(df['NTP A'], errors='coerce')
-        if hasattr(ntp_raw.dtype, 'tz') and ntp_raw.dtype.tz is not None:
-            ntp_raw = ntp_raw.dt.tz_localize(None)
+        ntp_raw = pd.to_datetime(df['NTP A'], errors='coerce', utc=True)
+        ntp_raw = ntp_raw.dt.tz_convert(None)
         df['has_ntp'] = ntp_raw.dt.year >= 2025
         print(f"DEBUG has_ntp: {df['has_ntp'].sum()} HOPs with NTP confirmed")
-    except Exception as e:
-        print(f"NTP parse error: {e}")
-        df['has_ntp'] = False
+    except Exception:
+        try:
+            ntp_raw = pd.to_datetime(df['NTP A'], errors='coerce')
+            ntp_raw = ntp_raw.dt.tz_localize(None) if hasattr(ntp_raw.dtype, 'tz') and ntp_raw.dtype.tz else ntp_raw
+            df['has_ntp'] = ntp_raw.dt.year >= 2025
+            print(f"DEBUG has_ntp (fallback): {df['has_ntp'].sum()} HOPs with NTP confirmed")
+        except Exception:
+            df['has_ntp'] = False
     mat_col = next((c for c in df.columns if c.strip() == 'Material Received A'), None)
     if mat_col:
         df['has_mat'] = df[mat_col].dt.year >= 2025
@@ -513,6 +517,11 @@ def extract_data(tracker_path: str, snapshot_path: str,
 
     # POR data
     ms15f_col = 'MS15 Implementation Start F'
+    try:
+        ms15f_raw = pd.to_datetime(df[ms15f_col], errors='coerce', utc=True).dt.tz_convert(None)
+        df[ms15f_col] = ms15f_raw
+    except Exception:
+        pass
     por = {}
     for mo, name in [(5, 'may'), (6, 'jun'), (7, 'jul'), (8, 'aug'), (9, 'sep'), (10, 'oct'), (11, 'nov'), (12, 'dec')]:
         grp = df[(df[ms15f_col].dt.month == mo) & (df[ms15f_col].dt.year == 2026)]
