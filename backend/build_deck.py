@@ -1529,56 +1529,56 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                     if _sh: set_shape_text(_sh, _prog_label_str)
 
     # POR slides
-    # July
+    # July (shifted down 3 after June removal)
+    if len(prs.slides) > 9:
+        update_por_overview(9, 'July', 'jul')
+    if len(prs.slides) > 10:
+        update_por_confirmed(10, 'July', 'jul', 'Jul Pending NTP')
     if len(prs.slides) > 11:
-        update_por_overview(11, 'July', 'jul')
-    if len(prs.slides) > 12:
-        update_por_confirmed(12, 'July', 'jul', 'Jul Pending NTP')
-    if len(prs.slides) > 13:
-        update_por_pending(13, 'July', 'jul', 'Jul Pending NTP')
+        update_por_pending(11, 'July', 'jul', 'Jul Pending NTP')
 
     # August
+    if len(prs.slides) > 12:
+        update_por_overview(12, 'August', 'aug')
+    if len(prs.slides) > 13:
+        update_por_confirmed(13, 'August', 'aug', 'Aug Pending NTP')
     if len(prs.slides) > 14:
-        update_por_overview(14, 'August', 'aug')
-    if len(prs.slides) > 15:
-        update_por_confirmed(15, 'August', 'aug', 'Aug Pending NTP')
-    if len(prs.slides) > 16:
-        update_por_pending(16, 'August', 'aug', 'Aug Pending NTP')
+        update_por_pending(14, 'August', 'aug', 'Aug Pending NTP')
 
     # September
+    if len(prs.slides) > 15:
+        update_por_overview(15, 'September', 'sep')
+    if len(prs.slides) > 16:
+        update_por_confirmed(16, 'September', 'sep', 'Sep Pending NTP')
     if len(prs.slides) > 17:
-        update_por_overview(17, 'September', 'sep')
-    if len(prs.slides) > 18:
-        update_por_confirmed(18, 'September', 'sep', 'Sep Pending NTP')
-    if len(prs.slides) > 19:
-        update_por_pending(19, 'September', 'sep', 'Sep Pending NTP')
+        update_por_pending(17, 'September', 'sep', 'Sep Pending NTP')
 
     # October
     print(f"DEBUG: por keys available: {list(d['por'].keys())}")
     print(f"DEBUG: oct data: total={d['por'].get('oct', {}).get('total', 'MISSING')} ntp={d['por'].get('oct', {}).get('ntp', 'MISSING')}")
     print(f"DEBUG: slide count: {len(prs.slides)}")
+    if len(prs.slides) > 18:
+        update_por_overview(18, 'October', 'oct')
+    if len(prs.slides) > 19:
+        update_por_confirmed(19, 'October', 'oct', 'Oct Pending NTP')
     if len(prs.slides) > 20:
-        update_por_overview(20, 'October', 'oct')
-    if len(prs.slides) > 21:
-        update_por_confirmed(21, 'October', 'oct', 'Oct Pending NTP')
-    if len(prs.slides) > 22:
-        update_por_pending(22, 'October', 'oct', 'Oct Pending NTP')
+        update_por_pending(20, 'October', 'oct', 'Oct Pending NTP')
 
     # November
+    if len(prs.slides) > 21:
+        update_por_overview(21, 'November', 'nov')
+    if len(prs.slides) > 22:
+        update_por_confirmed(22, 'November', 'nov', 'Nov Pending NTP')
     if len(prs.slides) > 23:
-        update_por_overview(23, 'November', 'nov')
-    if len(prs.slides) > 24:
-        update_por_confirmed(24, 'November', 'nov', 'Nov Pending NTP')
-    if len(prs.slides) > 25:
-        update_por_pending(25, 'November', 'nov', 'Nov Pending NTP')
+        update_por_pending(23, 'November', 'nov', 'Nov Pending NTP')
 
     # December
+    if len(prs.slides) > 24:
+        update_por_overview(24, 'December', 'dec')
+    if len(prs.slides) > 25:
+        update_por_confirmed(25, 'December', 'dec', 'Dec Pending NTP')
     if len(prs.slides) > 26:
-        update_por_overview(26, 'December', 'dec')
-    if len(prs.slides) > 27:
-        update_por_confirmed(27, 'December', 'dec', 'Dec Pending NTP')
-    if len(prs.slides) > 28:
-        update_por_pending(28, 'December', 'dec', 'Dec Pending NTP')
+        update_por_pending(26, 'December', 'dec', 'Dec Pending NTP')
 
     # Cycle time slides — auto-detected by "YYYY Mon. Average" label, any position in deck
     import sys as _sys
