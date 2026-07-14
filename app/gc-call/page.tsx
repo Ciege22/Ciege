@@ -525,22 +525,27 @@ export default function GCCallPage() {
     const cm   = GC_CM_MAP[selectedGC] || 'CM'
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     const subj = `Viaero MW Program — Weekly Site Update | ${selectedGC} | ${date}`
+    const div  = '─'.repeat(60)
+    const starDiv = '═'.repeat(60)
 
     let body = `Dear ${selectedGC} Team,\n\n`
     body += `Please find below your weekly site update for the Viaero Wireless Microwave Construction Program — ${date}.\n`
     body += `Site CM: ${cm}  ·  Nokia PM: CJ  ·  Lead CM: Thomas M.\n`
-    body += `${'─'.repeat(60)}\n\n`
+    body += `${div}\n\n`
 
     if (active.length > 0) {
-      body += `ACTIVE SITES (${active.length})\n`
-      body += `${'─'.repeat(60)}\n`
+      body += `${starDiv}\n`
+      body += `★★★  ACTIVE SITES (${active.length})  ★★★\n`
+      body += `${starDiv}\n\n`
       active.forEach(h => {
         const status = (h.daysElapsed ?? 0) > 18
-          ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — please confirm completion date with your crew and advise`
+          ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
           : `✅ On track — ${h.daysElapsed}d elapsed`
+        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
         body += `• ${h.hop}\n`
-        body += `  Started: ${h.ms15a}  |  FC Complete: ${h.ms16f}\n`
-        body += `  Status: ${status}\n`
+        body += `  AC Start: ${h.ms15a || '—'}  |  FC Complete: ${h.ms16f || '—'}\n`
+        body += `  ${status}\n`
+        body += `  SPO: ${spoStatus}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
       })
@@ -548,37 +553,61 @@ export default function GCCallPage() {
 
     const upcoming = [...thisWeek, ...next2Weeks]
     if (upcoming.length > 0) {
-      body += `STARTING WITHIN 2 WEEKS (${upcoming.length})\n`
-      body += `${'─'.repeat(60)}\n`
+      body += `${starDiv}\n`
+      body += `★★★  STARTING WITHIN 2 WEEKS (${upcoming.length})  ★★★\n`
+      body += `${starDiv}\n\n`
       upcoming.forEach(h => {
+        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const steelNote = h.steelFrom === 'ITW'
+          ? `ITW — confirm ITW delivery schedule`
+          : h.steelFrom || '—'
         body += `• ${h.hop}\n`
-        body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
-        body += `  NTP: ${h.hasNtp ? '✓ Confirmed' : '✗ Pending'}  |  Material: ${h.hasMat ? '✓ Received' : '✗ Pending'}  |  GC Pickup: ${h.gcPickupDate ? '✓ ' + h.gcPickupDate : '✗ Not yet'}\n`
-        if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join('  |  ')}\n`
-        if (h.ntpWaitingOn) body += `  NTP Waiting On: ${h.ntpWaitingOn}\n`
+        body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
+        if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
+        body += '\n'
+        body += `  Mat: ${h.hasMat ? '✓' : '✗'}  |  Steel From: ${steelNote}  |  GC Pickup F: ${h.gcPickupDate || '—'}  |  GC Pickup A: ${h.gcPickupDate || '✗'}\n`
+        body += `  SPO: ${spoStatus}  |  Vendor: ${h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear'}\n`
+        if (h.blockers.length > 0) {
+          const blockerText = h.blockers.map(b => {
+            if (b.includes('NTP') && h.ntpWaitingOn) return `${b} — Waiting On: ${h.ntpWaitingOn}`
+            return b
+          }).join(' | ')
+          body += `  Blockers: ${blockerText}\n`
+        }
         if (h.internalConflict) body += `  Internal Conflict: ${h.internalConflict}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
+        body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
         body += '\n'
       })
     }
 
     if (thisMonth.length > 0) {
-      body += `THIS MONTH — 15 TO 30 DAYS (${thisMonth.length})\n`
-      body += `${'─'.repeat(60)}\n`
+      body += `${starDiv}\n`
+      body += `★★★  THIS MONTH — 15 TO 30 DAYS (${thisMonth.length})  ★★★\n`
+      body += `${starDiv}\n\n`
       thisMonth.forEach(h => {
+        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const steelNote = h.steelFrom === 'ITW'
+          ? `ITW — confirm ITW delivery schedule`
+          : h.steelFrom || '—'
         body += `• ${h.hop}\n`
-        body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
-        body += `  NTP: ${h.hasNtp ? '✓' : '✗ Pending'}  |  Material: ${h.hasMat ? '✓' : '✗ Pending'}  |  GC Pickup: ${h.gcPickupDate ? '✓' : '✗'}\n`
-        if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join('  |  ')}\n`
+        body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
+        if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
+        body += '\n'
+        body += `  Mat: ${h.hasMat ? '✓' : '✗'}  |  Steel From: ${steelNote}  |  GC Pickup F: ${h.gcPickupDate || '—'}  |  GC Pickup A: ${h.gcPickupDate || '✗'}\n`
+        body += `  SPO: ${spoStatus}  |  Vendor: ${h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear'}\n`
+        if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join(' | ')}\n`
         if (h.internalConflict) body += `  Internal Conflict: ${h.internalConflict}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
+        body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
         body += '\n'
       })
     }
 
     if (pullInReady.length > 0) {
-      body += `PULL-IN OPPORTUNITIES (${pullInReady.length})\n`
-      body += `${'─'.repeat(60)}\n`
+      body += `${starDiv}\n`
+      body += `★★★  PULL-IN OPPORTUNITIES (${pullInReady.length})  ★★★\n`
+      body += `${starDiv}\n\n`
       body += `The following sites are ready to accelerate if schedule allows:\n\n`
       pullInReady.forEach(h => {
         body += `• ${h.hop}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out  |  NTP ✓  |  Mat ✓\n`
@@ -587,11 +616,11 @@ export default function GCCallPage() {
       })
     }
 
-    // Action items — anything with blockers starting soon
     const actionItems = [...thisWeek, ...next2Weeks].filter(h => h.blockers.length > 0)
     if (actionItems.length > 0) {
-      body += `ACTION ITEMS REQUIRED\n`
-      body += `${'─'.repeat(60)}\n`
+      body += `${starDiv}\n`
+      body += `★★★  ACTION ITEMS REQUIRED  ★★★\n`
+      body += `${starDiv}\n\n`
       actionItems.forEach((h, i) => {
         body += `${i + 1}. ${h.hop} (starts ${h.ms15f})\n`
         h.blockers.forEach(b => body += `   ${b}\n`)
@@ -599,13 +628,9 @@ export default function GCCallPage() {
       })
     }
 
-    body += `${'─'.repeat(60)}\n`
+    body += `${div}\n`
     body += `Please coordinate with your Site CM ${cm} for all field questions.\n`
-    body += `For schedule, finance, or contract matters contact CJ directly.\n\n`
-    body += `Respectfully,\n`
-    body += `CJ\n`
-    body += `Nokia Program Manager — Viaero MW Construction Program\n`
-    body += `CC: ${cm} — Site CM  |  Thomas M. — Lead CM`
+    body += `For schedule, finance, or contract matters contact CJ directly.`
 
     window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
