@@ -662,7 +662,7 @@ export default function CMViewPage() {
   const generateAllCMsEmail = () => {
     const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    const div  = '─'.repeat(60)
+    const div     = '─'.repeat(60)
     const starDiv = '═'.repeat(60)
     const subj = `Viaero MW Program — CM Call Follow-Up | All CMs | ${date}`
 
@@ -699,11 +699,15 @@ export default function CMViewPage() {
       if (upcoming.length > 0) {
         body += `Starting Within 2 Weeks (${upcoming.length}):\n\n`
         upcoming.forEach(h => {
-          body += `• ${h.hop}  |  GC: ${h.gc}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out\n`
+          const steelNote = h.steelFrom === 'ITW'
+            ? `ITW — confirm ITW delivery schedule`
+            : h.steelFrom || '—'
+          body += `• ${h.hop}  |  GC: ${h.gc}\n`
           body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
           if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
           body += '\n'
-          body += `  Mat: ${h.hasMat ? '✓' : '✗'}  |  GC Pickup F: ${h.gcPickupF || '—'}  |  GC Pickup A: ${h.gcPickupA || '✗'}\n`
+          body += `  Mat: ${h.hasMat ? '✓' : '✗'}  |  Steel From: ${steelNote}  |  GC Pickup F: ${h.gcPickupF || '—'}  |  GC Pickup A: ${h.gcPickupA || '✗'}\n`
+          body += `  Vendor: ${h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear'}\n`
           if (h.blockers.length > 0) {
             const blockerText = h.blockers.map(b => {
               if (b.includes('NTP') && h.ntpWaitingOn) return `${b} — Waiting On: ${h.ntpWaitingOn}`
@@ -713,6 +717,7 @@ export default function CMViewPage() {
           }
           const note = sessionNotes[h.hop]
           if (note) body += `  Note: ${note}\n`
+          body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
           body += '\n'
         })
       }
