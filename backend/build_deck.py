@@ -1116,32 +1116,13 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
     set_shape_text(shapes4[24], ds(delta_ntp, snap_date))
     set_shape_text(shapes4[26], f'★  New Starts Since {snap_date} ({len(d["new_starts"])})')
 
-    new_start_idxs = [29, 32, 35, 44, 47]
-    new_starts_list = d['new_starts']
-
-    for i, si in enumerate(new_start_idxs):
+    # Clear all new starts slots — no longer displaying individual HOP names on slide
+    for si in [29, 32, 35, 44, 47]:
         if si < len(shapes4):
-            if i < min(len(new_starts_list), 4):
-                # First 4 slots get one HOP each
-                set_shape_text(shapes4[si], f'★ {new_starts_list[i]}')
-            elif i == 4 and len(new_starts_list) >= 5:
-                # Last slot (index 4, shape 55) gets ALL remaining HOPs stacked with newlines
-                remaining = new_starts_list[4:]
-                combined_text = '\n'.join(f'★ {h}' for h in remaining)
-                shape = shapes4[si]
-                set_shape_text(shape, combined_text)
-                # Shrink font if more than 1 item crammed in
-                if len(remaining) > 1:
-                    try:
-                        from pptx.util import Pt
-                        font_size = Pt(9) if len(remaining) > 2 else Pt(11)
-                        for paragraph in shape.text_frame.paragraphs:
-                            for run in paragraph.runs:
-                                run.font.size = font_size
-                    except Exception:
-                        pass
-            else:
+            try:
                 set_shape_text(shapes4[si], '')
+            except:
+                pass
 
     por = d['por']
     jun_delta = por['jun']['ntp'] - snap.get('jun_por_ntp', 0)
