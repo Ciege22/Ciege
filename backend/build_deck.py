@@ -517,6 +517,7 @@ def extract_data(tracker_path: str, snapshot_path: str,
     for mo, name in [(5, 'may'), (6, 'jun'), (7, 'jul'), (8, 'aug'), (9, 'sep'), (10, 'oct'), (11, 'nov'), (12, 'dec')]:
         grp = df[(df[ms15f_col].dt.month == mo) & (df[ms15f_col].dt.year == 2026)]
         with_ntp = grp[grp['has_ntp']]
+        print(f"DEBUG POR {name}: total={len(grp)} ntp={len(with_ntp)}")
         pending = grp[~grp['has_ntp']]
         pending_rows = []
         for _, r in pending.iterrows():
