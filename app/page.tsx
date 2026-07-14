@@ -6,7 +6,7 @@ import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrac
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
-  { label: "Deck Builder", href: "/deck-builder", active: true },
+  { label: "Deck Builder", href: "/deck-builder", active: false },
   { label: "GC Call View", href: "/gc-call", active: false },
   { label: "CM Call View", href: "/cm-view", active: false },
   { label: "Schedule Optimizer", href: "/schedule", active: false },
