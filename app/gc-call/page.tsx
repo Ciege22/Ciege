@@ -33,6 +33,7 @@ interface HOP {
   matReceived: string
   gcPickupDate: string
   hasSpo: boolean
+  hasCpo: boolean
   spoIssued: string
   steelFrom: string
   itwStart: string
@@ -461,6 +462,7 @@ export default function GCCallPage() {
         matReceived:  matDate ? fmtDate(matDate) : '',
         gcPickupDate: fmtDate(pickupD),
         hasSpo:       !!(spoDate && spoDate.getFullYear() >= 2020),
+        hasCpo:       false,
         spoIssued:    spoDate ? fmtDate(spoDate) : '',
         steelFrom:    steelFrom,
         itwStart:     fmtDate(itwS),
