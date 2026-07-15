@@ -599,9 +599,22 @@ def extract_data(tracker_path: str, snapshot_path: str,
                 'Jul','Aug','Sep','Oct','Nov','Dec'][mo - 1] + '/' + str(yr)[2:]
 
     _sf = cx_qual[ms15f_col].dropna()
+    if len(_sf) > 0:
+        starts_min = _sf.min()
+        starts_max = max(_sf.max(), pd.Timestamp('2027-03-01'))
+    else:
+        starts_min = pd.Timestamp('2026-03-01')
+        starts_max = pd.Timestamp('2027-03-01')
+    starts_months = _mo_range(starts_min, starts_max)
+
     _cf = cx_qual[ms16f_col2].dropna()
-    starts_months   = _mo_range(_sf.min(), _sf.max()) if len(_sf) > 0 else [(m, 2026) for m in range(3, 11)]
-    complete_months = _mo_range(_cf.min(), _cf.max()) if len(_cf) > 0 else [(m, 2026) for m in range(5, 13)]
+    if len(_cf) > 0:
+        complete_min = _cf.min()
+        complete_max = max(_cf.max(), pd.Timestamp('2027-03-01'))
+    else:
+        complete_min = pd.Timestamp('2026-05-01')
+        complete_max = pd.Timestamp('2027-03-01')
+    complete_months = _mo_range(complete_min, complete_max)
     starts_labels   = [_mo_label(m, y) for m, y in starts_months]
     complete_labels = [_mo_label(m, y) for m, y in complete_months]
 
