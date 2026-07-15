@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
@@ -157,6 +157,242 @@ function NoteCell({ hop, noteValue, onNoteChange, onSave }: NoteCellProps) {
   )
 }
 
+interface HistoryCellProps {
+  hop: string
+  noteHistory: Record<string, { id: string; hop_name: string; note: string; logged_at: string }[]>
+}
+
+function HistoryCell({ hop, noteHistory }: HistoryCellProps) {
+  return (
+    <td className="p-2 max-w-48">
+      {(noteHistory[hop] || []).length === 0
+        ? <span className="text-gray-600 text-xs">No history</span>
+        : <div className="flex flex-col gap-1 max-h-20 overflow-y-auto">
+            {(noteHistory[hop] || []).slice(0, 5).map((n) => (
+              <div key={n.id} className="text-xs">
+                <span className="text-gray-500">{new Date(n.logged_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} </span>
+                <span className="text-gray-300">{n.note}</span>
+              </div>
+            ))}
+          </div>
+      }
+    </td>
+  )
+}
+
+interface EditableDateProps {
+  hop: string
+  field: string
+  value: string
+  alwaysEditable?: boolean
+  editedDates: Record<string, Record<string, string>>
+  logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
+}
+
+function EditableDate({ hop, field, value, alwaysEditable = false, editedDates, logDateEdit }: EditableDateProps) {
+  const edited = editedDates[hop]?.[field]
+
+  const toInputFormat = (dateStr: string) => {
+    if (!dateStr || dateStr === 'N/A') return ''
+    const parts = dateStr.split('/')
+    if (parts.length !== 3) return ''
+    return `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`
+  }
+
+  const toDisplayFormat = (dateStr: string) => {
+    if (!dateStr) return ''
+    const parts = dateStr.split('-')
+    if (parts.length !== 3) return ''
+    return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
+  }
+
+  if (value && value !== 'N/A' && !edited && !alwaysEditable) {
+    return <span className="text-green-400 text-xs font-semibold">{value}</span>
+  }
+
+  const display = edited || ''
+
+  if (display === 'N/A') {
+    return (
+      <div className="flex items-center gap-1">
+        <span className="text-gray-500 text-xs">N/A</span>
+        <button onClick={() => logDateEdit(hop, field, value, '')}
+          className="text-gray-600 hover:text-gray-400 text-xs">✕</button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1">
+      {display && (
+        <span className="text-yellow-300 text-xs font-semibold">📝 {display}</span>
+      )}
+      <div className="flex items-center gap-1">
+        <input
+          type="date"
+          value={toInputFormat(display)}
+          onChange={(e) => {
+            const val = e.target.value
+            if (val) {
+              logDateEdit(hop, field, value, toDisplayFormat(val))
+            }
+          }}
+          className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer"
+        />
+        <button
+          onClick={() => logDateEdit(hop, field, value, 'N/A')}
+          title="Mark as N/A"
+          className="text-gray-500 hover:text-red-400 text-xs px-1 py-1 rounded border border-gray-700 hover:border-red-500 transition-colors">
+          N/A
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface PipelineSectionProps {
+  title: string
+  rows: HOP[]
+  sessionNotes: Record<string, string>
+  setSessionNotes: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  saveCallNote: (hop: string, note: string) => void
+  noteHistory: Record<string, { id: string; hop_name: string; note: string; logged_at: string }[]>
+  editedDates: Record<string, Record<string, string>>
+  logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
+}
+
+function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit }: PipelineSectionProps) {
+  return (
+    <div className="mb-8">
+      <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
+      {rows.length === 0
+        ? <p className="text-gray-500 text-sm">No sites in this window</p>
+        : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-800 text-gray-400">
+                  <th className="text-left p-2">HOP</th>
+                  <th className="text-left p-2">GC</th>
+                  <th className="text-left p-2">Days Out</th>
+                  <th className="text-left p-2">NTP</th>
+                  <th className="text-left p-2">Mat</th>
+                  <th className="text-left p-2">NTP Waiting On</th>
+                  <th className="text-left p-2">SPO</th>
+                  <th className="text-left p-2">Steel From</th>
+                  <th className="text-left p-2">Mat Location</th>
+                  <th className="text-left p-2">GC Pickup F</th>
+                  <th className="text-left p-2">Edit GC Pickup F</th>
+                  <th className="text-left p-2">GC Pickup A</th>
+                  <th className="text-left p-2">FC Start</th>
+                  <th className="text-left p-2">Edit FC Start</th>
+                  <th className="text-left p-2">AC Start</th>
+                  <th className="text-left p-2">Vendor Window</th>
+                  <th className="text-left p-2">CM Action</th>
+                  <th className="text-left p-2">Call Notes</th>
+                  <th className="text-left p-2">Notes History</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(h => {
+                  const hasConflict = h.vendorWindow.includes('🔴')
+                  const isUrgent    = h.blockers.length > 0 && (h.daysOut ?? 99) <= 7
+                  const rowBg       = hasConflict ? 'bg-red-950' : isUrgent ? 'bg-yellow-950' : h.blockers.length === 0 ? 'bg-green-950' : 'bg-gray-900'
+                  return (
+                    <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
+                      <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>
+                        {h.daysOut !== null ? `${h.daysOut}d` : '—'}
+                      </td>
+                      <td className="p-2">
+                        <span
+                          title={!h.hasNtp ? (h.ntpWaitingOn || h.ntpOwner || 'NTP pending') : 'NTP confirmed'}
+                          className="cursor-help">
+                          {h.hasNtp
+                            ? <span className="text-green-400 font-bold">✓</span>
+                            : <span className="text-red-400 font-bold">✗</span>}
+                        </span>
+                      </td>
+                      <td className="p-2">
+                        <span
+                          title={!h.hasMat ? (h.matForecast ? `Mat forecast: ${h.matForecast}` : 'No material forecast') : `Mat received: ${h.matReceived}`}
+                          className="cursor-help">
+                          {h.hasMat
+                            ? <span className="text-green-400 font-bold">✓</span>
+                            : <span className="text-red-400 font-bold">✗</span>}
+                        </span>
+                      </td>
+                      <td className="p-2 text-xs max-w-48">
+                        <span className="text-yellow-300 text-xs" title={h.ntpWaitingOn}>
+                          {h.ntpWaitingOn
+                            ? (h.ntpWaitingOn.length > 30 ? h.ntpWaitingOn.slice(0, 30) + '...' : h.ntpWaitingOn)
+                            : '—'}
+                        </span>
+                      </td>
+                      <td className="p-2 text-xs whitespace-nowrap">
+                        <span className={
+                          h.hasSpo ? 'text-green-400 font-bold' :
+                          h.hasCpo ? 'text-yellow-400 font-bold' :
+                          'text-red-400 font-bold'
+                        }>
+                          {h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'}
+                        </span>
+                      </td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.steelFrom || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.matLocation || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">
+                        {h.gcPickupF || '—'}
+                      </td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="GC Material Pick-up (F)" value={h.gcPickupF} alwaysEditable={true} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        {h.gcPickupA
+                          ? <span className="text-green-400 text-xs">✓ {h.gcPickupA}</span>
+                          : <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value="" editedDates={editedDates} logDateEdit={logDateEdit} />
+                        }
+                      </td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="MS15 Implementation Start F" value={h.ms15f} alwaysEditable={true} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2 text-xs max-w-40">
+                        <span
+                          className={h.vendorWindow.includes('🔴') ? 'text-red-400' : h.vendorWindow.includes('⚠️') ? 'text-yellow-400' : 'text-green-400'}
+                          title={h.vendorWindow}>
+                          {h.vendorWindow.length > 30 ? h.vendorWindow.slice(0, 30) + '...' : h.vendorWindow}
+                        </span>
+                      </td>
+                      <td className="p-2 text-xs max-w-48">
+                        <span
+                          className={h.cmAction.includes('🔴') || h.cmAction.includes('CRITICAL') ? 'text-red-400' : h.cmAction.includes('🟠') ? 'text-orange-400' : h.cmAction.includes('🟡') ? 'text-yellow-400' : h.cmAction.includes('✅') ? 'text-green-400' : 'text-gray-300'}
+                          title={h.cmAction}>
+                          {h.cmAction.length > 40 ? h.cmAction.slice(0, 40) + '...' : h.cmAction}
+                        </span>
+                      </td>
+                      <NoteCell
+                        hop={h.hop}
+                        noteValue={sessionNotes[h.hop] || ''}
+                        onNoteChange={(hop, val) => setSessionNotes(n => ({ ...n, [hop]: val }))}
+                        onSave={saveCallNote}
+                      />
+                      <HistoryCell hop={h.hop} noteHistory={noteHistory} />
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+    </div>
+  )
+}
+
 export default function CMViewPage() {
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
@@ -249,83 +485,6 @@ export default function CMViewPage() {
     logDateEdit(hop, field, '', 'N/A')
   }
 
-  const EditableDate = ({ hop, field, value, alwaysEditable = false }: { hop: string, field: string, value: string, alwaysEditable?: boolean }) => {
-    const edited = editedDates[hop]?.[field]
-
-    const toInputFormat = (dateStr: string) => {
-      if (!dateStr || dateStr === 'N/A') return ''
-      const parts = dateStr.split('/')
-      if (parts.length !== 3) return ''
-      return `${parts[2]}-${parts[0].padStart(2, '0')}-${parts[1].padStart(2, '0')}`
-    }
-
-    const toDisplayFormat = (dateStr: string) => {
-      if (!dateStr) return ''
-      const parts = dateStr.split('-')
-      if (parts.length !== 3) return ''
-      return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
-    }
-
-    // If tracker already has a date — show read only in green
-    if (value && value !== 'N/A' && !edited && !alwaysEditable) {
-      return <span className="text-green-400 text-xs font-semibold">{value}</span>
-    }
-
-    const display = edited || ''
-
-    if (display === 'N/A') {
-      return (
-        <div className="flex items-center gap-1">
-          <span className="text-gray-500 text-xs">N/A</span>
-          <button onClick={() => logDateEdit(hop, field, value, '')}
-            className="text-gray-600 hover:text-gray-400 text-xs">✕</button>
-        </div>
-      )
-    }
-
-    return (
-      <div className="flex flex-col gap-1">
-        {display && (
-          <span className="text-yellow-300 text-xs font-semibold">📝 {display}</span>
-        )}
-        <div className="flex items-center gap-1">
-          <input
-            type="date"
-            value={toInputFormat(display)}
-            onChange={(e) => {
-              const val = e.target.value
-              if (val) {
-                logDateEdit(hop, field, value, toDisplayFormat(val))
-              }
-            }}
-            className="text-xs rounded px-1 py-1 border border-gray-600 bg-gray-800 text-gray-300 focus:outline-none focus:border-blue-500 cursor-pointer"
-          />
-          <button
-            onClick={() => logDateEdit(hop, field, value, 'N/A')}
-            title="Mark as N/A"
-            className="text-gray-500 hover:text-red-400 text-xs px-1 py-1 rounded border border-gray-700 hover:border-red-500 transition-colors">
-            N/A
-          </button>
-        </div>
-      </div>
-    )
-  }
-
-  const HistoryCell = ({ hop }: { hop: string }) => (
-    <td className="p-2 max-w-48">
-      {(noteHistory[hop] || []).length === 0
-        ? <span className="text-gray-600 text-xs">No history</span>
-        : <div className="flex flex-col gap-1 max-h-20 overflow-y-auto">
-            {(noteHistory[hop] || []).slice(0, 5).map((n) => (
-              <div key={n.id} className="text-xs">
-                <span className="text-gray-500">{new Date(n.logged_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' })} </span>
-                <span className="text-gray-300">{n.note}</span>
-              </div>
-            ))}
-          </div>
-      }
-    </td>
-  )
 
   useEffect(() => {
     const loadFromSnapshot = async () => {
@@ -786,136 +945,6 @@ export default function CMViewPage() {
     window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
-  const PipelineSection = ({ title, rows }: { title: string, rows: HOP[] }) => (
-    <div className="mb-8">
-      <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
-      {rows.length === 0
-        ? <p className="text-gray-500 text-sm">No sites in this window</p>
-        : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-gray-800 text-gray-400">
-                  <th className="text-left p-2">HOP</th>
-                  <th className="text-left p-2">GC</th>
-                  <th className="text-left p-2">Days Out</th>
-                  <th className="text-left p-2">NTP</th>
-                  <th className="text-left p-2">Mat</th>
-                  <th className="text-left p-2">NTP Waiting On</th>
-                  <th className="text-left p-2">Steel From</th>
-                  <th className="text-left p-2">Mat Location</th>
-                  <th className="text-left p-2">GC Pickup F</th>
-                  <th className="text-left p-2">Edit GC Pickup F</th>
-                  <th className="text-left p-2">GC Pickup A</th>
-                  <th className="text-left p-2">FC Start</th>
-                  <th className="text-left p-2">Edit FC Start</th>
-                  <th className="text-left p-2">AC Start</th>
-                  <th className="text-left p-2">SPO</th>
-                  <th className="text-left p-2">Vendor Window</th>
-                  <th className="text-left p-2">CM Action</th>
-                  <th className="text-left p-2">Call Notes</th>
-                  <th className="text-left p-2">Notes History</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map(h => {
-                  const hasConflict = h.vendorWindow.includes('🔴')
-                  const isUrgent    = h.blockers.length > 0 && (h.daysOut ?? 99) <= 7
-                  const rowBg       = hasConflict ? 'bg-red-950' : isUrgent ? 'bg-yellow-950' : h.blockers.length === 0 ? 'bg-green-950' : 'bg-gray-900'
-                  return (
-                    <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
-                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
-                      <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>
-                        {h.daysOut !== null ? `${h.daysOut}d` : '—'}
-                      </td>
-                      <td className="p-2">
-                        <span
-                          title={!h.hasNtp ? (h.ntpWaitingOn || h.ntpOwner || 'NTP pending') : 'NTP confirmed'}
-                          className="cursor-help">
-                          {h.hasNtp
-                            ? <span className="text-green-400 font-bold">✓</span>
-                            : <span className="text-red-400 font-bold">✗</span>}
-                        </span>
-                      </td>
-                      <td className="p-2">
-                        <span
-                          title={!h.hasMat ? (h.matForecast ? `Mat forecast: ${h.matForecast}` : 'No material forecast') : `Mat received: ${h.matReceived}`}
-                          className="cursor-help">
-                          {h.hasMat
-                            ? <span className="text-green-400 font-bold">✓</span>
-                            : <span className="text-red-400 font-bold">✗</span>}
-                        </span>
-                      </td>
-                      <td className="p-2 text-xs max-w-48">
-                        <span className="text-yellow-300 text-xs" title={h.ntpWaitingOn}>
-                          {h.ntpWaitingOn
-                            ? (h.ntpWaitingOn.length > 30 ? h.ntpWaitingOn.slice(0, 30) + '...' : h.ntpWaitingOn)
-                            : '—'}
-                        </span>
-                      </td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.steelFrom || '—'}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.matLocation || '—'}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">
-                        {h.gcPickupF || '—'}
-                      </td>
-                      <td className="p-2">
-                        <EditableDate hop={h.hop} field="GC Material Pick-up (F)" value={h.gcPickupF} alwaysEditable={true} />
-                      </td>
-                      <td className="p-2">
-                        {h.gcPickupA
-                          ? <span className="text-green-400 text-xs">✓ {h.gcPickupA}</span>
-                          : <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value="" />
-                        }
-                      </td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
-                      <td className="p-2">
-                        <EditableDate hop={h.hop} field="MS15 Implementation Start F" value={h.ms15f} alwaysEditable={true} />
-                      </td>
-                      <td className="p-2">
-                        <EditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} />
-                      </td>
-                      <td className="p-2 text-xs whitespace-nowrap">
-                        <span className={
-                          h.hasSpo ? 'text-green-400 font-bold' :
-                          h.hasCpo ? 'text-yellow-400 font-bold' :
-                          'text-red-400 font-bold'
-                        }>
-                          {h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'}
-                        </span>
-                      </td>
-                      <td className="p-2 text-xs max-w-40">
-                        <span
-                          className={h.vendorWindow.includes('🔴') ? 'text-red-400' : h.vendorWindow.includes('⚠️') ? 'text-yellow-400' : 'text-green-400'}
-                          title={h.vendorWindow}>
-                          {h.vendorWindow.length > 30 ? h.vendorWindow.slice(0, 30) + '...' : h.vendorWindow}
-                        </span>
-                      </td>
-                      <td className="p-2 text-xs max-w-48">
-                        <span
-                          className={h.cmAction.includes('🔴') || h.cmAction.includes('CRITICAL') ? 'text-red-400' : h.cmAction.includes('🟠') ? 'text-orange-400' : h.cmAction.includes('🟡') ? 'text-yellow-400' : h.cmAction.includes('✅') ? 'text-green-400' : 'text-gray-300'}
-                          title={h.cmAction}>
-                          {h.cmAction.length > 40 ? h.cmAction.slice(0, 40) + '...' : h.cmAction}
-                        </span>
-                      </td>
-                      <NoteCell
-                        hop={h.hop}
-                        noteValue={sessionNotes[h.hop] || ''}
-                        onNoteChange={(hop, val) => setSessionNotes(n => ({ ...n, [hop]: val }))}
-                        onSave={saveCallNote}
-                      />
-                      <HistoryCell hop={h.hop} />
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )
-      }
-    </div>
-  )
-
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-full mx-auto">
@@ -1106,34 +1135,34 @@ export default function CMViewPage() {
                                   </div>
                                 </td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="MSS Completed NMS Ready " value={h.mss} />
+                                  <EditableDate hop={h.hop} field="MSS Completed NMS Ready " value={h.mss} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="Power-Up Completion" value={h.powerUp} />
+                                  <EditableDate hop={h.hop} field="Power-Up Completion" value={h.powerUp} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="Main Path Cutover Completed" value={h.mainCutover} />
+                                  <EditableDate hop={h.hop} field="Main Path Cutover Completed" value={h.mainCutover} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="Diversity Cutover Completed" value={h.divCutover} />
+                                  <EditableDate hop={h.hop} field="Diversity Cutover Completed" value={h.divCutover} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f || '—'}</td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} alwaysEditable={true} />
+                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} alwaysEditable={true} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} />
+                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="Decom Complete" value={h.decom} />
+                                  <EditableDate hop={h.hop} field="Decom Complete" value={h.decom} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <NoteCell
-                        hop={h.hop}
-                        noteValue={sessionNotes[h.hop] || ''}
-                        onNoteChange={(hop, val) => setSessionNotes(n => ({ ...n, [hop]: val }))}
-                        onSave={saveCallNote}
-                      />
-                                <HistoryCell hop={h.hop} />
+                                  hop={h.hop}
+                                  noteValue={sessionNotes[h.hop] || ''}
+                                  onNoteChange={(hop, val) => setSessionNotes(n => ({ ...n, [hop]: val }))}
+                                  onSave={saveCallNote}
+                                />
+                                <HistoryCell hop={h.hop} noteHistory={noteHistory} />
                               </tr>
                             ))}
                           </tbody>
@@ -1144,10 +1173,10 @@ export default function CMViewPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} />
-                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} />
-                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} />
-                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} />
+                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
 
               </div>
             )}

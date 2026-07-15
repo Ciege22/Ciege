@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
@@ -175,6 +175,203 @@ function getPullInStatus(h: HOP): string {
   if (h.siteBConflict) return '⚠️ Site A available — Site B has internal conflict'
   if (!h.gcPickup) return '🟡 Ready — GC pickup needed first'
   return '✅ Ready to pull in'
+}
+
+interface GCEditableDateProps {
+  hop: string
+  field: string
+  value: string
+  editedDates: Record<string, Record<string, string>>
+  logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
+}
+
+function GCEditableDate({ hop, field, value, editedDates, logDateEdit }: GCEditableDateProps) {
+  const edited = editedDates[hop]?.[field]
+
+  const toInputFormat = (dateStr: string) => {
+    if (!dateStr) return ''
+    const parts = dateStr.split('/')
+    if (parts.length !== 3) return ''
+    return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`
+  }
+
+  const toDisplayFormat = (dateStr: string) => {
+    if (!dateStr) return ''
+    const parts = dateStr.split('-')
+    if (parts.length !== 3) return ''
+    return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
+  }
+
+  const currentValue = toInputFormat(edited || value)
+
+  return (
+    <div className="flex flex-col gap-1">
+      <input
+        type="date"
+        value={currentValue}
+        onChange={(e) => {
+          const newDisplay = toDisplayFormat(e.target.value)
+          logDateEdit(hop, field, value, newDisplay)
+        }}
+        className={`text-xs rounded px-2 py-1 border focus:outline-none focus:border-blue-500 cursor-pointer ${edited ? 'bg-yellow-900 border-yellow-500 text-yellow-200' : 'bg-gray-800 border-gray-600 text-gray-300'}`}
+      />
+      {edited && (
+        <span className="text-yellow-400 text-xs">📝 {edited}</span>
+      )}
+    </div>
+  )
+}
+
+interface PipelineTableProps {
+  title: string
+  rows: HOP[]
+  sessionNotes: Record<string, string>
+  setSessionNotes: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  saveCallNote: (hop: string) => void
+  noteHistory: Record<string, { id: string; hop_name: string; note: string; logged_at: string }[]>
+  editedDates: Record<string, Record<string, string>>
+  logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
+}
+
+function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit }: PipelineTableProps) {
+  return (
+    <div className="mb-6">
+      <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
+      {rows.length === 0
+        ? <p className="text-gray-500 text-sm">No sites in this window</p>
+        : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-800 text-gray-400">
+                  <th className="text-left p-2">HOP</th>
+                  <th className="text-left p-2">FC Start</th>
+                  <th className="text-left p-2">FC End</th>
+                  <th className="text-left p-2">Days Out</th>
+                  <th className="text-left p-2">SPO Issued</th>
+                  <th className="text-left p-2">NTP</th>
+                  <th className="text-left p-2">NTP Owner</th>
+                  <th className="text-left p-2">NTP Waiting On</th>
+                  <th className="text-left p-2">Mat</th>
+                  <th className="text-left p-2">Mat Forecast</th>
+                  <th className="text-left p-2">Mat Received</th>
+                  <th className="text-left p-2">GC Pickup</th>
+                  <th className="text-left p-2">Steel From</th>
+                  <th className="text-left p-2">Pull-In Status</th>
+                  <th className="text-left p-2">Vendor Window</th>
+                  <th className="text-left p-2">Internal Conflict</th>
+                  <th className="text-left p-2">Blockers</th>
+                  <th className="text-left p-2">Edit MS15 Fc</th>
+                  <th className="text-left p-2">Log MS15 Act</th>
+                  <th className="text-left p-2">Call Notes (Today)</th>
+                  <th className="text-left p-2">Notes History</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((h) => {
+                  const hasConflict = h.vendorWindow.includes('🔴')
+                  const isUrgent = h.blockers.length > 0 && (h.daysOut ?? 99) <= 7
+                  const rowBg = hasConflict ? 'bg-red-950' : isUrgent ? 'bg-yellow-950' : h.blockers.length === 0 ? 'bg-green-950' : 'bg-gray-900'
+                  return (
+                    <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
+                      <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>{h.daysOut}d</td>
+                      <td className="p-2">
+                        {h.hasSpo
+                          ? <span className="text-green-400 font-bold text-sm" title={h.spoIssued}>✓</span>
+                          : <span className="text-red-400 font-bold text-sm">✗</span>
+                        }
+                      </td>
+                      <td className="p-2">{h.hasNtp ? <span className="text-green-400 font-bold text-sm">✓</span> : <span className="text-red-400 font-bold text-sm">✗</span>}</td>
+                      <td className="p-2 text-gray-300 text-xs">
+                        <div className="cursor-help" title={h.ntpOwner}>
+                          {h.ntpOwner ? (h.ntpOwner.length > 12 ? h.ntpOwner.slice(0, 12) + '...' : h.ntpOwner) : '—'}
+                        </div>
+                      </td>
+                      <td className="p-2 text-gray-300 text-xs">
+                        <div className="cursor-help" title={h.ntpWaitingOn}>
+                          {h.ntpWaitingOn ? (h.ntpWaitingOn.length > 12 ? h.ntpWaitingOn.slice(0, 12) + '...' : h.ntpWaitingOn) : '—'}
+                        </div>
+                      </td>
+                      <td className="p-2">{h.hasMat ? <span className="text-green-400 font-bold text-sm">✓</span> : <span className="text-red-400 font-bold text-sm">✗</span>}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.matForecast || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.matReceived || '—'}</td>
+                      <td className="p-2">
+                        {h.gcPickupDate
+                          ? <span className="text-green-400 text-xs">✓ {h.gcPickupDate}</span>
+                          : <GCEditableDate hop={h.hop} field="GC Material Pick-up (A)" value="" editedDates={editedDates} logDateEdit={logDateEdit} />
+                        }
+                      </td>
+                      <td className="p-2 text-gray-300 text-xs whitespace-nowrap">
+                        {h.steelFrom || '—'}
+                      </td>
+                      <td className="p-2 text-xs whitespace-nowrap">
+                        <span className={h.pullInStatus.includes('✅') ? 'text-green-400' : h.pullInStatus.includes('⚠️') ? 'text-yellow-400' : h.pullInStatus.includes('🔴') ? 'text-red-400' : h.pullInStatus.includes('🟡') ? 'text-yellow-300' : 'text-gray-500'}>
+                          {h.pullInStatus || '—'}
+                        </span>
+                      </td>
+                      <td className="p-2 text-xs max-w-36 truncate" title={h.vendorWindow}>
+                        <span className={h.vendorWindow.includes('🔴') ? 'text-red-400' : h.vendorWindow.includes('⚠️') ? 'text-yellow-400' : 'text-green-400'}>
+                          {h.vendorWindow || '—'}
+                        </span>
+                      </td>
+                      <td className="p-2 text-xs">
+                        {h.internalConflict
+                          ? <span className={h.internalConflict.includes('🔴') ? 'text-red-400' : 'text-yellow-400'} title={h.internalConflict}>
+                              {h.internalConflict.length > 30 ? h.internalConflict.slice(0, 30) + '...' : h.internalConflict}
+                            </span>
+                          : <span className="text-green-400">✅ Clear</span>
+                        }
+                      </td>
+                      <td className="p-2 text-xs">
+                        {h.blockers.length === 0
+                          ? <span className="text-green-400">✅ Clear</span>
+                          : <div className="flex flex-col gap-1">
+                              {h.blockers.map((b, i) => (
+                                <span key={i} className={`whitespace-nowrap ${b.includes('🔴') ? 'text-red-400' : b.includes('🟠') ? 'text-orange-400' : 'text-yellow-400'}`}>
+                                  {b}
+                                </span>
+                              ))}
+                            </div>
+                        }
+                      </td>
+                      <td className="p-2">
+                        <GCEditableDate hop={h.hop} field="MS15 Fc Start" value={h.ms15f} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        <GCEditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        <div className="flex gap-1">
+                          <input type="text" placeholder="Note..." value={sessionNotes[h.hop] || ''}
+                            onChange={(e) => setSessionNotes(s => ({ ...s, [h.hop]: e.target.value }))}
+                            onKeyDown={(e) => { if (e.key === 'Enter') saveCallNote(h.hop) }}
+                            className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                          <button onClick={() => saveCallNote(h.hop)} className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
+                        </div>
+                      </td>
+                      <td className="p-2 max-w-48">
+                        <div className="max-h-20 overflow-y-auto flex flex-col gap-1">
+                          {(noteHistory[h.hop] || []).slice(0, 5).map((n, i) => (
+                            <div key={i} className="text-xs text-gray-300 border-b border-gray-700 pb-1">
+                              <span className="text-gray-500 text-xs">{new Date(n.logged_at).toLocaleDateString()}</span>
+                              <span className="ml-1">{n.note}</span>
+                            </div>
+                          ))}
+                          {!noteHistory[h.hop]?.length && <span className="text-gray-600 text-xs">No history</span>}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+    </div>
+  )
 }
 
 export default function GCCallPage() {
@@ -667,184 +864,6 @@ export default function GCCallPage() {
     window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
-  const EditableDate = ({ hop, field, value }: { hop: string, field: string, value: string }) => {
-    const edited = editedDates[hop]?.[field]
-
-    // Convert mm/dd/yyyy to yyyy-mm-dd for the date input
-    const toInputFormat = (dateStr: string) => {
-      if (!dateStr) return ''
-      const parts = dateStr.split('/')
-      if (parts.length !== 3) return ''
-      return `${parts[2]}-${parts[0].padStart(2,'0')}-${parts[1].padStart(2,'0')}`
-    }
-
-    // Convert yyyy-mm-dd back to mm/dd/yyyy
-    const toDisplayFormat = (dateStr: string) => {
-      if (!dateStr) return ''
-      const parts = dateStr.split('-')
-      if (parts.length !== 3) return ''
-      return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
-    }
-
-    const currentValue = toInputFormat(edited || value)
-
-    return (
-      <div className="flex flex-col gap-1">
-        <input
-          type="date"
-          value={currentValue}
-          onChange={(e) => {
-            const newDisplay = toDisplayFormat(e.target.value)
-            logDateEdit(hop, field, value, newDisplay)
-          }}
-          className={`text-xs rounded px-2 py-1 border focus:outline-none focus:border-blue-500 cursor-pointer ${edited ? 'bg-yellow-900 border-yellow-500 text-yellow-200' : 'bg-gray-800 border-gray-600 text-gray-300'}`}
-        />
-        {edited && (
-          <span className="text-yellow-400 text-xs">📝 {edited}</span>
-        )}
-      </div>
-    )
-  }
-
-  const PipelineTable = ({ title, rows }: { title: string, rows: HOP[] }) => (
-    <div className="mb-6">
-      <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
-      {rows.length === 0
-        ? <p className="text-gray-500 text-sm">No sites in this window</p>
-        : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="bg-gray-800 text-gray-400">
-                  <th className="text-left p-2">HOP</th>
-                  <th className="text-left p-2">FC Start</th>
-                  <th className="text-left p-2">FC End</th>
-                  <th className="text-left p-2">Days Out</th>
-                  <th className="text-left p-2">SPO Issued</th>
-                  <th className="text-left p-2">NTP</th>
-                  <th className="text-left p-2">NTP Owner</th>
-                  <th className="text-left p-2">NTP Waiting On</th>
-                  <th className="text-left p-2">Mat</th>
-                  <th className="text-left p-2">Mat Forecast</th>
-                  <th className="text-left p-2">Mat Received</th>
-                  <th className="text-left p-2">GC Pickup</th>
-                  <th className="text-left p-2">Steel From</th>
-                  <th className="text-left p-2">Pull-In Status</th>
-                  <th className="text-left p-2">Vendor Window</th>
-                  <th className="text-left p-2">Internal Conflict</th>
-                  <th className="text-left p-2">Blockers</th>
-                  <th className="text-left p-2">Edit MS15 Fc</th>
-                  <th className="text-left p-2">Log MS15 Act</th>
-                  <th className="text-left p-2">Call Notes (Today)</th>
-                  <th className="text-left p-2">Notes History</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((h) => {
-                  const hasConflict = h.vendorWindow.includes('🔴')
-                  const isUrgent = h.blockers.length > 0 && (h.daysOut ?? 99) <= 7
-                  const rowBg = hasConflict ? 'bg-red-950' : isUrgent ? 'bg-yellow-950' : h.blockers.length === 0 ? 'bg-green-950' : 'bg-gray-900'
-                  return (
-                    <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
-                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
-                      <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>{h.daysOut}d</td>
-                      <td className="p-2">
-                        {h.hasSpo
-                          ? <span className="text-green-400 font-bold text-sm" title={h.spoIssued}>✓</span>
-                          : <span className="text-red-400 font-bold text-sm">✗</span>
-                        }
-                      </td>
-                      <td className="p-2">{h.hasNtp ? <span className="text-green-400 font-bold text-sm">✓</span> : <span className="text-red-400 font-bold text-sm">✗</span>}</td>
-                      <td className="p-2 text-gray-300 text-xs">
-                        <div className="cursor-help" title={h.ntpOwner}>
-                          {h.ntpOwner ? (h.ntpOwner.length > 12 ? h.ntpOwner.slice(0, 12) + '...' : h.ntpOwner) : '—'}
-                        </div>
-                      </td>
-                      <td className="p-2 text-gray-300 text-xs">
-                        <div className="cursor-help" title={h.ntpWaitingOn}>
-                          {h.ntpWaitingOn ? (h.ntpWaitingOn.length > 12 ? h.ntpWaitingOn.slice(0, 12) + '...' : h.ntpWaitingOn) : '—'}
-                        </div>
-                      </td>
-                      <td className="p-2">{h.hasMat ? <span className="text-green-400 font-bold text-sm">✓</span> : <span className="text-red-400 font-bold text-sm">✗</span>}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.matForecast || '—'}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.matReceived || '—'}</td>
-                      <td className="p-2">
-                        {h.gcPickupDate
-                          ? <span className="text-green-400 text-xs">✓ {h.gcPickupDate}</span>
-                          : <EditableDate hop={h.hop} field="GC Material Pick-up (A)" value="" />
-                        }
-                      </td>
-                      <td className="p-2 text-gray-300 text-xs whitespace-nowrap">
-                        {h.steelFrom || '—'}
-                      </td>
-                      <td className="p-2 text-xs whitespace-nowrap">
-                        <span className={h.pullInStatus.includes('✅') ? 'text-green-400' : h.pullInStatus.includes('⚠️') ? 'text-yellow-400' : h.pullInStatus.includes('🔴') ? 'text-red-400' : h.pullInStatus.includes('🟡') ? 'text-yellow-300' : 'text-gray-500'}>
-                          {h.pullInStatus || '—'}
-                        </span>
-                      </td>
-                      <td className="p-2 text-xs max-w-36 truncate" title={h.vendorWindow}>
-                        <span className={h.vendorWindow.includes('🔴') ? 'text-red-400' : h.vendorWindow.includes('⚠️') ? 'text-yellow-400' : 'text-green-400'}>
-                          {h.vendorWindow || '—'}
-                        </span>
-                      </td>
-                      <td className="p-2 text-xs">
-                        {h.internalConflict
-                          ? <span className={h.internalConflict.includes('🔴') ? 'text-red-400' : 'text-yellow-400'} title={h.internalConflict}>
-                              {h.internalConflict.length > 30 ? h.internalConflict.slice(0, 30) + '...' : h.internalConflict}
-                            </span>
-                          : <span className="text-green-400">✅ Clear</span>
-                        }
-                      </td>
-                      <td className="p-2 text-xs">
-                        {h.blockers.length === 0
-                          ? <span className="text-green-400">✅ Clear</span>
-                          : <div className="flex flex-col gap-1">
-                              {h.blockers.map((b, i) => (
-                                <span key={i} className={`whitespace-nowrap ${b.includes('🔴') ? 'text-red-400' : b.includes('🟠') ? 'text-orange-400' : 'text-yellow-400'}`}>
-                                  {b}
-                                </span>
-                              ))}
-                            </div>
-                        }
-                      </td>
-                      <td className="p-2">
-                        <EditableDate hop={h.hop} field="MS15 Fc Start" value={h.ms15f} />
-                      </td>
-                      <td className="p-2">
-                        <EditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} />
-                      </td>
-                      <td className="p-2">
-                        <div className="flex gap-1">
-                          <input type="text" placeholder="Note..." value={sessionNotes[h.hop] || ''}
-                            onChange={(e) => setSessionNotes(s => ({ ...s, [h.hop]: e.target.value }))}
-                            onKeyDown={(e) => { if (e.key === 'Enter') saveCallNote(h.hop) }}
-                            className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
-                          <button onClick={() => saveCallNote(h.hop)} className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
-                        </div>
-                      </td>
-                      <td className="p-2 max-w-48">
-                        <div className="max-h-20 overflow-y-auto flex flex-col gap-1">
-                          {(noteHistory[h.hop] || []).slice(0, 5).map((n, i) => (
-                            <div key={i} className="text-xs text-gray-300 border-b border-gray-700 pb-1">
-                              <span className="text-gray-500 text-xs">{new Date(n.logged_at).toLocaleDateString()}</span>
-                              <span className="ml-1">{n.note}</span>
-                            </div>
-                          ))}
-                          {!noteHistory[h.hop]?.length && <span className="text-gray-600 text-xs">No history</span>}
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-    </div>
-  )
-
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-full mx-auto">
@@ -1028,10 +1047,10 @@ export default function GCCallPage() {
                                 </td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} />
+                                  <GCEditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} />
+                                  <GCEditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
                                 <td className="p-2">
                                   <div className="flex gap-1">
@@ -1062,9 +1081,9 @@ export default function GCCallPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} />
-                <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} />
-                <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} />
+                <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
 
                 {/* Pull-In Opportunities */}
                 <div>
@@ -1076,7 +1095,7 @@ export default function GCCallPage() {
                       </span>
                     )}
                   </div>
-                  <PipelineTable title="" rows={pullIns} />
+                  <PipelineTable title="" rows={pullIns} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
                 </div>
 
               </div>
