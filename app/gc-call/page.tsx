@@ -240,6 +240,36 @@ export default function GCCallPage() {
     loadFromSnapshot()
   }, [])
 
+  useEffect(() => {
+    const loadUpdates = async () => {
+      const { data } = await supabase
+        .from('pm_updates_cache')
+        .select('updates')
+        .eq('id', 'gc-view')
+        .single()
+      if (data?.updates) {
+        try {
+          setPmUpdates(JSON.parse(data.updates))
+        } catch (e) {
+          console.error('Error loading PM updates:', e)
+        }
+      }
+    }
+    loadUpdates()
+  }, [])
+
+  useEffect(() => {
+    if (pmUpdates.length === 0) return
+    const save = async () => {
+      await supabase.from('pm_updates_cache').upsert({
+        id: 'gc-view',
+        updates: JSON.stringify(pmUpdates),
+        updated_at: new Date().toISOString()
+      })
+    }
+    save()
+  }, [pmUpdates])
+
   const processRows = useCallback((rows: unknown[][], _filename: string) => {
 
     let headerRow = -1
