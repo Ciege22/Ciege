@@ -703,9 +703,17 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     # Boss-provided plan values — fixed for Jan–Jun 2026.
     # Jul–Nov 2026: temporary placeholder using raw DON 444 forecast until boss provides numbers.
-    _BOSS_STARTS   = {(1,2026):30, (2,2026):15, (3,2026):21, (4,2026):50, (5,2026):48, (6,2026):42}
-    _BOSS_COMPLETE = {(1,2026):30, (2,2026):10, (3,2026):18, (4,2026):28, (5,2026):40, (6,2026):30}
-    _PLACEHOLDER   = {(m, 2026) for m in range(7, 12)}  # Jul–Nov 2026
+    _BOSS_STARTS   = {
+        (1,2026):30, (2,2026):15, (3,2026):21, (4,2026):50, (5,2026):48, (6,2026):42,
+        (7,2026):30, (8,2026):30, (9,2026):30, (10,2026):31, (11,2026):30, (12,2026):30,
+        (1,2027):28, (2,2027):28, (3,2027):20
+    }
+    _BOSS_COMPLETE = {
+        (1,2026):30, (2,2026):10, (3,2026):18, (4,2026):28, (5,2026):40, (6,2026):30,
+        (7,2026):30, (8,2026):30, (9,2026):31, (10,2026):31, (11,2026):32, (12,2026):30,
+        (1,2027):30, (2,2027):30, (3,2027):30
+    }
+    _PLACEHOLDER   = set()  # All months now have explicit plan values
     starts_plan = [
         _BOSS_STARTS.get((m, y), data['all_starts_fc'][i] if (m, y) in _PLACEHOLDER else 0)
         for i, (m, y) in enumerate(data['starts_months'])
