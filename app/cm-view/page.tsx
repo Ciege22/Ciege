@@ -34,6 +34,8 @@ interface HOP {
   gcPickupF: string
   gcPickupA: string
   ms16fEdited: string
+  hasSpo: boolean
+  hasCpo: boolean
   vendorWindow: string
   blockers: string[]
   daysOut: number | null
@@ -190,6 +192,36 @@ export default function CMViewPage() {
     }
     loadNoteHistory()
   }, [])
+
+  useEffect(() => {
+    const loadUpdates = async () => {
+      const { data } = await supabase
+        .from('pm_updates_cache')
+        .select('updates')
+        .eq('id', 'cm-view')
+        .single()
+      if (data?.updates) {
+        try {
+          setPmUpdates(JSON.parse(data.updates))
+        } catch (e) {
+          console.error('Error loading PM updates:', e)
+        }
+      }
+    }
+    loadUpdates()
+  }, [])
+
+  useEffect(() => {
+    if (pmUpdates.length === 0) return
+    const save = async () => {
+      await supabase.from('pm_updates_cache').upsert({
+        id: 'cm-view',
+        updates: JSON.stringify(pmUpdates),
+        updated_at: new Date().toISOString()
+      })
+    }
+    save()
+  }, [pmUpdates])
 
   const saveCallNote = async (hop: string, note: string) => {
     if (!note.trim()) return
@@ -356,6 +388,8 @@ export default function CMViewPage() {
       })()
     const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
     const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
+    const spoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const cpoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
     const itwSCol     = col('ITW Schedule Start')
     const itwECol     = col('ITW Schedule Complete')
     const ssSCol      = col('Samsung Schedule Start')
@@ -471,15 +505,30 @@ export default function CMViewPage() {
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
         steelFrom: (() => {
-            const idx = headers.findIndex(h => String(h).trim() === 'Steel From')
-            if (idx === -1) return ''
-            const v1 = String(row[idx] || '').trim().replace(/^'+|'+$/g, '').trim()
-            const v2 = String(row2?.[idx] || '').trim().replace(/^'+|'+$/g, '').trim()
-            return v1 || v2 || ''
+            for (let i = 0; i < headers.length; i++) {
+              const h = String(headers[i])
+              if (h.includes('Steel From') || h.includes('steel from')) {
+                const v1 = String(row[i] || '').trim().replace(/^'+|'+$/g, '').trim()
+                const v2 = String(row2?.[i] || '').trim().replace(/^'+|'+$/g, '').trim()
+                for (const v of [v1, v2]) {
+                  if (!v || v === 'nan' || v === 'undefined' || v === ' ') continue
+                  if (v.match(/^\d{4}-/) || v.includes('T00:00') || v.includes('T04:00') || !isNaN(Number(v))) continue
+                  if (v.match(/^\d+\/\d+\//)) continue
+                  return v
+                }
+              }
+            }
+            return ''
           })(),
         gcPickupF:    fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA:    fmtDate(parseDateAny(row[gcPickupACol])),
         ms16fEdited:  '',
+        hasSpo: spoCol !== -1 ? !!parseDateAny(row[spoCol]) : false,
+        hasCpo: (() => {
+          if (cpoCol === -1) return false
+          const v = String(row[cpoCol] || '').trim()
+          return v.length > 0 && v.toLowerCase() !== 'nan' && v !== ''
+        })(),
         vendorWindow, blockers,
         daysOut, daysElapsed, inProgress, complete,
         statuses: [],
@@ -761,6 +810,7 @@ export default function CMViewPage() {
                   <th className="text-left p-2">FC Start</th>
                   <th className="text-left p-2">Edit FC Start</th>
                   <th className="text-left p-2">AC Start</th>
+                  <th className="text-left p-2">SPO</th>
                   <th className="text-left p-2">Vendor Window</th>
                   <th className="text-left p-2">CM Action</th>
                   <th className="text-left p-2">Call Notes</th>
@@ -824,6 +874,15 @@ export default function CMViewPage() {
                       </td>
                       <td className="p-2">
                         <EditableDate hop={h.hop} field="MS15 Implementation Start A" value={h.ms15a} />
+                      </td>
+                      <td className="p-2 text-xs whitespace-nowrap">
+                        <span className={
+                          h.hasSpo ? 'text-green-400 font-bold' :
+                          h.hasCpo ? 'text-yellow-400 font-bold' :
+                          'text-red-400 font-bold'
+                        }>
+                          {h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'}
+                        </span>
                       </td>
                       <td className="p-2 text-xs max-w-40">
                         <span
@@ -1060,7 +1119,7 @@ export default function CMViewPage() {
                                 </td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f || '—'}</td>
                                 <td className="p-2">
-                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} />
+                                  <EditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} alwaysEditable={true} />
                                 </td>
                                 <td className="p-2">
                                   <EditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} />
