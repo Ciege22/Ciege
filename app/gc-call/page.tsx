@@ -864,6 +864,69 @@ export default function GCCallPage() {
     window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
+  const downloadGCExcel = () => {
+    try {
+      const wb = XLSX.utils.book_new()
+      const date = today.toLocaleDateString('en-US').replace(/\//g, '-')
+
+      // Active Sites sheet
+      const activeRows: (string | number)[][] = [
+        ['HOP', 'CM', 'Days Elapsed', 'AC Start', 'FC End', 'AC End', 'MSS', 'Power-Up', 'SPO', 'Vendor Window', 'Notes']
+      ]
+      active.forEach(h => {
+        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
+        activeRows.push([
+          h.hop, h.cm || '—',
+          h.daysElapsed !== null ? `${h.daysElapsed}d` : '—',
+          h.ms15a || '—', h.ms16f || '—', h.ms16a || '—',
+          h.mss || '—', h.powerUp || '—',
+          spoStatus,
+          h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear',
+          latestNote || sessionNotes[h.hop] || ''
+        ])
+      })
+      const activeSheet = XLSX.utils.aoa_to_sheet(activeRows)
+      activeSheet['!cols'] = [{ wch: 36 },{ wch: 12 },{ wch: 12 },{ wch: 12 },{ wch: 12 },{ wch: 12 },{ wch: 12 },{ wch: 12 },{ wch: 14 },{ wch: 30 },{ wch: 40 }]
+      XLSX.utils.book_append_sheet(wb, activeSheet, '🔨 Active Sites')
+
+      // Pipeline sheet — all upcoming HOPs
+      const pipelineRows: (string | number)[][] = [
+        ['HOP', 'CM', 'Days Out', 'NTP', 'NTP Waiting On', 'Mat', 'Steel From', 'GC Pickup F', 'GC Pickup A', 'SPO', 'FC Start', 'AC Start', 'Vendor Window', 'Pull-In Status', 'Notes']
+      ]
+      const allPipeline = [...thisWeek, ...next2Weeks, ...thisMonth, ...pullIns]
+      allPipeline.forEach(h => {
+        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const pullIn = h.pullInReady ? '✅ Ready' : h.pullInStatus.includes('⚠️') ? '⚠️ Risky' : '🔴 Cannot'
+        const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
+        pipelineRows.push([
+          h.hop, h.cm || '—',
+          h.daysOut !== null ? `${h.daysOut}d` : '—',
+          h.hasNtp ? '✓' : '✗',
+          h.ntpWaitingOn || '—',
+          h.hasMat ? '✓' : '✗',
+          h.steelFrom || '—',
+          h.gcPickupF || '—',
+          h.gcPickupA || '—',
+          spoStatus,
+          h.ms15f || '—',
+          h.ms15a || '—',
+          h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear',
+          pullIn,
+          latestNote || sessionNotes[h.hop] || ''
+        ])
+      })
+      const pipelineSheet = XLSX.utils.aoa_to_sheet(pipelineRows)
+      pipelineSheet['!cols'] = [{ wch: 36 },{ wch: 12 },{ wch: 10 },{ wch: 6 },{ wch: 40 },{ wch: 6 },{ wch: 12 },{ wch: 14 },{ wch: 14 },{ wch: 14 },{ wch: 12 },{ wch: 12 },{ wch: 30 },{ wch: 14 },{ wch: 40 }]
+      XLSX.utils.book_append_sheet(wb, pipelineSheet, '📋 Pipeline')
+
+      XLSX.writeFile(wb, `${selectedGC}_Pipeline_${date}.xlsx`)
+    } catch (err) {
+      console.error('Download error:', err)
+      alert('Download failed — please try again')
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-full mx-auto">
@@ -1000,10 +1063,16 @@ export default function GCCallPage() {
                   )}
                 </p>
               </div>
-              <button onClick={generateEmail}
-                className="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-semibold">
-                ✉️ Generate Email
-              </button>
+              <div className="flex gap-2">
+                <button onClick={generateEmail}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                  ✉️ Email
+                </button>
+                <button onClick={downloadGCExcel}
+                  className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                  📥 Download Excel
+                </button>
+              </div>
             </div>
 
             <div className="space-y-8">
