@@ -51,6 +51,11 @@ interface HOP {
   internalConflict: string
   siteAConflict: string
   siteBConflict: string
+  cm: string
+  mss: string
+  powerUp: string
+  gcPickupF: string
+  gcPickupA: string
 }
 
 interface PmUpdate {
@@ -509,6 +514,11 @@ export default function GCCallPage() {
         // Fallback — known position from tracker
         return 59
       })()
+    const newCmCol     = col('New CM')
+    const mssCol       = col('MSS Completed NMS Ready ')
+    const powerCol     = col('Power-Up Completion')
+    const gcPickupFCol = col('GC Material Pick-up (F)')
+    const gcPickupACol = col('GC Material Pick-up (A)')
     const ntpOwnCol = col('NTP Action Owner')
     const ntpWaitCol= col('NTP is waiting on')
     const don444Col = col('DON 444')
@@ -703,7 +713,12 @@ export default function GCCallPage() {
         siteBConflict,
         blockers: [],
         pullInReady: hasNtp && hasMat && !vendorWindow.includes('🔴') && !vendorWindow.includes('⚠️') && !inProgress && !complete,
-        pullInStatus: ''
+        pullInStatus: '',
+        cm:        String(row[newCmCol] || '').trim() || String(row2?.[newCmCol] || '').trim(),
+        mss:       fmtDate(parseDateAny(row[mssCol])),
+        powerUp:   fmtDate(parseDateAny(row[powerCol])),
+        gcPickupF: fmtDate(parseDateAny(row[gcPickupFCol])),
+        gcPickupA: fmtDate(parseDateAny(row[gcPickupACol]))
       }
       hopObj.blockers    = getBlockers(hopObj)
       hopObj.pullInStatus = getPullInStatus(hopObj)
