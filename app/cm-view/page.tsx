@@ -1020,11 +1020,20 @@ export default function CMViewPage() {
               </tbody>
             </table>
             <div className="mt-4 flex gap-3">
-              <button onClick={() => { const r = pmUpdates.filter(u => !u.completed); setPmUpdates(r); if (r.length === 0) setShowPmUpdates(false) }}
+              <button onClick={async () => {
+                const r = pmUpdates.filter(u => !u.completed)
+                setPmUpdates(r)
+                await supabase.from('pm_updates_cache').upsert({ id: 'cm-view', updates: JSON.stringify(r), updated_at: new Date().toISOString() })
+                if (r.length === 0) setShowPmUpdates(false)
+              }}
                 className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold">
                 ✅ Clear Completed
               </button>
-              <button onClick={() => { setPmUpdates([]); setShowPmUpdates(false) }}
+              <button onClick={async () => {
+                setPmUpdates([])
+                setShowPmUpdates(false)
+                await supabase.from('pm_updates_cache').upsert({ id: 'cm-view', updates: JSON.stringify([]), updated_at: new Date().toISOString() })
+              }}
                 className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm">
                 🗑 Clear All
               </button>
