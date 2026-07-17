@@ -12,6 +12,7 @@ const navItems = [
   { label: "Schedule Optimizer", href: "/schedule", active: false },
   { label: "NTP Tracker", href: "/ntp-tracker", active: false },
   { label: "Change Log", href: "/change-log", active: false },
+  { label: "Reports", href: "/reports", active: false },
 ];
 
 const stats = [
