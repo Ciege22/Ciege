@@ -81,11 +81,23 @@ function parseDateAny(val: unknown): Date | null {
   if (!val) return null
   if (val instanceof Date) return isNaN(val.getTime()) ? null : val
   if (typeof val === 'number') {
-    const d = new Date((val - 25569) * 86400 * 1000)
-    return isNaN(d.getTime()) ? null : d
+    // Excel serial date — must be > 40000 to be a valid modern date
+    if (val > 40000 && val < 60000) {
+      const d = new Date((val - 25569) * 86400 * 1000)
+      return isNaN(d.getTime()) ? null : d
+    }
+    return null
   }
-  const d = new Date(String(val))
-  return isNaN(d.getTime()) ? null : d
+  const s = String(val).trim()
+  if (!s || s === 'null' || s === 'undefined' || s === 'NaN') return null
+  // Handle ISO strings from Supabase JSON
+  const d = new Date(s)
+  if (!isNaN(d.getTime())) {
+    // Reject dates before 2000 — likely a parsing error
+    if (d.getFullYear() < 2000) return null
+    return d
+  }
+  return null
 }
 
 function fmtDate(d: Date | null): string {
@@ -519,7 +531,7 @@ export default function CMViewPage() {
     const ms16fCol    = col('MS16 Implementation Ends F')
     const ms16aCol    = col('MS16 Implementation Ends A')
     const mssCol      = headers.findIndex(h => String(h).trim().replace(/\s+$/, '') === 'MSS Completed NMS Ready'.trim())
-    const powerCol    = col('Power-Up Completion')
+    const powerCol    = headers.findIndex(h => String(h).trim() === 'Power-Up Completion')
     const mainCutCol  = col('Main Path Cutover Completed')
     const divCutCol   = col('Diversity Cutover Completed')
     const decomCol    = col('Decom Complete')
