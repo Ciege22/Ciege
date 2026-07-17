@@ -518,7 +518,7 @@ export default function CMViewPage() {
     const ms15aCol    = col('MS15 Implementation Start A')
     const ms16fCol    = col('MS16 Implementation Ends F')
     const ms16aCol    = col('MS16 Implementation Ends A')
-    const mssCol      = col('MSS Completed NMS Ready ')
+    const mssCol      = headers.findIndex(h => String(h).trim().replace(/\s+$/, '') === 'MSS Completed NMS Ready'.trim())
     const powerCol    = col('Power-Up Completion')
     const mainCutCol  = col('Main Path Cutover Completed')
     const divCutCol   = col('Diversity Cutover Completed')
