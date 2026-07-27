@@ -395,6 +395,32 @@ export default function GCCallPage() {
   const [pmSearch, setPmSearch] = useState('')
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [clearedNoteIds, setClearedNoteIds] = useState<Set<string>>(new Set())
+
+  useEffect(() => {
+    const loadClearedNotes = async () => {
+      const todayDate = new Date().toLocaleDateString('en-US')
+      const { data } = await supabase
+        .from('pm_updates_cache')
+        .select('updates')
+        .eq('id', 'gc-cleared-notes')
+        .single()
+      if (data?.updates) {
+        try {
+          const parsed = JSON.parse(data.updates) as { date: string; ids: string[] }
+          if (parsed.date === todayDate) {
+            setClearedNoteIds(new Set(parsed.ids))
+          } else {
+            await supabase.from('pm_updates_cache').upsert({
+              id: 'gc-cleared-notes',
+              updates: JSON.stringify({ date: todayDate, ids: [] }),
+              updated_at: new Date().toISOString()
+            })
+          }
+        } catch {}
+      }
+    }
+    loadClearedNotes()
+  }, [])
   const today = new Date()
 
   const todayStr = today.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
@@ -420,9 +446,17 @@ export default function GCCallPage() {
       .catch(() => alert('Copy failed — please try manually'))
   }
 
-  const clearTodayNotes = () => {
-    const ids = new Set(todayCallNotes.map(n => n.id))
-    setClearedNoteIds(prev => new Set([...prev, ...ids]))
+  const clearTodayNotes = async () => {
+    const newIds = new Set([...clearedNoteIds, ...todayCallNotes.map(n => n.id)])
+    setClearedNoteIds(newIds)
+    await supabase.from('pm_updates_cache').upsert({
+      id: 'gc-cleared-notes',
+      updates: JSON.stringify({
+        date: new Date().toLocaleDateString('en-US'),
+        ids: Array.from(newIds)
+      }),
+      updated_at: new Date().toISOString()
+    })
   }
 
   useEffect(() => {
