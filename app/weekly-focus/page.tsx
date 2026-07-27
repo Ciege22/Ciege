@@ -683,8 +683,7 @@ export default function WeeklyFocusPage() {
           </div>
         )}
 
-        {loaded && (
-          <>
+        {loaded && (<>
             {/* Mode Toggle */}
             <div className="flex gap-3 mb-4">
               <button onClick={() => setMode('gc')}
@@ -720,8 +719,9 @@ export default function WeeklyFocusPage() {
                 {filteredHops.length} HOPs in view
               </div>
             </div>
+        </>)}
 
-            {/* KPI Tiles Row 1 */}
+        {/* KPI Tiles Row 1 */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
               {kpiTiles.slice(0, 5).map(tile => (
                 <div key={tile.key}
@@ -829,6 +829,7 @@ export default function WeeklyFocusPage() {
               </div>
             )}
 
+        {loaded && (<>
             {/* Tile filter indicator */}
             {selectedTile && (
               <div className="mb-4 flex items-center gap-2">
@@ -899,8 +900,7 @@ export default function WeeklyFocusPage() {
             />
             </>)
             })()}
-          </>
-        )}
+        </>)}
 
       </div>
     </div>
