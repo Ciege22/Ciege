@@ -505,6 +505,8 @@ export default function GCCallPage() {
     if (headerRow === -1) { alert('Could not find header row'); return }
 
     const headers = rows[headerRow] as string[]
+    console.log('DEBUG headers sample:', headers.slice(49,55).map(h => JSON.stringify(String(h))))
+    console.log('DEBUG ntpCol:', headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'NTP A'))
     const col = (name: string) => headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === name)
 
     const hopCol    = col('HOP')
