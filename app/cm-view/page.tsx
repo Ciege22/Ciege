@@ -116,13 +116,14 @@ function daysBetween(a: Date, b: Date): number {
 }
 
 function getStatuses(h: HOP): string[] {
-  const s: string[] = []
-  if (h.daysElapsed !== null && h.daysElapsed > 18) s.push('⚠️ Over 18d')
-  if (h.mss && !h.powerUp) s.push('📡 MSS done — awaiting power-up')
-  if (h.mainCutover && !h.divCutover) s.push('🔗 Main cutover done — diversity pending')
-  if (h.powerUp && !h.decom) s.push('♻️ Power-up done — decom pending')
-  if (s.length === 0) s.push('✅ On track')
-  return s
+  // Single next-step status based on milestone sequence
+  if (h.decom) return ['✅ Complete — verify close-out package']
+  if (h.divCutover) return ['♻️ Diversity done — schedule decom pickup and return']
+  if (h.mainCutover) return ['🔗 Main cutover done — schedule diversity cutover']
+  if (h.powerUp) return ['🔗 Powered up — schedule main cutover']
+  if (h.mss) return ['⚡ MSS done — chase Viaero power-up']
+  if ((h.daysElapsed ?? 0) > 18) return [`⚠️ Over target — ${h.daysElapsed}d elapsed — get updated completion date`]
+  return [`🔨 Active — ${h.daysElapsed ?? 0}d elapsed — drive to completion`]
 }
 
 function getCmAction(h: HOP): string {
