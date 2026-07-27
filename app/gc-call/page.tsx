@@ -396,6 +396,27 @@ export default function GCCallPage() {
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const today = new Date()
 
+  const todayStr = today.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
+
+  const todayCallNotes = Object.entries(noteHistory)
+    .flatMap(([hop, notes]) => notes
+      .filter(n => new Date(n.logged_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) === todayStr)
+      .map(n => ({ hop, note: n.note, logged_at: n.logged_at }))
+    )
+    .sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime())
+
+  const copyTodayNotes = () => {
+    if (todayCallNotes.length === 0) return
+    const text = [
+      `Call Notes — ${todayStr}`,
+      '',
+      ...todayCallNotes.map(n => `${n.hop}  |  ${n.note}`)
+    ].join('\n')
+    navigator.clipboard.writeText(text)
+      .then(() => alert('✅ Copied to clipboard!'))
+      .catch(() => alert('Copy failed — please try manually'))
+  }
+
   useEffect(() => {
     const loadNoteHistory = async () => {
       const { data, error } = await supabase
@@ -952,12 +973,20 @@ export default function GCCallPage() {
             <h1 className="text-3xl font-bold">GC Call View</h1>
             <p className="text-gray-400 mt-1">Select a contractor to view their full pipeline, blockers, and generate a follow-up email.</p>
           </div>
-          {pmUpdates.length > 0 && (
-            <button onClick={() => setShowPmUpdates(!showPmUpdates)}
-              className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
-              📋 PM Updates ({pmUpdates.length})
-            </button>
-          )}
+          <div className="flex gap-2">
+            {todayCallNotes.length > 0 && (
+              <button onClick={copyTodayNotes}
+                className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                📋 Copy Today's Notes ({todayCallNotes.length})
+              </button>
+            )}
+            {pmUpdates.length > 0 && (
+              <button onClick={() => setShowPmUpdates(!showPmUpdates)}
+                className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                📋 PM Updates ({pmUpdates.length})
+              </button>
+            )}
+          </div>
         </div>
 
         {/* PM Daily Updates Panel */}
