@@ -382,7 +382,7 @@ export default function WeeklyFocusPage() {
     if (headerRow === -1) return
 
     const headers = rows[headerRow] as string[]
-    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+    const col = (name: string) => headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === name)
 
     const hopCol      = col('HOP')
     const gcCol       = col('General Contractor')

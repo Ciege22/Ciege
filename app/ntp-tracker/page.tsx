@@ -218,7 +218,7 @@ export default function NTPTrackerPage() {
     if (headerRow === -1) { alert('Could not find header row'); return }
 
     const headers = rows[headerRow] as string[]
-    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+    const col = (name: string) => headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === name)
 
     const hopCol      = col('HOP')
     const gcCol       = col('General Contractor')
