@@ -56,6 +56,7 @@ interface HOP {
   powerUp: string
   gcPickupF: string
   gcPickupA: string
+  cxNotes: string
 }
 
 interface PmUpdate {
@@ -236,9 +237,10 @@ interface PipelineTableProps {
   noteHistory: Record<string, { id: string; hop_name: string; note: string; logged_at: string }[]>
   editedDates: Record<string, Record<string, string>>
   logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
+  setCxNotesModal: (val: { hop: string; notes: string } | null) => void
 }
 
-function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit }: PipelineTableProps) {
+function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal }: PipelineTableProps) {
   return (
     <div className="mb-6">
       <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
@@ -270,6 +272,7 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
                   <th className="text-left p-2">Log MS15 Act</th>
                   <th className="text-left p-2">Call Notes (Today)</th>
                   <th className="text-left p-2">Notes History</th>
+                  <th className="text-left p-2">CX Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -368,6 +371,17 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
                           {!noteHistory[h.hop]?.length && <span className="text-gray-600 text-xs">No history</span>}
                         </div>
                       </td>
+                      <td className="p-2">
+                        {h.cxNotes ? (
+                          <button
+                            onClick={() => setCxNotesModal({ hop: h.hop, notes: h.cxNotes })}
+                            className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1 whitespace-nowrap">
+                            📝 {h.cxNotes.split('\n').filter(Boolean).length || 1}
+                          </button>
+                        ) : (
+                          <span className="text-gray-600 text-xs">—</span>
+                        )}
+                      </td>
                     </tr>
                   )
                 })}
@@ -395,6 +409,7 @@ export default function GCCallPage() {
   const [pmSearch, setPmSearch] = useState('')
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [clearedNoteIds, setClearedNoteIds] = useState<Set<string>>(new Set())
+  const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
 
   useEffect(() => {
     const loadClearedNotes = async () => {
@@ -582,6 +597,7 @@ export default function GCCallPage() {
     const powerCol     = col('Power-Up Completion')
     const gcPickupFCol = col('GC Material Pick-up (F)')
     const gcPickupACol = col('GC Material Pick-up (A)')
+    const cxNotesCol   = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'CX Notes:')
     const ntpOwnCol = col('NTP Action Owner')
     const ntpWaitCol= col('NTP is waiting on')
     const don444Col = col('DON 444')
@@ -781,7 +797,8 @@ export default function GCCallPage() {
         mss:       fmtDate(parseDateAny(row[mssCol])),
         powerUp:   fmtDate(parseDateAny(row[powerCol])),
         gcPickupF: fmtDate(parseDateAny(row[gcPickupFCol])),
-        gcPickupA: fmtDate(parseDateAny(row[gcPickupACol]))
+        gcPickupA: fmtDate(parseDateAny(row[gcPickupACol])),
+        cxNotes:   String(row[cxNotesCol] || '').trim()
       }
       hopObj.blockers    = getBlockers(hopObj)
       hopObj.pullInStatus = getPullInStatus(hopObj)
@@ -1195,6 +1212,7 @@ export default function GCCallPage() {
                               <th className="text-left p-2">MS16 Act</th>
                               <th className="text-left p-2">Call Notes (Today)</th>
                               <th className="text-left p-2">Notes History</th>
+                              <th className="text-left p-2">CX Notes</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1238,6 +1256,17 @@ export default function GCCallPage() {
                                     {!noteHistory[h.hop]?.length && <span className="text-gray-600 text-xs">No history</span>}
                                   </div>
                                 </td>
+                                <td className="p-2">
+                                  {h.cxNotes ? (
+                                    <button
+                                      onClick={() => setCxNotesModal({ hop: h.hop, notes: h.cxNotes })}
+                                      className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1 whitespace-nowrap">
+                                      📝 {h.cxNotes.split('\n').filter(Boolean).length || 1}
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-600 text-xs">—</span>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -1247,9 +1276,9 @@ export default function GCCallPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
-                <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
-                <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
 
                 {/* Pull-In Opportunities */}
                 <div>
@@ -1261,7 +1290,7 @@ export default function GCCallPage() {
                       </span>
                     )}
                   </div>
-                  <PipelineTable title="" rows={pullIns} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                  <PipelineTable title="" rows={pullIns} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
                 </div>
 
               </div>
@@ -1275,6 +1304,26 @@ export default function GCCallPage() {
         )}
 
       </div>
+
+      {cxNotesModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 z-50 flex items-start justify-center pt-20 px-4"
+          onClick={() => setCxNotesModal(null)}>
+          <div className="bg-gray-900 rounded-xl border border-gray-700 w-full max-w-2xl max-h-96 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-gray-700">
+              <h2 className="text-base font-bold text-white">📝 CX Notes — {cxNotesModal.hop}</h2>
+              <button onClick={() => setCxNotesModal(null)} className="text-gray-400 hover:text-white text-xl font-bold">✕</button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-72">
+              {cxNotesModal.notes.split('\n').filter(Boolean).map((line, i) => (
+                <div key={i} className={`text-sm py-2 ${i > 0 ? 'border-t border-gray-800' : ''}`}>
+                  <span className="text-gray-300">{line.trim()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

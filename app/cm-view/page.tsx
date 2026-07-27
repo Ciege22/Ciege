@@ -33,6 +33,7 @@ interface HOP {
   steelFrom: string
   gcPickupF: string
   gcPickupA: string
+  cxNotes: string
   ms16fEdited: string
   hasSpo: boolean
   hasCpo: boolean
@@ -271,9 +272,10 @@ interface PipelineSectionProps {
   noteHistory: Record<string, { id: string; hop_name: string; note: string; logged_at: string }[]>
   editedDates: Record<string, Record<string, string>>
   logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
+  setCxNotesModal: (val: { hop: string; notes: string } | null) => void
 }
 
-function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit }: PipelineSectionProps) {
+function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal }: PipelineSectionProps) {
   return (
     <div className="mb-8">
       <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
@@ -303,6 +305,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                   <th className="text-left p-2">CM Action</th>
                   <th className="text-left p-2">Call Notes</th>
                   <th className="text-left p-2">Notes History</th>
+                  <th className="text-left p-2">CX Notes</th>
                 </tr>
               </thead>
               <tbody>
@@ -393,6 +396,17 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                         onSave={saveCallNote}
                       />
                       <HistoryCell hop={h.hop} noteHistory={noteHistory} />
+                      <td className="p-2">
+                        {h.cxNotes ? (
+                          <button
+                            onClick={() => setCxNotesModal({ hop: h.hop, notes: h.cxNotes })}
+                            className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1 whitespace-nowrap">
+                            📝 {h.cxNotes.split('\n').filter(Boolean).length || 1}
+                          </button>
+                        ) : (
+                          <span className="text-gray-600 text-xs">—</span>
+                        )}
+                      </td>
                     </tr>
                   )
                 })}
@@ -421,6 +435,7 @@ export default function CMViewPage() {
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [clearedNoteIds, setClearedNoteIds] = useState<Set<string>>(new Set())
+  const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
 
   useEffect(() => {
     const loadClearedNotes = async () => {
@@ -622,6 +637,7 @@ export default function CMViewPage() {
       })()
     const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
     const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
+    const cxNotesCol   = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'CX Notes:')
     const spoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
     const cpoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
     const itwSCol     = col('ITW Schedule Start')
@@ -756,6 +772,7 @@ export default function CMViewPage() {
           })(),
         gcPickupF:    fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA:    fmtDate(parseDateAny(row[gcPickupACol])),
+        cxNotes:      String(row[cxNotesCol] || '').trim(),
         ms16fEdited:  '',
         hasSpo: spoCol !== -1 ? !!parseDateAny(row[spoCol]) : false,
         hasCpo: (() => {
@@ -1211,6 +1228,7 @@ export default function CMViewPage() {
                               <th className="text-left p-2">Decom</th>
                               <th className="text-left p-2">Call Notes</th>
                               <th className="text-left p-2">Notes History</th>
+                              <th className="text-left p-2">CX Notes</th>
                             </tr>
                           </thead>
                           <tbody>
@@ -1261,6 +1279,17 @@ export default function CMViewPage() {
                                   onSave={saveCallNote}
                                 />
                                 <HistoryCell hop={h.hop} noteHistory={noteHistory} />
+                                <td className="p-2">
+                                  {h.cxNotes ? (
+                                    <button
+                                      onClick={() => setCxNotesModal({ hop: h.hop, notes: h.cxNotes })}
+                                      className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1 whitespace-nowrap">
+                                      📝 {h.cxNotes.split('\n').filter(Boolean).length || 1}
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-600 text-xs">—</span>
+                                  )}
+                                </td>
                               </tr>
                             ))}
                           </tbody>
@@ -1271,10 +1300,10 @@ export default function CMViewPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
-                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
-                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
-                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} />
+                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
 
               </div>
             )}
@@ -1294,6 +1323,26 @@ export default function CMViewPage() {
         )}
 
       </div>
+
+      {cxNotesModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-80 z-50 flex items-start justify-center pt-20 px-4"
+          onClick={() => setCxNotesModal(null)}>
+          <div className="bg-gray-900 rounded-xl border border-gray-700 w-full max-w-2xl max-h-96 overflow-hidden"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b border-gray-700">
+              <h2 className="text-base font-bold text-white">📝 CX Notes — {cxNotesModal.hop}</h2>
+              <button onClick={() => setCxNotesModal(null)} className="text-gray-400 hover:text-white text-xl font-bold">✕</button>
+            </div>
+            <div className="p-4 overflow-y-auto max-h-72">
+              {cxNotesModal.notes.split('\n').filter(Boolean).map((line, i) => (
+                <div key={i} className={`text-sm py-2 ${i > 0 ? 'border-t border-gray-800' : ''}`}>
+                  <span className="text-gray-300">{line.trim()}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
