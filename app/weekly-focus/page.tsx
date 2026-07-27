@@ -663,10 +663,10 @@ export default function WeeklyFocusPage() {
             <p className="text-gray-400 mt-1">Your work area — actions, reminders, and what needs attention this week</p>
           </div>
           {totalOpenActions > 0 && (
-            <div className="bg-blue-900 border border-blue-600 rounded-lg px-4 py-2 text-center">
-              <p className="text-blue-200 text-xs">Open Actions</p>
-              <p className="text-white text-2xl font-bold">{totalOpenActions}</p>
-            </div>
+            <button onClick={() => setShowActionsPanel(!showActionsPanel)}
+              className="bg-blue-700 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+              📋 Open Actions ({totalOpenActions})
+            </button>
           )}
         </div>
 
