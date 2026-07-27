@@ -151,18 +151,18 @@ export default function SchedulePage() {
     if (headerRow === -1) { alert('Could not find header row'); return }
 
     const headers = rows[headerRow] as string[]
-    const col = (name: string) => headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === name)
+    const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
 
-    const hopCol      = col('HOP')
-    const gcCol       = col('General Contractor')
-    const nokiaPmCol  = col('Nokia PM')
+    const hopCol      = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'HOP')
+    const gcCol       = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'General Contractor')
+    const nokiaPmCol  = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Nokia PM')
     const newCmCol    = col('New CM')
-    const don444Col   = col('DON 444')
-    const ms15fCol    = col('MS15 Implementation Start F')
-    const ms15aCol    = col('MS15 Implementation Start A')
-    const ms16fCol    = col('MS16 Implementation Ends F')
-    const ms16aCol    = col('MS16 Implementation Ends A')
-    const ntpCol      = col('NTP A')
+    const don444Col   = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'DON 444')
+    const ms15fCol    = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'MS15 Implementation Start F')
+    const ms15aCol    = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'MS15 Implementation Start A')
+    const ms16fCol    = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'MS16 Implementation Ends F')
+    const ms16aCol    = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'MS16 Implementation Ends A')
+    const ntpCol      = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'NTP A')
     const matCol      = headers.findIndex(h => String(h).trim() === 'Material Received A ')
     const itwSCol     = col('ITW Schedule Start')
     const itwECol     = col('ITW Schedule Complete')
