@@ -128,6 +128,23 @@ def build_endpoint():
 			pass
 
 
+@app.route('/ntp_emails', methods=['POST'])
+def ntp_emails_endpoint():
+	try:
+		ntp_file = request.files.get('ntp_comments')
+		if not ntp_file:
+			return jsonify({'error': 'No NTP Comments file uploaded'}), 400
+		with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
+			ntp_file.save(tmp.name)
+			ntp_path = tmp.name
+		emails = build_deck.generate_ntp_emails_from_file(ntp_path)
+		os.unlink(ntp_path)
+		return jsonify(emails)
+	except Exception as e:
+		tb = traceback.format_exc()
+		return jsonify({'error': str(e), 'traceback': tb}), 500
+
+
 if __name__ == '__main__':
 	port = int(os.environ.get('PORT', 8000))
 	app.run(host='0.0.0.0', port=port, debug=False)

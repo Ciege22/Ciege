@@ -8,7 +8,10 @@ export default function DeckBuilderPage() {
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState(null)
   const [fileNames, setFileNames] = useState({})
+  const [ntpEmailFile, setNtpEmailFile] = useState(null)
   const [ntpEmails, setNtpEmails] = useState(null)
+  const [generatingEmails, setGeneratingEmails] = useState(false)
+  const [ntpEmailError, setNtpEmailError] = useState(null)
 
   const [trackerLoaded, setTrackerLoaded] = useState(false)
   const [trackerInfo, setTrackerInfo] = useState(null)
@@ -156,6 +159,26 @@ export default function DeckBuilderPage() {
     } finally {
       setLoading(false)
     }
+  }
+
+  const generateNtpEmails = async () => {
+    if (!ntpEmailFile) return
+    setGeneratingEmails(true)
+    setNtpEmailError(null)
+    try {
+      const formData = new FormData()
+      formData.append('ntp_comments', ntpEmailFile)
+      const response = await fetch('https://ciege-production.up.railway.app/ntp_emails', {
+        method: 'POST',
+        body: formData
+      })
+      const data = await response.json()
+      if (data.error) throw new Error(data.error)
+      setNtpEmails(data)
+    } catch (err) {
+      setNtpEmailError(err.message)
+    }
+    setGeneratingEmails(false)
   }
 
   return (
@@ -393,6 +416,57 @@ export default function DeckBuilderPage() {
               </form>
             </section>
           </main>
+        <div className="mt-8 bg-gray-900 border border-gray-700 rounded-xl p-6">
+          <h2 className="text-xl font-bold text-white mb-2">📧 NTP Action Email Generator</h2>
+          <p className="text-gray-400 text-sm mb-4">Upload your filled NTP Comments Excel to generate action emails by party — no deck build needed.</p>
+          <div className="flex gap-4 items-center mb-4 flex-wrap">
+            <div
+              className="border-2 border-dashed border-gray-600 rounded-lg p-4 cursor-pointer hover:border-blue-500 transition-colors flex-1"
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) setNtpEmailFile(f) }}
+              onClick={() => document.getElementById('ntp-email-upload')?.click()}
+            >
+              <input id="ntp-email-upload" type="file" accept=".xlsx" className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) setNtpEmailFile(f) }} />
+              {ntpEmailFile
+                ? <p className="text-green-400 text-sm font-semibold">✅ {ntpEmailFile.name}</p>
+                : <p className="text-gray-400 text-sm text-center">📂 Upload filled NTP Comments Excel</p>
+              }
+            </div>
+            <button
+              onClick={generateNtpEmails}
+              disabled={!ntpEmailFile || generatingEmails}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg text-sm font-semibold whitespace-nowrap">
+              {generatingEmails ? '⏳ Generating...' : '✉️ Generate Emails'}
+            </button>
+          </div>
+          {ntpEmailError && (
+            <div className="bg-red-950 border border-red-700 rounded-lg p-3 mb-4">
+              <p className="text-red-300 text-sm">{ntpEmailError}</p>
+            </div>
+          )}
+          {ntpEmails && (
+            <div className="flex flex-col gap-3">
+              <p className="text-gray-400 text-xs">Click to open in Outlook — emails are pre-populated and ready to send:</p>
+              <button onClick={() => window.open(`mailto:?subject=${encodeURIComponent(ntpEmails.combined.subject)}&body=${encodeURIComponent(ntpEmails.combined.body)}`)}
+                className="bg-blue-700 hover:bg-blue-600 text-white px-4 py-3 rounded-lg text-sm font-semibold text-left">
+                ✉️ All Parties — Combined Email
+              </button>
+              <button onClick={() => window.open(`mailto:?subject=${encodeURIComponent(ntpEmails.viaero.subject)}&body=${encodeURIComponent(ntpEmails.viaero.body)}`)}
+                className="bg-amber-700 hover:bg-amber-600 text-white px-4 py-3 rounded-lg text-sm font-semibold text-left">
+                ✉️ Viaero — Action Required ({ntpEmails.viaero_count} HOPs)
+              </button>
+              <button onClick={() => window.open(`mailto:?subject=${encodeURIComponent(ntpEmails.itw.subject)}&body=${encodeURIComponent(ntpEmails.itw.body)}`)}
+                className="bg-orange-700 hover:bg-orange-600 text-white px-4 py-3 rounded-lg text-sm font-semibold text-left">
+                ✉️ ITW / Samsung — Action Required ({ntpEmails.itw_count} HOPs)
+              </button>
+              <button onClick={() => window.open(`mailto:?subject=${encodeURIComponent(ntpEmails.nokia.subject)}&body=${encodeURIComponent(ntpEmails.nokia.body)}`)}
+                className="bg-indigo-700 hover:bg-indigo-600 text-white px-4 py-3 rounded-lg text-sm font-semibold text-left">
+                ✉️ Nokia / Program Team — Action Required ({ntpEmails.nokia_count} HOPs)
+              </button>
+            </div>
+          )}
+        </div>
         </div>
       </div>
     </div>

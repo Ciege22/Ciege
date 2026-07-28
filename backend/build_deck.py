@@ -1933,3 +1933,94 @@ if __name__ == '__main__':
         output_dir=args[5] if len(args) > 5 else './outputs'
     )
     print(json.dumps(result, indent=2))
+
+
+def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
+    import openpyxl
+    from datetime import datetime
+
+    wb = openpyxl.load_workbook(ntp_comments_path, data_only=True)
+    all_hops = []
+
+    for sheet_name in wb.sheetnames:
+        if 'History' in sheet_name or 'Summary' in sheet_name:
+            continue
+        ws = wb[sheet_name]
+        headers = [str(ws.cell(1, c).value or '').strip() for c in range(1, ws.max_column + 1)]
+        hop_col      = next((i for i, h in enumerate(headers) if h == 'HOP'), None)
+        owner_col    = next((i for i, h in enumerate(headers) if 'Owner' in h), None)
+        waiting_col  = next((i for i, h in enumerate(headers) if 'Blocker' in h or 'Wait' in h), None)
+        gc_col       = next((i for i, h in enumerate(headers) if h == 'GC'), None)
+        fc_start_col = next((i for i, h in enumerate(headers) if 'Start' in h), None)
+        comment_col  = next((i for i, h in enumerate(headers) if 'Comment' in h), None)
+        if hop_col is None:
+            continue
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if not row or not row[hop_col]:
+                continue
+            hop = str(row[hop_col]).strip()
+            if not hop or hop.lower() in ['hop', 'none', '']:
+                continue
+            owner    = str(row[owner_col] or '').strip() if owner_col is not None else ''
+            waiting  = str(row[waiting_col] or '').strip() if waiting_col is not None else ''
+            gc       = str(row[gc_col] or '').strip() if gc_col is not None else ''
+            fc_start = row[fc_start_col] if fc_start_col is not None else None
+            comment  = str(row[comment_col] or '').strip() if comment_col is not None else ''
+            if not owner or owner in ['External', 'Program Team', 'Other']:
+                continue
+            all_hops.append({'hop': hop, 'gc': gc, 'owner': owner, 'waiting': waiting, 'fc_start': fc_start, 'comment': comment})
+
+    seen = {}
+    for h in all_hops:
+        if h['hop'] not in seen or h['comment']:
+            seen[h['hop']] = h
+    all_hops = list(seen.values())
+
+    def sort_key(h):
+        v = h.get('fc_start')
+        if v is None: return datetime(2099, 1, 1)
+        if isinstance(v, datetime): return v
+        try: return datetime.strptime(str(v)[:10], '%Y-%m-%d')
+        except: return datetime(2099, 1, 1)
+    all_hops.sort(key=sort_key)
+
+    def fmt_date(v):
+        if not v: return '—'
+        try:
+            if isinstance(v, datetime): return v.strftime('%-m/%-d/%Y')
+            return str(v)[:10]
+        except: return str(v)
+
+    def in_viaero(o): return 'viaero' in o.lower() or 'on hold' in o.lower()
+    def in_itw(o): return 'itw' in o.lower() or 'samsung' in o.lower()
+    def in_nokia(o): return 'nokia' in o.lower()
+
+    def build_section(hops_list, label):
+        if not hops_list: return f'No action items for {label} at this time.\n\n'
+        star_div = '═' * 60
+        body = f'{star_div}\n★★★  {label} ACTION REQUIRED  ★★★\n{star_div}\n\n'
+        for h in hops_list:
+            body += f'• {h["hop"]}  |  GC: {h["gc"]}  |  FC Start: {fmt_date(h["fc_start"])}\n'
+            if h['waiting']: body += f'  Waiting On: {h["waiting"]}\n'
+            if h['comment']: body += f'  Note: {h["comment"]}\n'
+            body += '\n'
+        return body
+
+    viaero_hops = [h for h in all_hops if in_viaero(h['owner'])]
+    itw_hops    = [h for h in all_hops if in_itw(h['owner'])]
+    nokia_hops  = [h for h in all_hops if in_nokia(h['owner'])]
+    date_str = datetime.today().strftime('%-m/%-d/%Y')
+    div = '─' * 60
+    intro = f'Please find below the outstanding NTP action items as of {date_str}.\nThese sites are on the critical path — NTP is required before construction can begin.\n\n'
+
+    combined = intro + build_section(viaero_hops, 'VIAERO') + build_section(itw_hops, 'ITW / SAMSUNG') + build_section(nokia_hops, 'NOKIA / PROGRAM TEAM') + f'{div}\nPlease advise on status at your earliest convenience.'
+
+    return {
+        'combined': {'subject': f'Viaero MW Program — NTP Action Items | All Parties | {date_str}', 'body': combined},
+        'viaero':   {'subject': f'Viaero MW Program — NTP Action Required | Viaero | {date_str}', 'body': intro + build_section(viaero_hops, 'VIAERO') + f'{div}\nPlease advise on status at your earliest convenience.'},
+        'itw':      {'subject': f'Viaero MW Program — NTP Action Required | ITW | {date_str}', 'body': intro + build_section(itw_hops, 'ITW / SAMSUNG') + f'{div}\nPlease advise on status at your earliest convenience.'},
+        'nokia':    {'subject': f'Viaero MW Program — NTP Action Required | Nokia Program Team | {date_str}', 'body': intro + build_section(nokia_hops, 'NOKIA / PROGRAM TEAM') + f'{div}\nPlease advise on status at your earliest convenience.'},
+        'viaero_count': len(viaero_hops),
+        'itw_count': len(itw_hops),
+        'nokia_count': len(nokia_hops),
+    }
