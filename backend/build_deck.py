@@ -1949,10 +1949,10 @@ def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
         headers = [str(ws.cell(1, c).value or '').strip() for c in range(1, ws.max_column + 1)]
         hop_col      = next((i for i, h in enumerate(headers) if h == 'HOP'), None)
         owner_col    = next((i for i, h in enumerate(headers) if 'Owner' in h), None)
-        waiting_col  = next((i for i, h in enumerate(headers) if 'Blocker' in h or 'Wait' in h), None)
+        waiting_col  = next((i for i, h in enumerate(headers) if 'Blocker' in h or 'Waiting' in h or 'Wait' in h), None)
         gc_col       = next((i for i, h in enumerate(headers) if h == 'GC'), None)
         fc_start_col = next((i for i, h in enumerate(headers) if 'Start' in h), None)
-        comment_col  = next((i for i, h in enumerate(headers) if 'Comment' in h), None)
+        comment_col  = next((i for i, h in enumerate(headers) if 'COMMENT' in h or 'Comment' in h or 'comment' in h), None)
         if hop_col is None:
             continue
         for row in ws.iter_rows(min_row=2, values_only=True):
@@ -2000,9 +2000,13 @@ def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
         star_div = '═' * 60
         body = f'{star_div}\n★★★  {label} ACTION REQUIRED  ★★★\n{star_div}\n\n'
         for h in hops_list:
-            body += f'• {h["hop"]}  |  GC: {h["gc"]}  |  FC Start: {fmt_date(h["fc_start"])}\n'
-            if h['waiting']: body += f'  Waiting On: {h["waiting"]}\n'
-            if h['comment']: body += f'  Note: {h["comment"]}\n'
+            body += f'{h["hop"]}\n'
+            if h['waiting']:
+                body += f'  ⏳ NTP Waiting On: {h["waiting"]}\n'
+            if h['fc_start']:
+                body += f'  📅 FC Start: {fmt_date(h["fc_start"])}\n'
+            if h['comment'] and h['comment'].lower() not in ['none', 'pending', 'n/a', '']:
+                body += f'  💬 Notes: {h["comment"]}\n'
             body += '\n'
         return body
 
