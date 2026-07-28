@@ -2000,7 +2000,7 @@ def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
         star_div = '═' * 60
         body = f'{star_div}\n★★★  {label} ACTION REQUIRED  ★★★\n{star_div}\n\n'
         for h in hops_list:
-            body += f'{h["hop"]}\n'
+            body += f'★ {h["hop"]} ★\n'
             if h['waiting']:
                 body += f'  ⏳ NTP Waiting On: {h["waiting"]}\n'
             if h['fc_start']:
