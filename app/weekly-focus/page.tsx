@@ -573,16 +573,27 @@ export default function WeeklyFocusPage() {
   const openActions = (hop: string) => hopActions(hop).filter(a => !a.completed)
   const totalOpenActions = actions.filter(a => !a.completed).length
 
+  const tileHops: Record<string, HOP[]> = {
+    active: active,
+    over18: active.filter(h => h.over18d),
+    thisweek: [...needsAttention, ...thisWeekReady],
+    ntpurgent: ntpUrgent,
+    sponeeded: filteredHops.filter(h => h.spoStatus === 'missing_cpo' && !h.complete),
+    cutspo: filteredHops.filter(h => h.spoStatus === 'cpo_ready' && !h.complete),
+    matwatch: filteredHops.filter(h => !h.hasMat && !h.complete && h.daysOut !== null && h.daysOut <= 14),
+    ready: filteredHops.filter(h => h.hasNtp && h.hasMat && !h.inProgress && !h.complete),
+  }
+
   const kpiTiles = [
-    { key: 'active', label: 'Active Sites', value: active.length, color: 'text-blue-400', filter: (h: HOP) => h.inProgress },
-    { key: 'over18', label: 'Over 18 Days', value: active.filter(h => h.over18d).length, color: 'text-red-400', filter: (h: HOP) => h.inProgress && h.over18d },
-    { key: 'thisweek', label: 'Starting This Week', value: thisWeekReady.length + needsAttention.length, color: 'text-orange-400', filter: (h: HOP) => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut <= 7 },
-    { key: 'ntpurgent', label: 'NTP Urgent ≤14d', value: ntpUrgent.length, color: 'text-yellow-400', filter: (h: HOP) => !h.hasNtp && !h.complete && h.daysOut !== null && h.daysOut <= 14 },
-    { key: 'sponeeded', label: 'SPO Needed', value: filteredHops.filter(h => h.spoStatus === 'missing_cpo' && !h.complete).length, color: 'text-red-400', filter: (h: HOP) => h.spoStatus === 'missing_cpo' && !h.complete },
-    { key: 'cutspo', label: 'Cut SPO Now', value: filteredHops.filter(h => h.spoStatus === 'cpo_ready' && !h.complete).length, color: 'text-yellow-400', filter: (h: HOP) => h.spoStatus === 'cpo_ready' && !h.complete },
-    { key: 'matwatch', label: 'Material Watch', value: filteredHops.filter(h => !h.hasMat && !h.complete && h.daysOut !== null && h.daysOut <= 14).length, color: 'text-orange-400', filter: (h: HOP) => !h.hasMat && !h.complete && h.daysOut !== null && h.daysOut <= 14 },
-    { key: 'ready', label: 'Ready to Start', value: filteredHops.filter(h => h.hasNtp && h.hasMat && !h.inProgress && !h.complete).length, color: 'text-green-400', filter: (h: HOP) => h.hasNtp && h.hasMat && !h.inProgress && !h.complete },
-    { key: 'openactions', label: 'Open Actions', value: totalOpenActions, color: 'text-blue-400', filter: null },
+    { key: 'active', label: 'Active Sites', color: 'text-blue-400' },
+    { key: 'over18', label: 'Over 18 Days', color: 'text-red-400' },
+    { key: 'thisweek', label: 'Starting This Week', color: 'text-orange-400' },
+    { key: 'ntpurgent', label: 'NTP Urgent ≤14d', color: 'text-yellow-400' },
+    { key: 'sponeeded', label: 'SPO Needed', color: 'text-red-400' },
+    { key: 'cutspo', label: 'Cut SPO Now', color: 'text-yellow-400' },
+    { key: 'matwatch', label: 'Material Watch', color: 'text-orange-400' },
+    { key: 'ready', label: 'Ready to Start', color: 'text-green-400' },
+    { key: 'openactions', label: 'Open Actions', color: 'text-blue-400' },
   ]
 
   const copyTodayActions = () => {
@@ -721,21 +732,11 @@ export default function WeeklyFocusPage() {
             </div>
         </>)}
 
-        {/* KPI Tiles Row 1 */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
-              {kpiTiles.slice(0, 5).map(tile => (
-                <div key={tile.key}
-                  onClick={() => setSelectedTile(selectedTile === tile.key ? null : tile.key)}
-                  className={`bg-gray-900 rounded-xl border p-3 text-center cursor-pointer transition-all hover:border-blue-500 ${selectedTile === tile.key ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-700'}`}>
-                  <p className="text-gray-500 text-xs">{tile.label}</p>
-                  <p className={`text-2xl font-bold ${tile.color}`}>{tile.value}</p>
-                </div>
-              ))}
-            </div>
-
-            {/* KPI Tiles Row 2 */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-              {kpiTiles.slice(5).map(tile => (
+        {/* KPI Tiles */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+            {kpiTiles.map(tile => {
+              const count = tile.key === 'openactions' ? totalOpenActions : (tileHops[tile.key]?.length ?? 0)
+              return (
                 <div key={tile.key}
                   onClick={() => {
                     if (tile.key === 'openactions') {
@@ -743,14 +744,102 @@ export default function WeeklyFocusPage() {
                       setSelectedTile(null)
                     } else {
                       setSelectedTile(selectedTile === tile.key ? null : tile.key)
+                      setShowActionsPanel(false)
                     }
                   }}
                   className={`bg-gray-900 rounded-xl border p-3 text-center cursor-pointer transition-all hover:border-blue-500 ${selectedTile === tile.key || (tile.key === 'openactions' && showActionsPanel) ? 'border-blue-500 ring-2 ring-blue-500' : 'border-gray-700'}`}>
                   <p className="text-gray-500 text-xs">{tile.label}</p>
-                  <p className={`text-2xl font-bold ${tile.color}`}>{tile.value}</p>
+                  <p className={`text-2xl font-bold ${tile.color}`}>{count}</p>
                 </div>
-              ))}
+              )
+            })}
+          </div>
+
+            {/* Tile Panel */}
+          {selectedTile && tileHops[selectedTile] && (
+            <div className="mb-6 bg-gray-900 border border-blue-700 rounded-xl p-5">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-blue-300 font-bold text-lg">
+                  {kpiTiles.find(t => t.key === selectedTile)?.label} ({tileHops[selectedTile].length} HOPs)
+                </h2>
+                <button onClick={() => setSelectedTile(null)}
+                  className="text-gray-400 hover:text-white text-sm">✕ Close</button>
+              </div>
+              <div className="space-y-2">
+                {tileHops[selectedTile].sort((a, b) => a.hop.localeCompare(b.hop)).map(h => {
+                  const hopActs = actions.filter(a => a.hop_name === h.hop)
+                  const openHopActs = hopActs.filter(a => !a.completed)
+                  return (
+                    <div key={h.hop} className="bg-gray-800 rounded-lg p-3">
+                      <div className="flex items-center gap-3 mb-2 flex-wrap">
+                        <span className="font-bold text-white text-sm">{h.hop}</span>
+                        <span className="text-gray-400 text-xs">{mode === 'gc' ? h.gc : h.cm}</span>
+                        {h.over18d && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">⚠️ {h.daysElapsed}d elapsed</span>}
+                        {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
+                        {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
+                        {h.spoStatus === 'cpo_ready' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO</span>}
+                        {h.spoStatus === 'missing_cpo' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">🔴 Chase CPO</span>}
+                        {h.daysOut !== null && !h.inProgress && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>}
+                        {openHopActs.length > 0 && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">{openHopActs.length} open</span>}
+                      </div>
+
+                      {hopActs.length > 0 && (
+                        <div className="space-y-1 mb-2">
+                          {hopActs.map(action => (
+                            <div key={action.id} className={`flex flex-col gap-1 p-2 rounded ${action.completed ? 'bg-gray-900 opacity-50' : 'bg-gray-700'}`}>
+                              <div className="flex items-center gap-2">
+                                <input type="checkbox" checked={action.completed}
+                                  onChange={() => toggleAction(action)}
+                                  className="w-4 h-4 cursor-pointer accent-green-500" />
+                                <span className={`text-xs flex-1 ${action.completed ? 'line-through text-gray-500' : 'text-white'}`}>
+                                  {action.action_text}
+                                </span>
+                                <span className="text-gray-600 text-xs">{action.action_type}</span>
+                                {action.auto_completed && <span className="text-green-600 text-xs">auto ✓</span>}
+                              </div>
+                              {!action.completed && (
+                                <input
+                                  type="text"
+                                  placeholder="What did you do? Add note before completing..."
+                                  value={actionComments[action.id] || ''}
+                                  onChange={(e) => setActionComments(prev => ({ ...prev, [action.id]: e.target.value }))}
+                                  className="w-full bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500 ml-6"
+                                />
+                              )}
+                              {action.completed && actionComments[action.id] && (
+                                <span className="text-green-600 text-xs ml-6">✓ {actionComments[action.id]}</span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+
+                      <div className="flex gap-2 flex-wrap ml-1">
+                        <input
+                          type="text"
+                          placeholder="Add action..."
+                          value={newActionText[h.hop] || ''}
+                          onChange={(e) => setNewActionText(prev => ({ ...prev, [h.hop]: e.target.value }))}
+                          onKeyDown={(e) => { if (e.key === 'Enter') addAction(h.hop) }}
+                          className="flex-1 min-w-36 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+                        />
+                        <select
+                          value={newActionType[h.hop] || 'Other'}
+                          onChange={(e) => setNewActionType(prev => ({ ...prev, [h.hop]: e.target.value }))}
+                          className="bg-gray-700 text-gray-300 text-xs rounded px-2 py-1 border border-gray-600">
+                          {ACTION_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+                        </select>
+                        <button onClick={() => addAction(h.hop)}
+                          className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold">
+                          + Add
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
             </div>
+          )}
 
             {/* Open Actions Panel */}
             {showActionsPanel && (
@@ -830,76 +919,63 @@ export default function WeeklyFocusPage() {
             )}
 
         {loaded && (<>
-            {/* Tile filter indicator */}
-            {selectedTile && (
-              <div className="mb-4 flex items-center gap-2">
-                <span className="text-blue-400 text-sm">Filtering by: {kpiTiles.find(t => t.key === selectedTile)?.label}</span>
-                <button onClick={() => setSelectedTile(null)} className="text-gray-500 hover:text-gray-300 text-xs">✕ Clear filter</button>
-              </div>
-            )}
-
             {/* Sections */}
-            {(() => {
-              const tileFilter = selectedTile ? kpiTiles.find(t => t.key === selectedTile)?.filter ?? null : null
-              return (<>
-            <Section title="🔴 Needs Attention Now — Starts This Week With Blockers" rows={tileFilter ? needsAttention.filter(tileFilter) : needsAttention} color="red"
+            <Section title="🔴 Needs Attention Now — Starts This Week With Blockers" rows={needsAttention} color="red"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            <Section title="🔨 Active — Drive to Completion" rows={tileFilter ? active.filter(tileFilter) : active} showElapsed color="blue"
+            <Section title="🔨 Active — Drive to Completion" rows={active} showElapsed color="blue"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            <Section title="✅ Starting This Week — Confirm Ready" rows={tileFilter ? thisWeekReady.filter(tileFilter) : thisWeekReady} color="gray"
+            <Section title="✅ Starting This Week — Confirm Ready" rows={thisWeekReady} color="gray"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            <Section title="🟠 Starting Next 2 Weeks — Get Ahead Now" rows={tileFilter ? next2Weeks.filter(tileFilter) : next2Weeks} color="orange"
+            <Section title="🟠 Starting Next 2 Weeks — Get Ahead Now" rows={next2Weeks} color="orange"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            <Section title="🟡 Week 3 (15–21 days)" rows={tileFilter ? week3.filter(tileFilter) : week3} color="yellow"
+            <Section title="🟡 Week 3 (15–21 days)" rows={week3} color="yellow"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            <Section title="🔵 Week 4 (22–28 days)" rows={tileFilter ? week4.filter(tileFilter) : week4} color="gray"
+            <Section title="🔵 Week 4 (22–28 days)" rows={week4} color="gray"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            <Section title="🔭 60 Day Pipeline (29–60 days)" rows={tileFilter ? pipeline60.filter(tileFilter) : pipeline60} color="gray"
+            <Section title="🔭 60 Day Pipeline (29–60 days)" rows={pipeline60} color="gray"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            <Section title="🚦 NTP Urgent — Missing NTP ≤14 Days" rows={tileFilter ? ntpUrgent.filter(tileFilter) : ntpUrgent} color="yellow"
+            <Section title="🚦 NTP Urgent — Missing NTP ≤14 Days" rows={ntpUrgent} color="yellow"
               expandedHops={expandedHops} actions={actions} mode={mode}
               newActionText={newActionText} newActionType={newActionType}
               onToggle={toggleHop} onToggleAction={toggleAction} onAddAction={addAction}
               onActionTextChange={(hop, val) => setNewActionText(prev => ({ ...prev, [hop]: val }))}
               onActionTypeChange={(hop, val) => setNewActionType(prev => ({ ...prev, [hop]: val }))}
             />
-            </>)
-            })()}
         </>)}
 
       </div>
