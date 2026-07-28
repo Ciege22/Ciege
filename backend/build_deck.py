@@ -1801,6 +1801,62 @@ def generate_ntp_comments(data: dict, output_path: str):
     return output_path
 
 
+def generate_ntp_emails(data: dict) -> dict:
+    """Build email drafts for NTP action parties from pending rows."""
+    por = data['por']
+    deck_date = data.get('deck_date', '')
+    subject_base = f"DON 444 — NTP Action Required ({deck_date})"
+
+    all_pending = []
+    for mo_key, mo_label in [('jun','Jun'),('jul','Jul'),('aug','Aug'),('sep','Sep')]:
+        for h in por[mo_key]['pending_rows']:
+            all_pending.append({**h, 'month': mo_label})
+
+    def fmt_row(h):
+        ms16 = data['hop_ms16f'].get(h['HOP'])
+        fc_end = pd.Timestamp(ms16).strftime('%m/%d') if ms16 and pd.notna(ms16) else 'TBD'
+        blocker = h.get('waiting') or h.get('cx') or 'See tracker'
+        return f"  • {h['HOP']} ({h['month']}) — FC End: {fc_end} — {blocker}"
+
+    external = [h for h in all_pending if h['cat'] == 'External']
+    other    = [h for h in all_pending if h['cat'] == 'Other']
+    prog     = [h for h in all_pending if h['cat'] == 'Program Team']
+
+    def build_body(sections):
+        lines = [f"Team,\n\nPlease see the open NTP actions below requiring your attention as of {deck_date}.\n"]
+        for label, rows in sections:
+            if rows:
+                lines.append(f"\n{label}:")
+                lines.extend(fmt_row(h) for h in sorted(rows, key=lambda h: h['HOP']))
+        lines.append("\n\nPlease update the NTP Comments tracker with your status before the next call.\n\nThank you,\nCiege PM Team")
+        return '\n'.join(lines)
+
+    combined_body = build_body([
+        ('🔴 EXTERNAL BLOCKERS (Viaero / ITW / Samsung)', external),
+        ('🟠 OTHER', other),
+        ('🔵 PROGRAM TEAM ACTIONS', prog),
+    ])
+
+    return {
+        'combined': {
+            'subject': subject_base + ' — All Parties',
+            'body': combined_body,
+        },
+        'viaero': {
+            'subject': subject_base + ' — Viaero Action Required',
+            'body': build_body([('🔴 EXTERNAL BLOCKERS — Viaero', [h for h in external if 'VIAERO' in h.get('owner','').upper() or 'VIAERO' in h.get('waiting','').upper()] or external)]),
+        },
+        'itw': {
+            'subject': subject_base + ' — ITW / Samsung Action Required',
+            'body': build_body([('🔴 EXTERNAL BLOCKERS — ITW / Samsung', [h for h in external if any(k in h.get('owner','').upper() for k in ('ITW','SAMSUNG'))] or other or external)]),
+        },
+        'nokia': {
+            'subject': subject_base + ' — Nokia / Program Team Action Required',
+            'body': build_body([('🔵 PROGRAM TEAM ACTIONS', prog or other)]),
+        },
+    }
+
+
 # ─────────────────────────────────────────────
 # MAIN ENTRY POINT
 # ─────────────────────────────────────────────
@@ -1827,6 +1883,7 @@ def build(tracker_path: str = '', previous_deck_path: str = '', snapshot_path: s
     update_deck(data, previous_deck_path, deck_out)
     generate_snapshot(data, snap_out)
     generate_ntp_comments(data, ntp_out)
+    ntp_emails = generate_ntp_emails(data)
 
     debug_slides_path = '/tmp/slide_debug.txt'
     try:
@@ -1849,6 +1906,7 @@ def build(tracker_path: str = '', previous_deck_path: str = '', snapshot_path: s
         'snapshot_path': snap_out,
         'ntp_comments_path': ntp_out,
         'debug_slides_path': debug_slides_path,
+        'ntp_emails': ntp_emails,
         'summary': {
             'deck_date': deck_date,
             'total_hops': data['total'],

@@ -2,6 +2,7 @@ import io
 import os
 import sys
 import json
+import base64
 import shutil
 import zipfile
 import tempfile
@@ -104,12 +105,17 @@ def build_endpoint():
 
 		zip_buffer.seek(0)
 		filename = f'ciege_outputs_{deck_date_str.replace("/","-")}.zip'
-		return send_file(
+		resp = send_file(
 			zip_buffer,
 			mimetype='application/zip',
 			as_attachment=True,
 			download_name=filename,
 		)
+		if out.get('ntp_emails'):
+			encoded = base64.b64encode(json.dumps(out['ntp_emails']).encode()).decode()
+			resp.headers['X-Ntp-Emails'] = encoded
+			resp.headers['Access-Control-Expose-Headers'] = 'X-Ntp-Emails'
+		return resp
 
 	except Exception as e:
 		tb = traceback.format_exc()

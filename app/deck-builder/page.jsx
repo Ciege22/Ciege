@@ -8,6 +8,7 @@ export default function DeckBuilderPage() {
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState(null)
   const [fileNames, setFileNames] = useState({})
+  const [ntpEmails, setNtpEmails] = useState(null)
 
   const [trackerLoaded, setTrackerLoaded] = useState(false)
   const [trackerInfo, setTrackerInfo] = useState(null)
@@ -131,6 +132,7 @@ export default function DeckBuilderPage() {
         throw new Error(text || `Server error: ${res.status}`)
       }
 
+      const ntpEmailsHeader = res.headers.get('X-Ntp-Emails')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -143,6 +145,11 @@ export default function DeckBuilderPage() {
       a.remove()
       URL.revokeObjectURL(url)
 
+      if (ntpEmailsHeader) {
+        try {
+          setNtpEmails(JSON.parse(atob(ntpEmailsHeader)))
+        } catch (_) {}
+      }
       setSuccess(true)
     } catch (err) {
       setError(err.message ?? 'Something went wrong.')
@@ -317,6 +324,46 @@ export default function DeckBuilderPage() {
                 {success && (
                   <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
                     Deck built successfully — your download should have started.
+                  </div>
+                )}
+
+                {ntpEmails && (
+                  <div className="mt-6 bg-gray-900 border border-gray-700 rounded-xl p-5">
+                    <h3 className="text-white font-bold text-base mb-4">📧 NTP Action Emails</h3>
+                    <div className="flex flex-col gap-3">
+                      <button
+                        onClick={() => {
+                          const e = ntpEmails.combined
+                          window.open(`mailto:?subject=${encodeURIComponent(e.subject)}&body=${encodeURIComponent(e.body)}`)
+                        }}
+                        className="bg-blue-700 hover:bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-semibold text-left">
+                        ✉️ All Parties — Combined Email
+                      </button>
+                      <button
+                        onClick={() => {
+                          const e = ntpEmails.viaero
+                          window.open(`mailto:?subject=${encodeURIComponent(e.subject)}&body=${encodeURIComponent(e.body)}`)
+                        }}
+                        className="bg-amber-700 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold text-left">
+                        ✉️ Viaero — Action Required
+                      </button>
+                      <button
+                        onClick={() => {
+                          const e = ntpEmails.itw
+                          window.open(`mailto:?subject=${encodeURIComponent(e.subject)}&body=${encodeURIComponent(e.body)}`)
+                        }}
+                        className="bg-orange-700 hover:bg-orange-600 text-white px-4 py-2 rounded-lg text-sm font-semibold text-left">
+                        ✉️ ITW / Samsung — Action Required
+                      </button>
+                      <button
+                        onClick={() => {
+                          const e = ntpEmails.nokia
+                          window.open(`mailto:?subject=${encodeURIComponent(e.subject)}&body=${encodeURIComponent(e.body)}`)
+                        }}
+                        className="bg-blue-900 hover:bg-blue-800 text-white px-4 py-2 rounded-lg text-sm font-semibold text-left">
+                        ✉️ Nokia / Program Team — Action Required
+                      </button>
+                    </div>
                   </div>
                 )}
 
