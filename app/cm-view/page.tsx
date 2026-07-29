@@ -965,7 +965,7 @@ export default function CMViewPage() {
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     const div     = '─'.repeat(60)
     const starDiv = '═'.repeat(60)
-    const subj = `Viaero MW Program — CM Call Follow-Up | All CMs | ${date}`
+    const subj = `Viaero/Nokia MW Program — CM Call Follow-Up | ${date}`
 
     let body = `Hap, Steve, Benny,\n\n`
     body += `Please find below and attached your weekly updates to include Cx Pipeline, active sites, and action items.\n`
