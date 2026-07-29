@@ -853,8 +853,7 @@ export default function GCCallPage() {
     const starDiv = '═'.repeat(60)
 
     let body = `Dear ${selectedGC} Team,\n\n`
-    body += `Please find below your weekly site update for the Viaero Wireless Microwave Construction Program — ${date}.\n`
-    body += `Site CM: ${cm}  ·  Nokia PM: CJ  ·  Lead CM: Thomas M.\n`
+    body += `Please find below and attached your weekly updates to include Cx Pipeline, SPOs, & CR report.\n`
     body += `${div}\n\n`
 
     if (active.length > 0) {
