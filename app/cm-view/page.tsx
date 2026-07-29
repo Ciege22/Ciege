@@ -983,7 +983,7 @@ export default function CMViewPage() {
       body += `${starDiv}\n\n`
 
       if (active.length > 0) {
-        body += `Active Sites (${active.length}):\n\n`
+        body += `★★ Active Sites (${active.length}) ★★\n\n`
         active.forEach(h => {
           const status = (h.daysElapsed ?? 0) > 18
             ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
@@ -1002,7 +1002,7 @@ export default function CMViewPage() {
       }
 
       if (upcoming.length > 0) {
-        body += `Starting Within 2 Weeks (${upcoming.length}):\n\n`
+        body += `★★ Starting Within 2 Weeks (${upcoming.length}) ★★\n\n`
         upcoming.forEach(h => {
           const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
           const steelNote = h.steelFrom === 'ITW'
@@ -1033,7 +1033,7 @@ export default function CMViewPage() {
 
       const actionNotes = Object.entries(sessionNotes).filter(([hop, note]) => note.trim() && cmHops.some(h => h.hop === hop))
       if (actionNotes.length > 0) {
-        body += `Action Items:\n\n`
+        body += `★★ Action Items ★★\n\n`
         actionNotes.forEach(([hop, note], i) => {
           body += `${i + 1}. ${hop} — ${note}\n`
         })
