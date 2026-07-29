@@ -866,7 +866,7 @@ export default function GCCallPage() {
           ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
           : `✅ On track — ${h.daysElapsed}d elapsed`
         const spoStatusActive = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
-        body += `• ${h.hop}\n`
+        body += `★ ${h.hop} ★\n`
         body += `  SPO: ${spoStatusActive}\n`
         body += `  AC Start: ${h.ms15a || '—'}  |  FC Complete: ${h.ms16f || '—'}\n`
         body += `  ${status}\n`
@@ -889,7 +889,7 @@ export default function GCCallPage() {
         const steelNote = h.steelFrom === 'ITW'
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
-        body += `• ${h.hop}\n`
+        body += `★ ${h.hop} ★\n`
         body += `  SPO: ${spoStatus}\n`
         body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
         if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
@@ -923,7 +923,7 @@ export default function GCCallPage() {
         const steelNote = h.steelFrom === 'ITW'
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
-        body += `• ${h.hop}\n`
+        body += `★ ${h.hop} ★\n`
         body += `  SPO: ${spoStatus}\n`
         body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
         if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
@@ -948,7 +948,7 @@ export default function GCCallPage() {
       body += `${starDiv}\n\n`
       body += `The following sites are ready to accelerate if schedule allows:\n\n`
       pullInReady.forEach(h => {
-        body += `• ${h.hop}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out  |  NTP ✓  |  Mat ✓\n`
+        body += `★ ${h.hop} ★  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out  |  NTP ✓  |  Mat ✓\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
       })
@@ -960,7 +960,7 @@ export default function GCCallPage() {
       body += `★★★  ACTION ITEMS REQUIRED  ★★★\n`
       body += `${starDiv}\n\n`
       actionItems.forEach((h, i) => {
-        body += `${i + 1}. ${h.hop} (starts ${h.ms15f})\n`
+        body += `${i + 1}. ★ ${h.hop} ★ (starts ${h.ms15f})\n`
         h.blockers.forEach(b => body += `   ${b}\n`)
         body += '\n'
       })
