@@ -970,7 +970,18 @@ export default function GCCallPage() {
     body += `Please coordinate with your Site CM ${cm} for all field questions.\n`
     body += `For schedule, finance, or contract matters contact CJ directly.`
 
-    window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+    const ccList = [
+      'thomas.meinke.ext@nokia.com',
+      'steve.jahr.ext@nokia.com',
+      'christopher.seebach@nokia.com',
+      'george.anson@nokia.com',
+      'curtiss.lindsey.ext@nokia.com',
+      'emily.rudolph@nokia.com',
+      'scott.tomlinson.ext@nokia.com',
+      'paul.1.barlow.ext@nokia.com'
+    ].join(',')
+
+    window.open(`mailto:?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
   const downloadGCExcel = () => {
