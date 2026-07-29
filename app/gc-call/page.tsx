@@ -869,6 +869,10 @@ export default function GCCallPage() {
         body += `• ${h.hop}\n`
         body += `  AC Start: ${h.ms15a || '—'}  |  FC Complete: ${h.ms16f || '—'}\n`
         body += `  ${status}\n`
+        const latestNote = (noteHistory[h.hop] || []).length > 0
+          ? `  💬 Latest Note: ${new Date((noteHistory[h.hop][0].logged_at)).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
+          : ''
+        if (latestNote) body += `${latestNote}\n`
         body += `  SPO: ${spoStatus}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
