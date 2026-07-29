@@ -865,15 +865,15 @@ export default function GCCallPage() {
         const status = (h.daysElapsed ?? 0) > 18
           ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
           : `✅ On track — ${h.daysElapsed}d elapsed`
-        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const spoStatusActive = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
         body += `• ${h.hop}\n`
+        body += `  SPO: ${spoStatusActive}\n`
         body += `  AC Start: ${h.ms15a || '—'}  |  FC Complete: ${h.ms16f || '—'}\n`
         body += `  ${status}\n`
         const latestNote = (noteHistory[h.hop] || []).length > 0
           ? `  💬 Latest Note: ${new Date((noteHistory[h.hop][0].logged_at)).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
           : ''
         if (latestNote) body += `${latestNote}\n`
-        body += `  SPO: ${spoStatus}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += '\n'
       })
@@ -890,11 +890,12 @@ export default function GCCallPage() {
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
         body += `• ${h.hop}\n`
+        body += `  SPO: ${spoStatus}\n`
         body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
         if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
         body += '\n'
         body += `  Mat: ${h.hasMat ? '✓' : '✗'}  |  Steel From: ${steelNote}  |  GC Pickup F: ${h.gcPickupDate || '—'}  |  GC Pickup A: ${h.gcPickupDate || '✗'}\n`
-        body += `  SPO: ${spoStatus}  |  Vendor: ${h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear'}\n`
+        body += `  Vendor: ${h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear'}\n`
         if (h.blockers.length > 0) {
           const blockerText = h.blockers.map(b => {
             if (b.includes('NTP') && h.ntpWaitingOn) return `${b} — Waiting On: ${h.ntpWaitingOn}`
@@ -923,11 +924,12 @@ export default function GCCallPage() {
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
         body += `• ${h.hop}\n`
+        body += `  SPO: ${spoStatus}\n`
         body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
         if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
         body += '\n'
         body += `  Mat: ${h.hasMat ? '✓' : '✗'}  |  Steel From: ${steelNote}  |  GC Pickup F: ${h.gcPickupDate || '—'}  |  GC Pickup A: ${h.gcPickupDate || '✗'}\n`
-        body += `  SPO: ${spoStatus}  |  Vendor: ${h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear'}\n`
+        body += `  Vendor: ${h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear'}\n`
         if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join(' | ')}\n`
         if (h.internalConflict) body += `  Internal Conflict: ${h.internalConflict}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
