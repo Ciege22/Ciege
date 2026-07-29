@@ -901,6 +901,10 @@ export default function GCCallPage() {
         if (h.internalConflict) body += `  Internal Conflict: ${h.internalConflict}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
+        const latestNote = (noteHistory[h.hop] || []).length > 0
+          ? `  💬 Latest Note: ${new Date((noteHistory[h.hop][0].logged_at)).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
+          : ''
+        if (latestNote) body += `${latestNote}\n`
         body += '\n'
       })
     }
@@ -924,6 +928,10 @@ export default function GCCallPage() {
         if (h.internalConflict) body += `  Internal Conflict: ${h.internalConflict}\n`
         if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
         body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
+        const latestNote = (noteHistory[h.hop] || []).length > 0
+          ? `  💬 Latest Note: ${new Date((noteHistory[h.hop][0].logged_at)).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
+          : ''
+        if (latestNote) body += `${latestNote}\n`
         body += '\n'
       })
     }
