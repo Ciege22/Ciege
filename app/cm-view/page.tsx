@@ -968,8 +968,7 @@ export default function CMViewPage() {
     const subj = `Viaero MW Program — CM Call Follow-Up | All CMs | ${date}`
 
     let body = `Hap, Steve, Benny,\n\n`
-    body += `Per our calls today — please find below your individual site summaries and action items for ${date}.\n`
-    body += `Please see the attached Excel for your full pipeline detail.\n`
+    body += `Please find below and attached your weekly updates to include Cx Pipeline, active sites, and action items.\n`
     body += `${div}\n\n`
 
     cmNames.forEach(cm => {
@@ -989,10 +988,15 @@ export default function CMViewPage() {
           const status = (h.daysElapsed ?? 0) > 18
             ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
             : `✅ On track — ${h.daysElapsed}d elapsed`
-          body += `• ${h.hop}  |  GC: ${h.gc}  |  FC End: ${h.ms16f || '—'}\n`
+          const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+          const latestNote = (noteHistory[h.hop] || []).length > 0
+            ? `  💬 Latest Note: ${new Date(noteHistory[h.hop][0].logged_at).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
+            : ''
+          body += `★ ${h.hop} ★\n`
+          body += `  SPO: ${spoStatus}\n`
+          body += `  AC Start: ${h.ms15a || '—'}  |  FC End: ${h.ms16f || '—'}\n`
           body += `  ${status}\n`
-          const note = sessionNotes[h.hop]
-          if (note) body += `  Note: ${note}\n`
+          if (latestNote) body += `${latestNote}\n`
           body += '\n'
         })
       }
@@ -1000,10 +1004,15 @@ export default function CMViewPage() {
       if (upcoming.length > 0) {
         body += `Starting Within 2 Weeks (${upcoming.length}):\n\n`
         upcoming.forEach(h => {
+          const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
           const steelNote = h.steelFrom === 'ITW'
             ? `ITW — confirm ITW delivery schedule`
             : h.steelFrom || '—'
-          body += `• ${h.hop}  |  GC: ${h.gc}\n`
+          const latestNote = (noteHistory[h.hop] || []).length > 0
+            ? `  💬 Latest Note: ${new Date(noteHistory[h.hop][0].logged_at).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
+            : ''
+          body += `★ ${h.hop} ★\n`
+          body += `  SPO: ${spoStatus}\n`
           body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
           if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
           body += '\n'
@@ -1016,9 +1025,8 @@ export default function CMViewPage() {
             }).join(' | ')
             body += `  Blockers: ${blockerText}\n`
           }
-          const note = sessionNotes[h.hop]
-          if (note) body += `  Note: ${note}\n`
           body += `  FC Start: ${h.ms15f}  |  Days Out: ${h.daysOut}d\n`
+          if (latestNote) body += `${latestNote}\n`
           body += '\n'
         })
       }
