@@ -878,82 +878,82 @@ export default function CMViewPage() {
     try {
       const wb = XLSX.utils.book_new()
       const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
+      const date = today.toLocaleDateString('en-US').replace(/\//g, '-')
 
       cmNames.forEach(cm => {
         const cmHops = hops.filter(h => h.cm === cm && !h.complete)
-          .sort((a, b) => {
-            if (a.inProgress && !b.inProgress) return -1
-            if (!a.inProgress && b.inProgress) return 1
-            return (a.daysOut ?? 999) - (b.daysOut ?? 999)
-          })
-
         if (cmHops.length === 0) return
 
-        const rows: unknown[][] = [
-          [`Site CM: ${cm} — Active & Pipeline Report — ${today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`],
-          [],
-          ['HOP', 'GC', 'Status', 'Days Elapsed', 'Days Out', 'FC Start', 'AC Start', 'FC End', 'AC End', 'NTP', 'Material', 'Steel From', 'Mat Location', 'GC Pickup', 'Vendor Window', 'CM Action', 'Notes']
-        ]
+        const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
+        const thisWeek  = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+        const next2Wks  = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+        const thisMonth = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+        const pipeline  = cmHops.filter(h => !h.inProgress && (h.daysOut === null || h.daysOut > 30)).sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999))
 
-        const activeSites = cmHops.filter(h => h.inProgress)
-        if (activeSites.length > 0) {
-          rows.push(['--- ACTIVE SITES ---'])
-          activeSites.forEach(h => {
-            const elapsed = h.daysElapsed !== null ? `${h.daysElapsed}d` : ''
-            const status = (h.daysElapsed ?? 0) > 18 ? '⚠️ OVER 18d' : '🔨 Active'
-            const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
+        const headers = ['HOP', 'GC', 'Status', 'Days Elapsed', 'Days Out', 'FC Start', 'AC Start', 'FC End', 'AC End', 'NTP', 'Material', 'Steel From', 'Mat Location', 'GC Pickup F', 'GC Pickup A', 'SPO', 'Vendor Window', 'CM Action', 'Latest Note']
+
+        const rows: unknown[][] = []
+
+        const getLatestNote = (hop: string) => {
+          const notes = noteHistory[hop] || []
+          if (notes.length === 0) return ''
+          return `${new Date(notes[0].logged_at).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})}: ${notes[0].note}`
+        }
+
+        const addSection = (label: string, sectionHops: typeof cmHops, isActive: boolean) => {
+          if (sectionHops.length === 0) return
+          rows.push([`--- ${label} (${sectionHops.length}) ---`])
+          rows.push(headers)
+          sectionHops.forEach(h => {
+            const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+            const elapsed = isActive && h.daysElapsed !== null ? `${h.daysElapsed}d` : ''
+            const daysOut = !isActive && h.daysOut !== null ? `${h.daysOut}d` : ''
+            const status = isActive
+              ? ((h.daysElapsed ?? 0) > 18 ? '⚠️ OVER TARGET' : '🔨 Active')
+              : h.daysOut !== null && h.daysOut <= 7 ? '🔴 This Week'
+              : h.daysOut !== null && h.daysOut <= 14 ? '🟠 2 Weeks'
+              : h.daysOut !== null && h.daysOut <= 30 ? '🟡 This Month'
+              : '🔵 Pipeline'
             rows.push([
-              h.hop, h.gc, status, elapsed, '',
-              h.ms15f, h.ms15a, h.ms16f, h.ms16a,
+              h.hop, h.gc, status, elapsed, daysOut,
+              h.ms15f || '—', h.ms15a || '—', h.ms16f || '—', h.ms16a || '—',
               h.hasNtp ? '✓' : '✗',
               h.hasMat ? '✓' : '✗',
               h.steelFrom || '—',
               h.matLocation || '—',
-              h.gcPickupDate || '✗',
+              h.gcPickupF || '—',
+              h.gcPickupA || '—',
+              spoStatus,
               h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear',
               h.cmAction,
-              latestNote
+              getLatestNote(h.hop)
             ])
           })
-        }
-
-        const pipeline = cmHops.filter(h => !h.inProgress)
-        if (pipeline.length > 0) {
           rows.push([])
-          rows.push(['--- PIPELINE ---'])
-          pipeline.forEach(h => {
-            const daysOut = h.daysOut !== null ? `${h.daysOut}d` : ''
-            const status = h.daysOut !== null && h.daysOut <= 7 ? '🔴 This Week' :
-                          h.daysOut !== null && h.daysOut <= 14 ? '🟠 2 Weeks' :
-                          h.daysOut !== null && h.daysOut <= 30 ? '🟡 This Month' : '🔵 Pipeline'
-            const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
-            rows.push([
-              h.hop, h.gc, status, '', daysOut,
-              h.ms15f, h.ms15a || '', h.ms16f, '',
-              h.hasNtp ? '✓' : '✗',
-              h.hasMat ? '✓' : '✗',
-              h.steelFrom || '—',
-              h.matLocation || '—',
-              h.gcPickupDate || '✗',
-              h.vendorWindow.includes('🔴') ? h.vendorWindow : '✅ Clear',
-              h.cmAction,
-              latestNote
-            ])
-          })
         }
+
+        // Header info
+        rows.push([`Site CM: ${cm} — Full Pipeline Report — ${today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`])
+        rows.push([`Total HOPs: ${cmHops.length} | Active: ${active.length} | This Week: ${thisWeek.length} | Next 2 Wks: ${next2Wks.length} | This Month: ${thisMonth.length} | Pipeline: ${pipeline.length}`])
+        rows.push([])
+
+        addSection('ACTIVE SITES', active, true)
+        addSection('THIS WEEK (0-7 days)', thisWeek, false)
+        addSection('NEXT 2 WEEKS (8-14 days)', next2Wks, false)
+        addSection('THIS MONTH (15-30 days)', thisMonth, false)
+        addSection('30D+ PIPELINE', pipeline, false)
 
         const ws = XLSX.utils.aoa_to_sheet(rows)
         ws['!cols'] = [
-          { wch: 36 }, { wch: 14 }, { wch: 18 }, { wch: 12 }, { wch: 10 },
+          { wch: 36 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 10 },
           { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
-          { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 20 }, { wch: 12 },
-          { wch: 30 }, { wch: 45 }, { wch: 50 }
+          { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 14 },
+          { wch: 14 }, { wch: 30 }, { wch: 45 }, { wch: 50 }
         ]
-
         XLSX.utils.book_append_sheet(wb, ws, cm.slice(0, 31))
       })
 
-      XLSX.writeFile(wb, `Viaero_CM_Report_${today.toLocaleDateString('en-US').replace(/\//g, '-')}.xlsx`)
+      XLSX.writeFile(wb, `Viaero_CM_Report_${date}.xlsx`)
     } catch (err) {
       console.error('Download error:', err)
       alert('Download failed — please try again')
