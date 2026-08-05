@@ -1705,10 +1705,12 @@ def generate_ntp_comments(data: dict, output_path: str):
 
     wb = openpyxl.Workbook(); wb.remove(wb.active)
     for mo_name, mo_key, sheet_key in [
-        ('Jun Pending NTP', 'jun', 'Jun Pending NTP'),
         ('Jul Pending NTP', 'jul', 'Jul Pending NTP'),
         ('Aug Pending NTP', 'aug', 'Aug Pending NTP'),
         ('Sep Pending NTP', 'sep', 'Sep Pending NTP'),
+        ('Oct Pending NTP', 'oct', 'Oct Pending NTP'),
+        ('Nov Pending NTP', 'nov', 'Nov Pending NTP'),
+        ('Dec Pending NTP', 'dec', 'Dec Pending NTP'),
     ]:
         ws = wb.create_sheet(mo_name)
         p = por[mo_key]; comments = ntp_comments.get(sheet_key, {})
@@ -1780,10 +1782,12 @@ def generate_ntp_comments(data: dict, output_path: str):
         c.font = Font(name='Calibri', bold=True, size=10, color=WHITE)
         c.alignment = Alignment(horizontal='center', vertical='center')
     ri = 3
-    for sheet_key, mo_label, mo_key in [('Jun Pending NTP','Jun','jun'),
-                                         ('Jul Pending NTP','Jul','jul'),
+    for sheet_key, mo_label, mo_key in [('Jul Pending NTP','Jul','jul'),
                                          ('Aug Pending NTP','Aug','aug'),
-                                         ('Sep Pending NTP','Sep','sep')]:
+                                         ('Sep Pending NTP','Sep','sep'),
+                                         ('Oct Pending NTP','Oct','oct'),
+                                         ('Nov Pending NTP','Nov','nov'),
+                                         ('Dec Pending NTP','Dec','dec')]:
         comments = ntp_comments.get(sheet_key, {})
         row_lookup = {h['HOP']: h for h in por[mo_key]['pending_rows']}
         for hop, comment in comments.items():
@@ -1808,7 +1812,7 @@ def generate_ntp_emails(data: dict) -> dict:
     subject_base = f"DON 444 — NTP Action Required ({deck_date})"
 
     all_pending = []
-    for mo_key, mo_label in [('jun','Jun'),('jul','Jul'),('aug','Aug'),('sep','Sep')]:
+    for mo_key, mo_label in [('jul','Jul'),('aug','Aug'),('sep','Sep'),('oct','Oct'),('nov','Nov'),('dec','Dec')]:
         for h in por[mo_key]['pending_rows']:
             all_pending.append({**h, 'month': mo_label})
 
