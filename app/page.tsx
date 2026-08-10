@@ -1,8 +1,9 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
-import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges } from './lib/supabase'
+import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots } from './lib/supabase'
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
@@ -114,6 +115,7 @@ function WeatherWidget() {
 }
 
 export default function Home() {
+  const router = useRouter()
   const [snapshotInfo, setSnapshotInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
   const [uploading, setUploading] = useState(false)
   const [kpis, setKpis] = useState<{
@@ -151,6 +153,7 @@ export default function Home() {
   }[]>([])
   const [pmFilter, setPmFilter] = useState<string>('ALL')
   const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
+  const [snapshots, setSnapshots] = useState<{hop_count: number, uploaded_at: string}[]>([])
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -368,6 +371,14 @@ export default function Home() {
     }
     loadKPIs()
   }, [computeKPIs])
+
+  useEffect(() => {
+    const loadSnapshots = async () => {
+      const snaps = await getAllSnapshots()
+      setSnapshots(snaps)
+    }
+    loadSnapshots()
+  }, [])
 
   const detectChanges = (newRows: unknown[][], oldRows: unknown[][], uploadId: string) => {
     const today = new Date().toISOString()
@@ -610,6 +621,89 @@ export default function Home() {
     currentMonthActComplete: filteredDetails.filter(h => h.currentMonthAct).length,
   } : null
 
+  const focusItems = filteredKpis ? [
+    {
+      emoji: '🔴',
+      label: 'Needs Attention Now',
+      value: (filteredDetails.filter(h => !h.complete && !h.inProgress && h.daysOut !== null && h.daysOut <= 7 && (!h.hasNtp || !h.hasMat)).length),
+      unit: 'sites',
+      sub: 'starting this week with blockers',
+      route: '/weekly-focus',
+      color: 'border-red-800 hover:border-red-600',
+      valueColor: 'text-red-400',
+    },
+    {
+      emoji: '🔴',
+      label: 'SPOs Ready to Cut',
+      value: filteredDetails.filter(h => h.cutSpoNow).length,
+      unit: 'HOPs',
+      sub: 'CPO ready — cut SPO before GC call',
+      route: '/gc-call',
+      color: 'border-yellow-800 hover:border-yellow-600',
+      valueColor: 'text-yellow-400',
+    },
+    {
+      emoji: '⚡',
+      label: 'NTP Urgent ≤14 Days',
+      value: filteredDetails.filter(h => h.ntpUrgent).length,
+      unit: 'HOPs',
+      sub: 'missing NTP — chase program team',
+      route: '/ntp-tracker',
+      color: 'border-orange-800 hover:border-orange-600',
+      valueColor: 'text-orange-400',
+    },
+    {
+      emoji: '📦',
+      label: 'Material Watch',
+      value: filteredDetails.filter(h => h.materialWatch).length,
+      unit: 'HOPs',
+      sub: 'no material ≤14 days to start',
+      route: '/gc-call',
+      color: 'border-orange-800 hover:border-orange-600',
+      valueColor: 'text-orange-400',
+    },
+    {
+      emoji: '🟡',
+      label: 'Vendor Conflicts',
+      value: filteredDetails.filter(h => h.vendorConflict).length,
+      unit: 'HOPs',
+      sub: 'Samsung/ITW on site at FC start',
+      route: '/gc-call',
+      color: 'border-yellow-800 hover:border-yellow-600',
+      valueColor: 'text-yellow-400',
+    },
+    {
+      emoji: '📡',
+      label: 'MSS Awaiting Power-Up',
+      value: filteredDetails.filter(h => h.inProgress && !!h.ms15a && !h.complete).length,
+      unit: 'sites',
+      sub: 'handed off — awaiting Viaero power-up',
+      route: '/cm-view',
+      color: 'border-blue-800 hover:border-blue-600',
+      valueColor: 'text-blue-400',
+    },
+    {
+      emoji: '📋',
+      label: 'Open Actions',
+      value: kpis?.openActions ?? 0,
+      unit: 'items',
+      sub: 'from HOP Readiness tracker',
+      route: '/weekly-focus',
+      color: 'border-blue-800 hover:border-blue-600',
+      valueColor: 'text-blue-400',
+    },
+    {
+      emoji: '🔄',
+      label: 'Changed Since Last Upload',
+      value: snapshots.length > 1 ? snapshots[0]?.hop_count - snapshots[1]?.hop_count : 0,
+      unit: 'changes',
+      sub: 'view full change log',
+      route: '/change-log',
+      color: 'border-gray-700 hover:border-gray-500',
+      valueColor: 'text-gray-300',
+    },
+  ] : []
+
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
       <div className="mx-auto max-w-full px-12 py-12">
@@ -768,6 +862,45 @@ export default function Home() {
                 </div>
               </div>
             )}
+
+              {/* Today's Focus */}
+              {filteredKpis && (
+                <div className="mb-6">
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="h-px bg-gray-700 flex-1" />
+                    <span className="text-gray-500 text-xs font-semibold tracking-widest uppercase">
+                      Today's Focus — {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                    </span>
+                    <div className="h-px bg-gray-700 flex-1" />
+                  </div>
+                  <div className="flex flex-col gap-2">
+                    {focusItems.filter(item => item.value > 0).map(item => (
+                      <div
+                        key={item.label}
+                        onClick={() => router.push(item.route)}
+                        className={`flex items-center justify-between bg-gray-900 border rounded-xl px-5 py-3 cursor-pointer transition-all ${item.color}`}>
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">{item.emoji}</span>
+                          <div>
+                            <span className="text-white text-sm font-semibold">{item.label}</span>
+                            <span className="text-gray-500 text-xs ml-2">{item.sub}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xl font-bold ${item.valueColor}`}>{item.value}</span>
+                          <span className="text-gray-600 text-xs">{item.unit}</span>
+                          <span className="text-gray-600 text-sm">→</span>
+                        </div>
+                      </div>
+                    ))}
+                    {focusItems.filter(item => item.value > 0).length === 0 && (
+                      <div className="bg-gray-900 border border-gray-700 rounded-xl px-5 py-4 text-center">
+                        <p className="text-green-400 text-sm font-semibold">✅ Nothing urgent today — you&apos;re ahead of the program</p>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
           </main>
         </div>
       </div>
