@@ -160,6 +160,7 @@ export default function Home() {
   const [expandedFocusItem, setExpandedFocusItem] = useState<string | null>(null)
   const [focusModal, setFocusModal] = useState<{ label: string; items: typeof hopDetails } | null>(null)
   const [openActionsData, setOpenActionsData] = useState<{ id: string; hop_name: string; action_text: string; action_type: string }[]>([])
+  const [savedComments, setSavedComments] = useState<Record<string, string[]>>({})
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -404,6 +405,23 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    const loadSavedComments = async () => {
+      const todayKey = `focus-comments-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+      const { data } = await supabase
+        .from('pm_updates_cache')
+        .select('updates')
+        .eq('id', todayKey)
+        .single()
+      if (data?.updates) {
+        try {
+          setSavedComments(JSON.parse(data.updates))
+        } catch {}
+      }
+    }
+    loadSavedComments()
+  }, [])
+
+  useEffect(() => {
     const loadOpenActions = async () => {
       const { data } = await supabase
         .from('hop_actions')
@@ -424,14 +442,33 @@ export default function Home() {
     })
   }
 
-  const toggleFocusItem = async (itemKey: string, label: string, commentOverride?: string) => {
+  const saveComment = async (itemKey: string) => {
+    const comment = focusCommentInput[itemKey]?.trim()
+    if (!comment) return
+    const todayKey = `focus-comments-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+    const updated = { ...savedComments }
+    if (!updated[itemKey]) updated[itemKey] = []
+    updated[itemKey] = [...updated[itemKey], comment]
+    setSavedComments(updated)
+    setFocusCommentInput(prev => ({ ...prev, [itemKey]: '' }))
+    await supabase.from('pm_updates_cache').upsert({
+      id: todayKey,
+      updates: JSON.stringify(updated),
+      updated_at: new Date().toISOString()
+    })
+  }
+
+  const toggleFocusItem = async (itemKey: string, label: string) => {
     const updated = { ...focusCompleted }
     if (updated[itemKey]) {
       delete updated[itemKey]
     } else {
-      const comment = commentOverride ?? focusCommentInput[itemKey] ?? ''
+      const comments = savedComments[itemKey] || []
+      const currentInput = focusCommentInput[itemKey]?.trim()
+      if (currentInput) comments.push(currentInput)
+      const compiledComment = comments.join(' | ')
       updated[itemKey] = {
-        comment,
+        comment: compiledComment,
         label,
         completedAt: new Date().toISOString()
       }
@@ -443,15 +480,36 @@ export default function Home() {
   const copyUpdates = () => {
     const todayStr = new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
     const completed = Object.entries(focusCompleted)
-    if (completed.length === 0) {
-      alert('No completed items yet today')
-      return
+    const uncompleted = focusItems
+      .filter(item => item.value > 0 && item.label !== 'Open Actions' && item.label !== 'Changed Since Last Upload')
+      .flatMap(item => item.getItems()
+        .filter(h => !focusCompleted[`${h.hop}::${item.label}`])
+        .map(h => ({ key: `${h.hop}::${item.label}`, hop: h.hop, label: item.label }))
+      )
+
+    let text = `Daily Updates — ${todayStr}\n\n`
+
+    if (completed.length > 0) {
+      text += `COMPLETED:\n`
+      completed.forEach(([key, val]) => {
+        const hopName = key.split('::')[0]
+        const allComments = [
+          ...(savedComments[key] || []),
+          val.comment
+        ].filter(Boolean).join(' | ')
+        text += `${hopName}  |  ${todayStr}: (CJ) ${allComments || 'Action completed'}\n`
+      })
+      text += '\n'
     }
-    const text = completed.map(([key, val]) => {
-      const hopName = key.split('::')[0]
-      const comment = val.comment || 'Action completed'
-      return `${hopName}  |  ${todayStr}: (CJ) ${comment}`
-    }).join('\n')
+
+    if (uncompleted.length > 0) {
+      text += `STILL PENDING:\n`
+      uncompleted.forEach(({ hop, label }) => {
+        const comments = savedComments[`${hop}::${label}`] || []
+        text += `${hop}  |  ${label}${comments.length > 0 ? ' — ' + comments.join(' | ') : ''}\n`
+      })
+    }
+
     navigator.clipboard.writeText(text)
       .then(() => alert('✅ Copied to clipboard!'))
       .catch(() => alert('Copy failed — please try manually'))
@@ -971,7 +1029,7 @@ export default function Home() {
                               return (
                                 <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
                                   <input type="checkbox" checked={isCompleted}
-                                    onChange={() => toggleFocusItem(itemKey, item.label, focusCommentInput[itemKey] || '')}
+                                    onChange={() => toggleFocusItem(itemKey, item.label)}
                                     className="w-4 h-4 cursor-pointer accent-green-500" />
                                   <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                   <span className="text-gray-500 text-xs">{item.label}</span>
@@ -987,7 +1045,7 @@ export default function Home() {
                               return (
                                 <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
                                   <input type="checkbox" checked={isCompleted}
-                                    onChange={() => toggleFocusItem(itemKey, 'Open Action', focusCommentInput[itemKey] || '')}
+                                    onChange={() => toggleFocusItem(itemKey, 'Open Action')}
                                     className="w-4 h-4 cursor-pointer accent-green-500" />
                                   <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
                                   <span className="text-gray-500 text-xs">{a.action_type}</span>
@@ -1036,19 +1094,32 @@ export default function Home() {
                                 <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
                                   <div className="flex items-center gap-2 mb-2">
                                     <input type="checkbox" checked={isCompleted}
-                                      onChange={() => toggleFocusItem(itemKey, 'Open Action', focusCommentInput[itemKey] || '')}
+                                      onChange={() => toggleFocusItem(itemKey, 'Open Action')}
                                       className="w-4 h-4 cursor-pointer accent-green-500" />
                                     <span className={`text-sm font-semibold flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
                                     <span className="text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">{a.action_type}</span>
                                     <span className="text-xs text-gray-500">{a.action_text}</span>
                                   </div>
                                   {!isCompleted && (
-                                    <input type="text" placeholder="What did you do? Add note before completing..."
-                                      value={focusCommentInput[itemKey] || ''}
-                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
-                                      onBlur={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
-                                      className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500 mt-1"
-                                    />
+                                    <div className="flex gap-2 mt-1">
+                                      <input type="text" placeholder="What did you do? Add note before completing..."
+                                        value={focusCommentInput[itemKey] || ''}
+                                        onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') saveComment(itemKey) }}
+                                        className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+                                      />
+                                      <button onClick={() => saveComment(itemKey)}
+                                        className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
+                                        💾 Save
+                                      </button>
+                                    </div>
+                                  )}
+                                  {savedComments[itemKey]?.length > 0 && (
+                                    <div className="mt-1 space-y-0.5">
+                                      {savedComments[itemKey].map((c, i) => (
+                                        <p key={i} className="text-blue-300 text-xs">💬 {c}</p>
+                                      ))}
+                                    </div>
                                   )}
                                   {isCompleted && focusCompleted[itemKey]?.comment && (
                                     <p className="text-green-400 text-xs mt-1">✓ {focusCompleted[itemKey].comment}</p>
@@ -1063,7 +1134,7 @@ export default function Home() {
                                 <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
                                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                                     <input type="checkbox" checked={isCompleted}
-                                      onChange={() => toggleFocusItem(itemKey, item.label, focusCommentInput[itemKey] || '')}
+                                      onChange={() => toggleFocusItem(itemKey, item.label)}
                                       className="w-4 h-4 cursor-pointer accent-green-500" />
                                     <span className={`text-sm font-semibold ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                     <span className="text-gray-400 text-xs">{h.gc}</span>
@@ -1074,11 +1145,25 @@ export default function Home() {
                                     {h.ntpWaitingOn && <span className="text-gray-500 text-xs">Waiting: {h.ntpWaitingOn.slice(0,40)}</span>}
                                   </div>
                                   {!isCompleted && (
-                                    <input type="text" placeholder="What did you do? Add note before completing..."
-                                      value={focusCommentInput[itemKey] || ''}
-                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
-                                      className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500 mt-1"
-                                    />
+                                    <div className="flex gap-2 mt-1">
+                                      <input type="text" placeholder="What did you do? Add note before completing..."
+                                        value={focusCommentInput[itemKey] || ''}
+                                        onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') saveComment(itemKey) }}
+                                        className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+                                      />
+                                      <button onClick={() => saveComment(itemKey)}
+                                        className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
+                                        💾 Save
+                                      </button>
+                                    </div>
+                                  )}
+                                  {savedComments[itemKey]?.length > 0 && (
+                                    <div className="mt-1 space-y-0.5">
+                                      {savedComments[itemKey].map((c, i) => (
+                                        <p key={i} className="text-blue-300 text-xs">💬 {c}</p>
+                                      ))}
+                                    </div>
                                   )}
                                   {isCompleted && focusCompleted[itemKey]?.comment && (
                                     <p className="text-green-400 text-xs mt-1">✓ {focusCompleted[itemKey].comment}</p>
