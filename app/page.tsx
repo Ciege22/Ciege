@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
-import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots } from './lib/supabase'
+import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
@@ -154,6 +154,12 @@ export default function Home() {
   const [pmFilter, setPmFilter] = useState<string>('ALL')
   const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
   const [snapshots, setSnapshots] = useState<{hop_count: number, uploaded_at: string}[]>([])
+  const [focusCompleted, setFocusCompleted] = useState<Record<string, { comment: string; label: string; completedAt: string }>>({})
+  const [showUpdatesPanel, setShowUpdatesPanel] = useState(false)
+  const [focusCommentInput, setFocusCommentInput] = useState<Record<string, string>>({})
+  const [expandedFocusItem, setExpandedFocusItem] = useState<string | null>(null)
+  const [focusModal, setFocusModal] = useState<{ label: string; items: typeof hopDetails } | null>(null)
+  const [openActionsData, setOpenActionsData] = useState<{ id: string; hop_name: string; action_text: string; action_type: string }[]>([])
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -379,6 +385,76 @@ export default function Home() {
     }
     loadSnapshots()
   }, [])
+
+  useEffect(() => {
+    const loadFocusCompleted = async () => {
+      const todayKey = `focus-completed-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+      const { data } = await supabase
+        .from('pm_updates_cache')
+        .select('updates')
+        .eq('id', todayKey)
+        .single()
+      if (data?.updates) {
+        try {
+          setFocusCompleted(JSON.parse(data.updates))
+        } catch {}
+      }
+    }
+    loadFocusCompleted()
+  }, [])
+
+  useEffect(() => {
+    const loadOpenActions = async () => {
+      const { data } = await supabase
+        .from('hop_actions')
+        .select('id, hop_name, action_text, action_type')
+        .eq('completed', false)
+        .order('created_at', { ascending: true })
+      if (data) setOpenActionsData(data)
+    }
+    loadOpenActions()
+  }, [])
+
+  const saveFocusCompleted = async (updated: typeof focusCompleted) => {
+    const todayKey = `focus-completed-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+    await supabase.from('pm_updates_cache').upsert({
+      id: todayKey,
+      updates: JSON.stringify(updated),
+      updated_at: new Date().toISOString()
+    })
+  }
+
+  const toggleFocusItem = async (itemKey: string, label: string) => {
+    const updated = { ...focusCompleted }
+    if (updated[itemKey]) {
+      delete updated[itemKey]
+    } else {
+      updated[itemKey] = {
+        comment: focusCommentInput[itemKey] || '',
+        label,
+        completedAt: new Date().toISOString()
+      }
+    }
+    setFocusCompleted(updated)
+    await saveFocusCompleted(updated)
+  }
+
+  const copyUpdates = () => {
+    const todayStr = new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
+    const completed = Object.entries(focusCompleted)
+    if (completed.length === 0) {
+      alert('No completed items yet today')
+      return
+    }
+    const text = completed.map(([key, val]) => {
+      const hopName = key.split('::')[0]
+      const comment = val.comment || 'Action completed'
+      return `${hopName}  |  ${todayStr}: (CJ) ${comment}`
+    }).join('\n')
+    navigator.clipboard.writeText(text)
+      .then(() => alert('✅ Copied to clipboard!'))
+      .catch(() => alert('Copy failed — please try manually'))
+  }
 
   const detectChanges = (newRows: unknown[][], oldRows: unknown[][], uploadId: string) => {
     const today = new Date().toISOString()
@@ -625,12 +701,12 @@ export default function Home() {
     {
       emoji: '🔴',
       label: 'Needs Attention Now',
-      value: (filteredDetails.filter(h => !h.complete && !h.inProgress && h.daysOut !== null && h.daysOut <= 7 && (!h.hasNtp || !h.hasMat)).length),
+      value: filteredDetails.filter(h => !h.complete && !h.inProgress && h.daysOut !== null && h.daysOut <= 14 && (!h.hasNtp || !h.hasMat)).length,
       unit: 'sites',
-      sub: 'starting this week with blockers',
-      route: '/weekly-focus',
+      sub: 'starting ≤14 days with blockers',
       color: 'border-red-800 hover:border-red-600',
       valueColor: 'text-red-400',
+      getItems: () => filteredDetails.filter(h => !h.complete && !h.inProgress && h.daysOut !== null && h.daysOut <= 14 && (!h.hasNtp || !h.hasMat)),
     },
     {
       emoji: '🔴',
@@ -638,9 +714,9 @@ export default function Home() {
       value: filteredDetails.filter(h => h.cutSpoNow).length,
       unit: 'HOPs',
       sub: 'CPO ready — cut SPO before GC call',
-      route: '/gc-call',
       color: 'border-yellow-800 hover:border-yellow-600',
       valueColor: 'text-yellow-400',
+      getItems: () => filteredDetails.filter(h => h.cutSpoNow),
     },
     {
       emoji: '⚡',
@@ -648,9 +724,9 @@ export default function Home() {
       value: filteredDetails.filter(h => h.ntpUrgent).length,
       unit: 'HOPs',
       sub: 'missing NTP — chase program team',
-      route: '/ntp-tracker',
       color: 'border-orange-800 hover:border-orange-600',
       valueColor: 'text-orange-400',
+      getItems: () => filteredDetails.filter(h => h.ntpUrgent),
     },
     {
       emoji: '📦',
@@ -658,9 +734,9 @@ export default function Home() {
       value: filteredDetails.filter(h => h.materialWatch).length,
       unit: 'HOPs',
       sub: 'no material ≤14 days to start',
-      route: '/gc-call',
       color: 'border-orange-800 hover:border-orange-600',
       valueColor: 'text-orange-400',
+      getItems: () => filteredDetails.filter(h => h.materialWatch),
     },
     {
       emoji: '🟡',
@@ -668,39 +744,29 @@ export default function Home() {
       value: filteredDetails.filter(h => h.vendorConflict).length,
       unit: 'HOPs',
       sub: 'Samsung/ITW on site at FC start',
-      route: '/gc-call',
       color: 'border-yellow-800 hover:border-yellow-600',
       valueColor: 'text-yellow-400',
-    },
-    {
-      emoji: '📡',
-      label: 'MSS Awaiting Power-Up',
-      value: filteredDetails.filter(h => h.inProgress && !!h.ms15a && !h.complete).length,
-      unit: 'sites',
-      sub: 'handed off — awaiting Viaero power-up',
-      route: '/cm-view',
-      color: 'border-blue-800 hover:border-blue-600',
-      valueColor: 'text-blue-400',
+      getItems: () => filteredDetails.filter(h => h.vendorConflict),
     },
     {
       emoji: '📋',
       label: 'Open Actions',
-      value: kpis?.openActions ?? 0,
+      value: openActionsData.length,
       unit: 'items',
       sub: 'from HOP Readiness tracker',
-      route: '/weekly-focus',
       color: 'border-blue-800 hover:border-blue-600',
       valueColor: 'text-blue-400',
+      getItems: () => [] as typeof filteredDetails,
     },
     {
       emoji: '🔄',
       label: 'Changed Since Last Upload',
-      value: snapshots.length > 1 ? snapshots[0]?.hop_count - snapshots[1]?.hop_count : 0,
+      value: snapshots.length > 1 ? Math.abs((snapshots[0]?.hop_count ?? 0) - (snapshots[1]?.hop_count ?? 0)) : 0,
       unit: 'changes',
       sub: 'view full change log',
-      route: '/change-log',
       color: 'border-gray-700 hover:border-gray-500',
       valueColor: 'text-gray-300',
+      getItems: () => [] as typeof filteredDetails,
     },
   ] : []
 
@@ -869,28 +935,163 @@ export default function Home() {
                   <div className="flex items-center gap-3 mb-3">
                     <div className="h-px bg-gray-700 flex-1" />
                     <span className="text-gray-500 text-xs font-semibold tracking-widest uppercase">
-                      Today's Focus — {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
+                      Today&apos;s Focus — {new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })}
                     </span>
                     <div className="h-px bg-gray-700 flex-1" />
                   </div>
+
+                  {/* Updates Button */}
+                  <div className="flex justify-end mb-3">
+                    <button onClick={() => setShowUpdatesPanel(!showUpdatesPanel)}
+                      className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2">
+                      📝 Today&apos;s Updates ({Object.keys(focusCompleted).length} completed)
+                    </button>
+                  </div>
+
+                  {/* Updates Panel */}
+                  {showUpdatesPanel && (
+                    <div className="bg-gray-900 border border-gray-700 rounded-xl p-5 mb-4">
+                      <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-white font-bold">📝 Today&apos;s Updates — {new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</h3>
+                        <button onClick={copyUpdates}
+                          className="bg-teal-600 hover:bg-teal-700 text-white text-xs px-3 py-2 rounded font-semibold">
+                          📋 Copy All Completed
+                        </button>
+                      </div>
+                      {Object.keys(focusCompleted).length === 0 && (
+                        <p className="text-gray-500 text-sm">No completed items yet today — check off items as you action them below.</p>
+                      )}
+                      <div className="space-y-2">
+                        {focusItems.filter(item => item.value > 0).map(item => (
+                          <div key={item.label}>
+                            {item.getItems().map(h => {
+                              const itemKey = `${h.hop}::${item.label}`
+                              const isCompleted = !!focusCompleted[itemKey]
+                              return (
+                                <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
+                                  <input type="checkbox" checked={isCompleted}
+                                    onChange={() => toggleFocusItem(itemKey, item.label)}
+                                    className="w-4 h-4 cursor-pointer accent-green-500" />
+                                  <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
+                                  <span className="text-gray-500 text-xs">{item.label}</span>
+                                  {isCompleted && focusCompleted[itemKey]?.comment && (
+                                    <span className="text-green-400 text-xs">✓ {focusCompleted[itemKey].comment}</span>
+                                  )}
+                                </div>
+                              )
+                            })}
+                            {item.label === 'Open Actions' && openActionsData.map(a => {
+                              const itemKey = `${a.hop_name}::Open Action::${a.id}`
+                              const isCompleted = !!focusCompleted[itemKey]
+                              return (
+                                <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
+                                  <input type="checkbox" checked={isCompleted}
+                                    onChange={() => toggleFocusItem(itemKey, 'Open Action')}
+                                    className="w-4 h-4 cursor-pointer accent-green-500" />
+                                  <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
+                                  <span className="text-gray-500 text-xs">{a.action_type}</span>
+                                  {isCompleted && focusCompleted[itemKey]?.comment && (
+                                    <span className="text-green-400 text-xs">✓ {focusCompleted[itemKey].comment}</span>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Focus Items */}
                   <div className="flex flex-col gap-2">
                     {focusItems.filter(item => item.value > 0).map(item => (
-                      <div
-                        key={item.label}
-                        onClick={() => router.push(item.route)}
-                        className={`flex items-center justify-between bg-gray-900 border rounded-xl px-5 py-3 cursor-pointer transition-all ${item.color}`}>
-                        <div className="flex items-center gap-3">
-                          <span className="text-lg">{item.emoji}</span>
-                          <div>
-                            <span className="text-white text-sm font-semibold">{item.label}</span>
-                            <span className="text-gray-500 text-xs ml-2">{item.sub}</span>
+                      <div key={item.label}>
+                        <div
+                          onClick={() => {
+                            setFocusModal(focusModal?.label === item.label ? null : { label: item.label, items: item.getItems() })
+                            setExpandedFocusItem(expandedFocusItem === item.label ? null : item.label)
+                          }}
+                          className={`flex items-center justify-between bg-gray-900 border rounded-xl px-5 py-3 cursor-pointer transition-all ${item.color}`}>
+                          <div className="flex items-center gap-3">
+                            <span className="text-lg">{item.emoji}</span>
+                            <div>
+                              <span className="text-white text-sm font-semibold">{item.label}</span>
+                              <span className="text-gray-500 text-xs ml-2">{item.sub}</span>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className={`text-xl font-bold ${item.valueColor}`}>{item.value}</span>
+                            <span className="text-gray-600 text-xs">{item.unit}</span>
+                            <span className="text-gray-500 text-sm">{expandedFocusItem === item.label ? '▲' : '▼'}</span>
                           </div>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className={`text-xl font-bold ${item.valueColor}`}>{item.value}</span>
-                          <span className="text-gray-600 text-xs">{item.unit}</span>
-                          <span className="text-gray-600 text-sm">→</span>
-                        </div>
+
+                        {expandedFocusItem === item.label && (
+                          <div className="bg-gray-900 border border-t-0 border-gray-700 rounded-b-xl p-4 space-y-2">
+                            {item.label === 'Open Actions' && openActionsData.map(a => {
+                              const itemKey = `${a.hop_name}::Open Action::${a.id}`
+                              const isCompleted = !!focusCompleted[itemKey]
+                              return (
+                                <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
+                                  <div className="flex items-center gap-2 mb-2">
+                                    <input type="checkbox" checked={isCompleted}
+                                      onChange={() => toggleFocusItem(itemKey, 'Open Action')}
+                                      className="w-4 h-4 cursor-pointer accent-green-500" />
+                                    <span className={`text-sm font-semibold flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
+                                    <span className="text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">{a.action_type}</span>
+                                    <span className="text-xs text-gray-500">{a.action_text}</span>
+                                  </div>
+                                  {!isCompleted && (
+                                    <input type="text" placeholder="What did you do? Add note before completing..."
+                                      value={focusCommentInput[itemKey] || ''}
+                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                      onBlur={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                      className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500 mt-1"
+                                    />
+                                  )}
+                                  {isCompleted && focusCompleted[itemKey]?.comment && (
+                                    <p className="text-green-400 text-xs mt-1">✓ {focusCompleted[itemKey].comment}</p>
+                                  )}
+                                </div>
+                              )
+                            })}
+                            {item.label !== 'Open Actions' && item.label !== 'Changed Since Last Upload' && item.getItems().map(h => {
+                              const itemKey = `${h.hop}::${item.label}`
+                              const isCompleted = !!focusCompleted[itemKey]
+                              return (
+                                <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
+                                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                    <input type="checkbox" checked={isCompleted}
+                                      onChange={() => toggleFocusItem(itemKey, item.label)}
+                                      className="w-4 h-4 cursor-pointer accent-green-500" />
+                                    <span className={`text-sm font-semibold ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
+                                    <span className="text-gray-400 text-xs">{h.gc}</span>
+                                    {h.daysOut !== null && !h.inProgress && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>}
+                                    {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
+                                    {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
+                                    {h.cutSpoNow && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO</span>}
+                                    {h.ntpWaitingOn && <span className="text-gray-500 text-xs">Waiting: {h.ntpWaitingOn.slice(0,40)}</span>}
+                                  </div>
+                                  {!isCompleted && (
+                                    <input type="text" placeholder="What did you do? Add note before completing..."
+                                      value={focusCommentInput[itemKey] || ''}
+                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                      className="w-full bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500 mt-1"
+                                    />
+                                  )}
+                                  {isCompleted && focusCompleted[itemKey]?.comment && (
+                                    <p className="text-green-400 text-xs mt-1">✓ {focusCompleted[itemKey].comment}</p>
+                                  )}
+                                </div>
+                              )
+                            })}
+                            {item.label === 'Changed Since Last Upload' && (
+                              <div className="text-center py-4">
+                                <a href="/change-log" className="text-blue-400 hover:text-blue-300 text-sm underline">Open Change Log →</a>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     ))}
                     {focusItems.filter(item => item.value > 0).length === 0 && (
