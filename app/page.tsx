@@ -424,13 +424,14 @@ export default function Home() {
     })
   }
 
-  const toggleFocusItem = async (itemKey: string, label: string) => {
+  const toggleFocusItem = async (itemKey: string, label: string, commentOverride?: string) => {
     const updated = { ...focusCompleted }
     if (updated[itemKey]) {
       delete updated[itemKey]
     } else {
+      const comment = commentOverride ?? focusCommentInput[itemKey] ?? ''
       updated[itemKey] = {
-        comment: focusCommentInput[itemKey] || '',
+        comment,
         label,
         completedAt: new Date().toISOString()
       }
@@ -970,7 +971,7 @@ export default function Home() {
                               return (
                                 <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
                                   <input type="checkbox" checked={isCompleted}
-                                    onChange={() => toggleFocusItem(itemKey, item.label)}
+                                    onChange={() => toggleFocusItem(itemKey, item.label, focusCommentInput[itemKey] || '')}
                                     className="w-4 h-4 cursor-pointer accent-green-500" />
                                   <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                   <span className="text-gray-500 text-xs">{item.label}</span>
@@ -986,7 +987,7 @@ export default function Home() {
                               return (
                                 <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
                                   <input type="checkbox" checked={isCompleted}
-                                    onChange={() => toggleFocusItem(itemKey, 'Open Action')}
+                                    onChange={() => toggleFocusItem(itemKey, 'Open Action', focusCommentInput[itemKey] || '')}
                                     className="w-4 h-4 cursor-pointer accent-green-500" />
                                   <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
                                   <span className="text-gray-500 text-xs">{a.action_type}</span>
@@ -1035,7 +1036,7 @@ export default function Home() {
                                 <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
                                   <div className="flex items-center gap-2 mb-2">
                                     <input type="checkbox" checked={isCompleted}
-                                      onChange={() => toggleFocusItem(itemKey, 'Open Action')}
+                                      onChange={() => toggleFocusItem(itemKey, 'Open Action', focusCommentInput[itemKey] || '')}
                                       className="w-4 h-4 cursor-pointer accent-green-500" />
                                     <span className={`text-sm font-semibold flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
                                     <span className="text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">{a.action_type}</span>
@@ -1062,7 +1063,7 @@ export default function Home() {
                                 <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
                                   <div className="flex items-center gap-2 mb-2 flex-wrap">
                                     <input type="checkbox" checked={isCompleted}
-                                      onChange={() => toggleFocusItem(itemKey, item.label)}
+                                      onChange={() => toggleFocusItem(itemKey, item.label, focusCommentInput[itemKey] || '')}
                                       className="w-4 h-4 cursor-pointer accent-green-500" />
                                     <span className={`text-sm font-semibold ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                     <span className="text-gray-400 text-xs">{h.gc}</span>
