@@ -7,6 +7,7 @@ import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
 interface HOP {
   hop: string
+  pathId: string
   gc: string
   cm: string
   nokiaPm: string
@@ -130,6 +131,7 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
         onClick={() => onToggle(h.hop)}>
         <div className="flex items-center gap-3 flex-wrap">
           <span className="font-bold text-white text-sm">{h.hop}</span>
+          {h.pathId && <span className="text-gray-500 text-xs">{h.pathId}</span>}
           <span className="text-gray-400 text-xs">{mode === 'gc' ? h.gc : h.cm}</span>
           {showElapsed
             ? <span className={`text-xs font-bold ${h.over18d ? 'text-red-400' : 'text-green-400'}`}>{h.daysElapsed}d elapsed</span>
@@ -433,6 +435,7 @@ export default function WeeklyFocusPage() {
     const itwECol     = col('ITW Schedule Complete')
     const ssSCol      = col('Samsung Schedule Start')
     const ssECol      = col('Samsung Schedule Complete')
+    const pathIdCol = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
 
     const hopRows = new Map<string, unknown[][]>()
     for (let i = headerRow + 1; i < rows.length; i++) {
@@ -489,6 +492,7 @@ export default function WeeklyFocusPage() {
 
       parsed.push({
         hop,
+        pathId:      String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         gc:          String(row[gcCol] || '').trim(),
         cm:          String(row[newCmCol] || '').trim(),
         nokiaPm:     String(row[nokiaPmCol] || '').trim(),

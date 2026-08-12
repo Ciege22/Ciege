@@ -17,6 +17,7 @@ const GC_CM_MAP: Record<string, string> = {
 
 interface HOP {
   hop: string
+  pathId: string
   gc: string
   ops: string
   ms15f: string
@@ -252,6 +253,7 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
               <thead>
                 <tr className="bg-gray-800 text-gray-400">
                   <th className="text-left p-2">HOP</th>
+                  <th className="text-left p-2">Path ID</th>
                   <th className="text-left p-2">FC Start</th>
                   <th className="text-left p-2">FC End</th>
                   <th className="text-left p-2">Days Out</th>
@@ -283,6 +285,7 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
                   return (
                     <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
                       <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
                       <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>{h.daysOut}d</td>
@@ -598,6 +601,7 @@ export default function GCCallPage() {
     const gcPickupFCol = col('GC Material Pick-up (F)')
     const gcPickupACol = col('GC Material Pick-up (A)')
     const cxNotesCol   = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'CX Notes:')
+    const pathIdCol = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
     const ntpOwnCol = col('NTP Action Owner')
     const ntpWaitCol= col('NTP is waiting on')
     const don444Col = col('DON 444')
@@ -766,6 +770,7 @@ export default function GCCallPage() {
 
       const hopObj: HOP = {
         hop, gc,
+        pathId:       String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         ops:          String(row[opsCol] || '').trim(),
         ms15f:        fmtDate(ms15f),
         ms15a:        fmtDate(ms15a),
@@ -865,7 +870,9 @@ export default function GCCallPage() {
           ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
           : `✅ On track — ${h.daysElapsed}d elapsed`
         const spoStatusActive = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
-        body += `★ ${h.hop} ★\n`
+        body += `★ ${h.hop} ★`
+        if (h.pathId) body += `  |  Path ID: ${h.pathId}`
+        body += '\n'
         body += `  SPO: ${spoStatusActive}\n`
         body += `  AC Start: ${h.ms15a || '—'}  |  FC Complete: ${h.ms16f || '—'}\n`
         body += `  ${status}\n`
@@ -888,7 +895,9 @@ export default function GCCallPage() {
         const steelNote = h.steelFrom === 'ITW'
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
-        body += `★ ${h.hop} ★\n`
+        body += `★ ${h.hop} ★`
+        if (h.pathId) body += `  |  Path ID: ${h.pathId}`
+        body += '\n'
         body += `  SPO: ${spoStatus}\n`
         body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
         if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
@@ -922,7 +931,9 @@ export default function GCCallPage() {
         const steelNote = h.steelFrom === 'ITW'
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
-        body += `★ ${h.hop} ★\n`
+        body += `★ ${h.hop} ★`
+        if (h.pathId) body += `  |  Path ID: ${h.pathId}`
+        body += '\n'
         body += `  SPO: ${spoStatus}\n`
         body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
         if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
@@ -1226,6 +1237,7 @@ export default function GCCallPage() {
                           <thead>
                             <tr className="bg-gray-800 text-gray-400">
                               <th className="text-left p-2">HOP</th>
+                              <th className="text-left p-2">Path ID</th>
                               <th className="text-left p-2">Started</th>
                               <th className="text-left p-2">FC End</th>
                               <th className="text-left p-2">Days Elapsed</th>
@@ -1243,6 +1255,7 @@ export default function GCCallPage() {
                             {active.map((h) => (
                               <tr key={h.hop} className={`border-t border-gray-800 ${(h.daysElapsed ?? 0) > 18 ? 'bg-red-950' : 'bg-gray-900'}`}>
                                 <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                                <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms15a || '—'}</td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
                                 <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > 18 ? 'text-red-400' : 'text-green-400'}`}>{h.daysElapsed}d</td>

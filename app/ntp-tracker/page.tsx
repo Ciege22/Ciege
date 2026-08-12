@@ -8,6 +8,7 @@ import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
 interface HOP {
   hop: string
+  pathId: string
   gc: string
   cm: string
   nokiaPm: string
@@ -237,6 +238,7 @@ export default function NTPTrackerPage() {
     const itwECol     = col('ITW Schedule Complete')
     const ssSCol      = col('Samsung Schedule Start')
     const ssECol      = col('Samsung Schedule Complete')
+    const pathIdCol = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
 
     const hopRows = new Map<string, unknown[][]>()
     for (let i = headerRow + 1; i < rows.length; i++) {
@@ -281,6 +283,7 @@ export default function NTPTrackerPage() {
 
       parsed.push({
         hop,
+        pathId:        String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         gc:            String(row[gcCol] || '').trim(),
         cm:            String(row[newCmCol] || '').trim(),
         nokiaPm:       String(row[nokiaPmCol] || '').trim(),
@@ -659,6 +662,7 @@ export default function NTPTrackerPage() {
                               <thead>
                                 <tr className="bg-gray-900 text-gray-400">
                                   <th className="text-left p-2">HOP</th>
+                                  <th className="text-left p-2">Path ID</th>
                                   <th className="text-left p-2">GC</th>
                                   <th className="text-left p-2">CM</th>
                                   <th className="text-left p-2">Nokia PM</th>
@@ -682,6 +686,7 @@ export default function NTPTrackerPage() {
                                   return (
                                     <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
                                       <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                                      <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc || '—'}</td>
                                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.cm || '—'}</td>
                                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>

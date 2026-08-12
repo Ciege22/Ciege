@@ -8,6 +8,7 @@ import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 
 interface HOP {
   hop: string
+  pathId: string
   gc: string
   cm: string
   ops: string
@@ -288,6 +289,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
               <thead>
                 <tr className="bg-gray-800 text-gray-400">
                   <th className="text-left p-2">HOP</th>
+                  <th className="text-left p-2">Path ID</th>
                   <th className="text-left p-2">GC</th>
                   <th className="text-left p-2">Days Out</th>
                   <th className="text-left p-2">NTP</th>
@@ -317,6 +319,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                   return (
                     <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
                       <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
                       <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>
                         {h.daysOut !== null ? `${h.daysOut}d` : '—'}
@@ -639,6 +642,7 @@ export default function CMViewPage() {
     const gcPickupFCol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (F)')
     const gcPickupACol = headers.findIndex(h => String(h).trim() === 'GC Material Pick-up (A)')
     const cxNotesCol   = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'CX Notes:')
+    const pathIdCol = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
     const spoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
     const cpoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
     const itwSCol     = col('ITW Schedule Start')
@@ -736,6 +740,7 @@ export default function CMViewPage() {
 
       const hopObj: HOP = {
         hop,
+        pathId:       String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         gc:           String(row[gcCol] || '').trim(),
         cm:           String(row[newCmCol] || '').trim() || String(row2?.[newCmCol] || '').trim(),
         ops:          String(row[opsCol] || '').trim(),
@@ -992,7 +997,9 @@ export default function CMViewPage() {
           const latestNote = (noteHistory[h.hop] || []).length > 0
             ? `  💬 Latest Note: ${new Date(noteHistory[h.hop][0].logged_at).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
             : ''
-          body += `★ ${h.hop} ★\n`
+          body += `★ ${h.hop} ★`
+          if (h.pathId) body += `  |  Path ID: ${h.pathId}`
+          body += '\n'
           body += `  SPO: ${spoStatus}\n`
           body += `  AC Start: ${h.ms15a || '—'}  |  FC End: ${h.ms16f || '—'}\n`
           body += `  ${status}\n`
@@ -1011,7 +1018,9 @@ export default function CMViewPage() {
           const latestNote = (noteHistory[h.hop] || []).length > 0
             ? `  💬 Latest Note: ${new Date(noteHistory[h.hop][0].logged_at).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
             : ''
-          body += `★ ${h.hop} ★\n`
+          body += `★ ${h.hop} ★`
+          if (h.pathId) body += `  |  Path ID: ${h.pathId}`
+          body += '\n'
           body += `  SPO: ${spoStatus}\n`
           body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
           if (!h.hasNtp && h.ntpWaitingOn) body += `  |  Waiting On: ${h.ntpWaitingOn}`
@@ -1222,6 +1231,7 @@ export default function CMViewPage() {
                           <thead>
                             <tr className="bg-gray-800 text-gray-400">
                               <th className="text-left p-2">HOP</th>
+                              <th className="text-left p-2">Path ID</th>
                               <th className="text-left p-2">GC</th>
                               <th className="text-left p-2">Started</th>
                               <th className="text-left p-2">FC End</th>
@@ -1244,6 +1254,7 @@ export default function CMViewPage() {
                             {active.map(h => (
                               <tr key={h.hop} className={`border-t border-gray-800 ${h.statuses.some(s => s.includes('⚠️')) ? 'bg-red-950' : 'bg-gray-900'}`}>
                                 <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                                <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15a}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
