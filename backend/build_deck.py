@@ -326,6 +326,9 @@ def extract_data(tracker_path: str, snapshot_path: str,
         return None
     _ntp_wait_col = _find_ntp_wait_col()
 
+    _path_id_col = next((c for c in df.columns if str(c).strip().replace("'", "") == 'Path ID'), None)
+    df['_path_id'] = df[_path_id_col].astype(str).str.strip() if _path_id_col else ''
+
     # String columns
     str_cols = {
         '_pm': 'Nokia PM', '_gc': 'General Contractor', '_new_cm': 'New CM',
@@ -538,7 +541,8 @@ def extract_data(tracker_path: str, snapshot_path: str,
                 'HOP': r['HOP'], 'GC': gv(r, 'General Contractor'),
                 'CM': gv(r, 'New CM'), 'owner': gv(r, 'NTP Action Owner'),
                 'waiting': gv(r, '_ntp_wait'), 'cx': gv(r, '_cx'), 'cat': cat,
-                'ms15f': r.get(ms15f_col), 'has_mat': bool(r['has_mat'])
+                'ms15f': r.get(ms15f_col), 'has_mat': bool(r['has_mat']),
+                'path_id': str(r.get('_path_id', '')).strip()
             })
         pending_rows.sort(key=lambda x: 0 if x['cat'] == 'External'
                          else (2 if x['cat'] == 'Program Team' else 1))
@@ -1715,9 +1719,9 @@ def generate_ntp_comments(data: dict, output_path: str):
         ws = wb.create_sheet(mo_name)
         p = por[mo_key]; comments = ntp_comments.get(sheet_key, {})
         sorted_rows = sorted(p['pending_rows'], key=sort_key)
-        hdrs = ['HOP','Category','Action Owner','GC','FC Start','FC End',
+        hdrs = ['HOP','Path ID','Category','Action Owner','GC','FC Start','FC End',
                 'NTP Blocker / Waiting On','COMMENT (fill after call)','STATUS']
-        col_widths = [45,14,18,14,10,10,50,58,16]
+        col_widths = [45,14,14,18,14,10,10,50,58,16]
         for ci, (hdr, cw) in enumerate(zip(hdrs, col_widths), 1):
             c = ws.cell(row=1, column=ci, value=hdr)
             c.fill = PatternFill('solid', fgColor=NAVY)
@@ -1725,14 +1729,14 @@ def generate_ntp_comments(data: dict, output_path: str):
             c.alignment = Alignment(horizontal='center', vertical='center')
             ws.column_dimensions[get_column_letter(ci)].width = cw
         ws.row_dimensions[1].height = 21.95
-        ws.merge_cells('A2:I2')
+        ws.merge_cells('A2:J2')
         c = ws.cell(row=2, column=1,
                     value='Sorted to match slides: External first → FC End oldest to newest.')
         c.fill = PatternFill('solid', fgColor=LT_BLUE)
         c.font = Font(name='Calibri', size=9, color=GRAY)
         c.alignment = Alignment(horizontal='left', vertical='center')
         ws.row_dimensions[2].height = 14.1
-        ws.merge_cells('A3:I3')
+        ws.merge_cells('A3:J3')
         c = ws.cell(row=3, column=1,
                     value='🔴 External  |  🟠 Other  |  🔵 Program Team  |  STATUS: "Action Taken" | "In Progress" | "Needs Attention" | "Pending"')
         c.font = Font(name='Calibri', size=8, color=AMBER_H)
@@ -1744,7 +1748,7 @@ def generate_ntp_comments(data: dict, output_path: str):
             if cat != last_cat:
                 cat_label = {'External':'🔴 EXTERNAL BLOCKERS','Other':'🟠 OTHER',
                              'Program Team':'🔵 PROGRAM TEAM ACTIONS'}[cat]
-                ws.merge_cells(f'A{data_row}:I{data_row}')
+                ws.merge_cells(f'A{data_row}:J{data_row}')
                 c = ws.cell(row=data_row, column=1, value=cat_label)
                 divider_fill = {'External':RED_H,'Other':ORANGE_H,'Program Team':NAVY}[cat]
                 c.fill = PatternFill('solid', fgColor=divider_fill)
@@ -1761,13 +1765,13 @@ def generate_ntp_comments(data: dict, output_path: str):
             fc_s = fmt_dm_local(h.get('ms15f'))
             fc_e = fmt_dm_local(hop_ms16f.get(h['HOP']))
             blocker = h['waiting'] or h.get('cx', '')
-            vals = [h['HOP'],cat,h['owner'],h['GC'],fc_s,fc_e,
+            vals = [h['HOP'],h.get('path_id',''),cat,h['owner'],h['GC'],fc_s,fc_e,
                     blocker,existing_comment,status]
             for ci, val in enumerate(vals, 1):
                 c = ws.cell(row=data_row, column=ci, value=val)
                 c.fill = PatternFill('solid', fgColor=bg_fill)
-                c.font = Font(name='Calibri', bold=(ci in [1,2]), size=9,
-                              color=font_color if ci == 2 else '000000')
+                c.font = Font(name='Calibri', bold=(ci in [1,3]), size=9,
+                              color=font_color if ci == 3 else '000000')
                 c.alignment = Alignment(horizontal='left', vertical='center', wrap_text=True)
             ws.row_dimensions[data_row].height = 20.1; data_row += 1
 
@@ -1952,6 +1956,7 @@ def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
         ws = wb[sheet_name]
         headers = [str(ws.cell(1, c).value or '').strip() for c in range(1, ws.max_column + 1)]
         hop_col      = next((i for i, h in enumerate(headers) if h == 'HOP'), None)
+        path_id_col  = next((i for i, h in enumerate(headers) if 'Path' in h or 'path' in h), None)
         owner_col    = next((i for i, h in enumerate(headers) if 'Owner' in h), None)
         waiting_col  = next((i for i, h in enumerate(headers) if 'Blocker' in h or 'Waiting' in h or 'Wait' in h), None)
         gc_col       = next((i for i, h in enumerate(headers) if h == 'GC'), None)
@@ -1965,6 +1970,7 @@ def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
             hop = str(row[hop_col]).strip()
             if not hop or hop.lower() in ['hop', 'none', '']:
                 continue
+            path_id  = str(row[path_id_col] or '').strip() if path_id_col is not None else ''
             owner    = str(row[owner_col] or '').strip() if owner_col is not None else ''
             waiting  = str(row[waiting_col] or '').strip() if waiting_col is not None else ''
             gc       = str(row[gc_col] or '').strip() if gc_col is not None else ''
@@ -1972,7 +1978,7 @@ def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
             comment  = str(row[comment_col] or '').strip() if comment_col is not None else ''
             if not owner or owner in ['External', 'Program Team', 'Other']:
                 continue
-            all_hops.append({'hop': hop, 'gc': gc, 'owner': owner, 'waiting': waiting, 'fc_start': fc_start, 'comment': comment})
+            all_hops.append({'hop': hop, 'path_id': path_id, 'gc': gc, 'owner': owner, 'waiting': waiting, 'fc_start': fc_start, 'comment': comment})
 
     seen = {}
     for h in all_hops:
@@ -2004,7 +2010,10 @@ def generate_ntp_emails_from_file(ntp_comments_path: str) -> dict:
         star_div = '═' * 60
         body = f'{star_div}\n★★★  {label} ACTION REQUIRED  ★★★\n{star_div}\n\n'
         for h in hops_list:
-            body += f'★ {h["hop"]} ★\n'
+            body += f'★ {h["hop"]} ★'
+            if h.get('path_id') and h['path_id'] not in ['', 'nan', 'None']:
+                body += f'  |  Path ID: {h["path_id"]}'
+            body += '\n'
             if h['waiting']:
                 body += f'  ⏳ NTP Waiting On: {h["waiting"]}\n'
             if h['fc_start']:
