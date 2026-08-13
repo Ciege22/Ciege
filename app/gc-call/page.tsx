@@ -5,6 +5,8 @@ export const dynamic = 'force-dynamic'
 import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
+import { GrRow, loadGrRows, groupGrRows, sortGrRows, buildGrEmailMailto, fmtMoney } from '../lib/grTracker'
 
 
 const GC_CM_MAP: Record<string, string> = {
@@ -13,6 +15,252 @@ const GC_CM_MAP: Record<string, string> = {
   'Mastec': 'Benny',
   'Vikor': 'Benny',
   'Tech CX': 'Hap',
+}
+
+// Same raw-row column layout as app/reports/page.tsx's SPO/CR download section.
+const SPO_COL_IDX = [7, 8, 33, 40, 41, 43, 47, 48, 49, 50, 51]
+const SPO_HEADERS = ['Customer Site ID', 'Name', 'SOG Name', 'SPO Number', 'SPO Creation Date', 'SPO Vendor', 'SPO Value', 'IA Date', 'IA User', 'GR Date', 'GR Number']
+const CR_COL_IDX = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 16, 18, 19, 25, 26, 27, 28, 29, 30, 31]
+const CR_HEADERS = ['Requestor', 'Supplier Name', 'Path ID', 'Site Name', 'Site #', 'Network Site Name', 'Risk Budget', 'Materials or Labor', 'Reason for CR Details', 'Viaero Operation CR Filed', 'CR Type', 'Sellable to Who', 'PM Status', 'PM Status Owner', 'SPO Cost', 'GC Quote Shared', 'CQT Package', 'SPO #', 'SPO Issued Date', 'SPO IA/GR', 'CQT ID']
+const REPORT_NAVY = '124191'
+
+function downloadGcFilteredReport(rows: unknown[][], colIdx: number[], headers: string[], vendorColInMaster: number, matchList: string[], filename: string) {
+  const gcRows = rows.filter(row => matches(row[vendorColInMaster], matchList))
+
+  const wb = XLSX.utils.book_new()
+  const sheetData = [
+    headers,
+    ...gcRows.map(row => colIdx.map(i => {
+      const val = row[i]
+      if (val instanceof Date) return val.toLocaleDateString('en-US')
+      return val ?? ''
+    }))
+  ]
+
+  const ws = XLSX.utils.aoa_to_sheet(sheetData)
+
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: 0, c })]
+    if (cell) {
+      cell.s = {
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: REPORT_NAVY } },
+        alignment: { horizontal: 'center', wrapText: true }
+      }
+    }
+  }
+
+  ws['!cols'] = headers.map((h, i) => {
+    const maxLen = Math.max(h.length, ...sheetData.slice(1).map(r => String(r[i] || '').length))
+    return { wch: Math.min(Math.max(maxLen + 2, 10), 40) }
+  })
+
+  XLSX.utils.book_append_sheet(wb, ws, headers[0].includes('SPO') || filename.includes('SPO') ? 'SPO Report' : 'CR Tracker')
+  XLSX.writeFile(wb, filename)
+}
+
+interface GrInvoicingTabProps {
+  selectedGC: string
+  grRows: GrRow[]
+  grLoaded: boolean
+}
+
+function GrInvoicingTab({ selectedGC, grRows, grLoaded }: GrInvoicingTabProps) {
+  const [readyOpen, setReadyOpen] = useState(true)
+  const [awaitingOpen, setAwaitingOpen] = useState(true)
+  const [awarenessOpen, setAwarenessOpen] = useState(true)
+
+  if (!grLoaded) return <p className="text-gray-400 text-sm">Loading GR data...</p>
+
+  const gcGrRows = grRows.filter(r => r.gc === selectedGC)
+  const groups = groupGrRows(gcGrRows)
+  const ready = sortGrRows(groups.ready)
+  const awaiting = sortGrRows(groups.awaiting)
+  const awareness = groups.awareness
+  const emailMailto = ready.length > 0 ? buildGrEmailMailto(selectedGC, ready) : null
+
+  const statusChip = (status: GrRow['status']) => (
+    <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
+      status === 'GR Done' ? 'bg-green-900 text-green-200'
+      : status === 'Ready to Release' ? 'bg-orange-900 text-orange-200'
+      : 'bg-gray-700 text-gray-300'
+    }`}>
+      {status === 'GR Done' ? '✓ GR Done' : status === 'Ready to Release' ? '⏳ Pending' : 'Not Yet'}
+    </span>
+  )
+
+  return (
+    <div className="space-y-6">
+      {/* Section 1 — Ready to Release */}
+      <div>
+        <div className="flex items-center justify-between cursor-pointer mb-2" onClick={() => setReadyOpen(!readyOpen)}>
+          <h3 className="text-lg font-semibold text-white">✅ Ready to Release ({ready.length})</h3>
+          <span className="text-gray-500 text-sm">{readyOpen ? '▲' : '▼'}</span>
+        </div>
+        {readyOpen && (
+          ready.length === 0 ? <p className="text-gray-500 text-sm">No sites ready to release</p> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-800 text-gray-400">
+                    <th className="text-left p-2">HOP</th>
+                    <th className="text-left p-2">Path ID</th>
+                    <th className="text-left p-2">SOG Name</th>
+                    <th className="text-left p-2">SPO #</th>
+                    <th className="text-left p-2">SPO Value</th>
+                    <th className="text-left p-2">Trigger Date</th>
+                    <th className="text-left p-2">GR Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ready.map(r => (
+                    <tr key={`${r.hop}-${r.sogName}`} className="border-t border-gray-800 text-gray-200">
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hopDisplay}</td>
+                      <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
+                      <td className="p-2 whitespace-nowrap">{r.sogName}</td>
+                      <td className="p-2 whitespace-nowrap">{r.spoNumber || '—'}</td>
+                      <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
+                      <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>
+                      <td className="p-2">{statusChip(r.status)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+        <button onClick={() => { if (emailMailto) window.open(emailMailto) }}
+          disabled={!emailMailto}
+          className="mt-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
+          ✉️ Generate GR Email — {selectedGC} ({ready.length} pending)
+        </button>
+      </div>
+
+      {/* Section 2 — Awaiting Trigger */}
+      <div>
+        <div className="flex items-center justify-between cursor-pointer mb-2" onClick={() => setAwaitingOpen(!awaitingOpen)}>
+          <h3 className="text-lg font-semibold text-gray-400">⏳ Awaiting Trigger ({awaiting.length})</h3>
+          <span className="text-gray-500 text-sm">{awaitingOpen ? '▲' : '▼'}</span>
+        </div>
+        {awaitingOpen && (
+          awaiting.length === 0 ? <p className="text-gray-500 text-sm">No sites awaiting trigger</p> : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-800 text-gray-500">
+                    <th className="text-left p-2">HOP</th>
+                    <th className="text-left p-2">Path ID</th>
+                    <th className="text-left p-2">SOG Name</th>
+                    <th className="text-left p-2">SPO #</th>
+                    <th className="text-left p-2">SPO Value</th>
+                    <th className="text-left p-2">Trigger Date</th>
+                    <th className="text-left p-2">GR Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {awaiting.map(r => (
+                    <tr key={`${r.hop}-${r.sogName}`} className="border-t border-gray-800 text-gray-500">
+                      <td className="p-2 font-semibold whitespace-nowrap">{r.hopDisplay}</td>
+                      <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
+                      <td className="p-2 whitespace-nowrap">{r.sogName}</td>
+                      <td className="p-2 whitespace-nowrap">{r.spoNumber || '—'}</td>
+                      <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
+                      <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>
+                      <td className="p-2">{statusChip(r.status)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        )}
+      </div>
+
+      {/* Section 3 — Awaiting Other PM (Decom/SCOP) */}
+      <div>
+        <div className="flex items-center justify-between cursor-pointer mb-2" onClick={() => setAwarenessOpen(!awarenessOpen)}>
+          <h3 className="text-base font-semibold text-gray-500">👁 Awaiting Other PM — Decom/SCOP (awareness only)</h3>
+          <span className="text-gray-600 text-sm">{awarenessOpen ? '▲' : '▼'}</span>
+        </div>
+        {awarenessOpen && (
+          <>
+            <p className="text-gray-600 text-xs mb-2">Not your action — shown for awareness only</p>
+            {awareness.length === 0 ? <p className="text-gray-600 text-sm">No Decom/SCOP rows</p> : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-900 text-gray-600">
+                      <th className="text-left p-2">HOP</th>
+                      <th className="text-left p-2">Path ID</th>
+                      <th className="text-left p-2">SOG Name</th>
+                      <th className="text-left p-2">SPO Value</th>
+                      <th className="text-left p-2">GR Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {awareness.map(r => (
+                      <tr key={`${r.hop}-${r.sogName}`} className="border-t border-gray-900 text-gray-600">
+                        <td className="p-2 whitespace-nowrap">{r.hopDisplay}</td>
+                        <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
+                        <td className="p-2 whitespace-nowrap">{r.sogName}</td>
+                        <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
+                        <td className="p-2 whitespace-nowrap">{r.grDate ? '✓ GR Done' : 'Not Yet'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+interface GcReportsTabProps {
+  selectedGC: string
+  spoRawRows: unknown[][]
+  crRawRows: unknown[][]
+}
+
+function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) {
+  const cfg = GC_CONFIG.find(c => c.gc === selectedGC)
+  const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
+
+  if (!cfg) return <p className="text-gray-400 text-sm">No report configuration found for {selectedGC}.</p>
+
+  const spoCount = spoRawRows.filter(row => matches(row[SPO_VENDOR_COL_IN_MASTER], cfg.spo_match)).length
+  const crCount = crRawRows.filter(row => matches(row[CR_SUPPLIER_COL_IN_MASTER], cfg.cr_match)).length
+
+  return (
+    <div className="bg-gray-800 rounded-xl border border-gray-700 p-5 max-w-md">
+      <h3 className="font-bold text-white text-base mb-1">{selectedGC} — SPO / CR Reports</h3>
+      <div className="flex gap-2 text-xs text-gray-500 mb-4">
+        <span>{spoCount} SPO rows</span>
+        <span>·</span>
+        <span>{crCount} CR rows</span>
+      </div>
+      <div className="flex flex-col gap-2">
+        <button
+          onClick={() => downloadGcFilteredReport(spoRawRows, SPO_COL_IDX, SPO_HEADERS, SPO_VENDOR_COL_IN_MASTER, cfg.spo_match, `${cfg.spo_label}_-_SPO_Report_-_${today}.xlsx`)}
+          disabled={spoRawRows.length === 0}
+          className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
+          📥 Download SPO Report
+        </button>
+        <button
+          onClick={() => downloadGcFilteredReport(crRawRows, CR_COL_IDX, CR_HEADERS, CR_SUPPLIER_COL_IN_MASTER, cfg.cr_match, `${cfg.cr_label}_-_CR_Tracker_-_${today}.xlsx`)}
+          disabled={crRawRows.length === 0}
+          className="bg-teal-700 hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
+          📥 Download CR Tracker
+        </button>
+      </div>
+      {spoRawRows.length === 0 && crRawRows.length === 0 && (
+        <p className="text-gray-500 text-xs mt-3">Upload SPO/CR master reports on the Reports page to enable downloads here.</p>
+      )}
+    </div>
+  )
 }
 
 interface HOP {
@@ -413,6 +661,30 @@ export default function GCCallPage() {
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [clearedNoteIds, setClearedNoteIds] = useState<Set<string>>(new Set())
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'gr' | 'reports'>('pipeline')
+  const [grRows, setGrRows] = useState<GrRow[]>([])
+  const [grLoaded, setGrLoaded] = useState(false)
+  const [spoRawRows, setSpoRawRows] = useState<unknown[][]>([])
+  const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
+
+  useEffect(() => {
+    const loadGr = async () => {
+      const rows = await loadGrRows()
+      setGrRows(rows)
+      setGrLoaded(true)
+    }
+    loadGr()
+  }, [])
+
+  useEffect(() => {
+    const loadReports = async () => {
+      const { data: spoSnap } = await supabase.from('report_snapshots').select('data').eq('id', 'spo').single()
+      const { data: crSnap } = await supabase.from('report_snapshots').select('data').eq('id', 'cr').single()
+      if (spoSnap?.data) setSpoRawRows(JSON.parse(spoSnap.data))
+      if (crSnap?.data) setCrRawRows(JSON.parse(crSnap.data))
+    }
+    loadReports()
+  }, [])
 
   useEffect(() => {
     const loadClearedNotes = async () => {
@@ -1224,6 +1496,21 @@ export default function GCCallPage() {
               </div>
             </div>
 
+            {/* Tab Bar */}
+            <div className="flex gap-2 mb-6 border-b border-gray-800 pb-3">
+              {([
+                { key: 'pipeline', label: 'Pipeline' },
+                { key: 'gr', label: '💰 GR / Invoicing' },
+                { key: 'reports', label: 'Reports' },
+              ] as const).map(t => (
+                <button key={t.key} onClick={() => setActiveTab(t.key)}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === t.key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                  {t.label}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'pipeline' && (
             <div className="space-y-8">
 
                 {/* Active Sites */}
@@ -1331,6 +1618,24 @@ export default function GCCallPage() {
                 </div>
 
               </div>
+            )}
+
+            {activeTab === 'gr' && (
+              <GrInvoicingTab
+                selectedGC={selectedGC}
+                grRows={grRows}
+                grLoaded={grLoaded}
+              />
+            )}
+
+            {activeTab === 'reports' && (
+              <GcReportsTab
+                selectedGC={selectedGC}
+                spoRawRows={spoRawRows}
+                crRawRows={crRawRows}
+              />
+            )}
+
           </div>
         )}
 

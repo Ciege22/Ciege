@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
+import { GrRow, loadGrRows, groupGrRows, sortGrRows, fmtMoney, fmtMoneyShort } from './lib/grTracker'
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
@@ -161,6 +162,11 @@ export default function Home() {
   const [focusModal, setFocusModal] = useState<{ label: string; items: typeof hopDetails } | null>(null)
   const [openActionsData, setOpenActionsData] = useState<{ id: string; hop_name: string; action_text: string; action_type: string }[]>([])
   const [savedComments, setSavedComments] = useState<Record<string, string[]>>({})
+  const [grRows, setGrRows] = useState<GrRow[]>([])
+  const [grLoaded, setGrLoaded] = useState(false)
+  const [grExpanded, setGrExpanded] = useState(false)
+  const [grFocusCompleted, setGrFocusCompleted] = useState<Record<string, { comment: string; completedAt: string }>>({})
+  const [grFocusCommentInput, setGrFocusCommentInput] = useState<Record<string, string>>({})
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -422,6 +428,32 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
+    const loadGr = async () => {
+      const rows = await loadGrRows()
+      setGrRows(rows)
+      setGrLoaded(true)
+    }
+    loadGr()
+  }, [])
+
+  useEffect(() => {
+    const loadGrFocusCompleted = async () => {
+      const todayKey = `focus-gr-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+      const { data } = await supabase
+        .from('pm_updates_cache')
+        .select('updates')
+        .eq('id', todayKey)
+        .single()
+      if (data?.updates) {
+        try {
+          setGrFocusCompleted(JSON.parse(data.updates))
+        } catch {}
+      }
+    }
+    loadGrFocusCompleted()
+  }, [])
+
+  useEffect(() => {
     const loadOpenActions = async () => {
       const { data } = await supabase
         .from('hop_actions')
@@ -440,6 +472,37 @@ export default function Home() {
       updates: JSON.stringify(updated),
       updated_at: new Date().toISOString()
     })
+  }
+
+  const saveGrFocusCompleted = async (updated: typeof grFocusCompleted) => {
+    const todayKey = `focus-gr-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+    await supabase.from('pm_updates_cache').upsert({
+      id: todayKey,
+      updates: JSON.stringify(updated),
+      updated_at: new Date().toISOString()
+    })
+  }
+
+  const toggleGrFocusItem = async (itemKey: string) => {
+    const updated = { ...grFocusCompleted }
+    if (updated[itemKey]) {
+      delete updated[itemKey]
+    } else {
+      updated[itemKey] = {
+        comment: grFocusCommentInput[itemKey] || '',
+        completedAt: new Date().toISOString()
+      }
+    }
+    setGrFocusCompleted(updated)
+    await saveGrFocusCompleted(updated)
+  }
+
+  const saveGrComment = async (itemKey: string) => {
+    if (!grFocusCompleted[itemKey]) return
+    const comment = (grFocusCommentInput[itemKey] || '').trim()
+    const updated = { ...grFocusCompleted, [itemKey]: { ...grFocusCompleted[itemKey], comment } }
+    setGrFocusCompleted(updated)
+    await saveGrFocusCompleted(updated)
   }
 
   const saveComment = async (itemKey: string) => {
@@ -755,6 +818,11 @@ export default function Home() {
     currentMonthFcComplete: filteredDetails.filter(h => h.currentMonthFc).length,
     currentMonthActComplete: filteredDetails.filter(h => h.currentMonthAct).length,
   } : null
+
+  const grFiltered = pmFilter === 'ALL' ? grRows : grRows.filter(r => r.nokiaPm === pmFilter)
+  const grGroups = groupGrRows(grFiltered)
+  const grReady = sortGrRows(grGroups.ready)
+  const grAwareness = grGroups.awareness
 
   const focusItems = filteredKpis ? [
     {
@@ -1186,6 +1254,87 @@ export default function Home() {
                       </div>
                     )}
                   </div>
+
+                  {/* GR Ready to Release */}
+                  {grLoaded && (
+                    <div className="mt-2">
+                      <div
+                        onClick={() => setGrExpanded(!grExpanded)}
+                        className={`flex items-center justify-between bg-gray-900 border rounded-xl px-5 py-3 cursor-pointer transition-all ${grReady.length > 0 ? 'border-orange-800 hover:border-orange-600' : 'border-gray-700 hover:border-gray-500'}`}>
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">💰</span>
+                          <div>
+                            <span className="text-white text-sm font-semibold">GR Ready to Release</span>
+                            <span className="text-gray-500 text-xs ml-2">GR / Invoicing releases needing action</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xl font-bold ${grReady.length > 0 ? 'text-orange-400' : 'text-gray-500'}`}>{grReady.length}</span>
+                          <span className="text-gray-600 text-xs">HOPs</span>
+                          <span className="text-gray-500 text-sm">{grExpanded ? '▲' : '▼'}</span>
+                        </div>
+                      </div>
+
+                      {grExpanded && (
+                        <div className="bg-gray-900 border border-t-0 border-gray-700 rounded-b-xl p-4">
+                          {grReady.length === 0 ? (
+                            <p className="text-gray-500 text-sm">No GR releases pending right now</p>
+                          ) : (
+                            <div className="overflow-x-auto">
+                              <table className="w-full text-xs">
+                                <thead>
+                                  <tr className="bg-gray-800 text-gray-400">
+                                    <th className="text-left p-2">HOP</th>
+                                    <th className="text-left p-2">GC</th>
+                                    <th className="text-left p-2">SOG Name</th>
+                                    <th className="text-left p-2">SPO Value</th>
+                                    <th className="text-left p-2">Trigger Date</th>
+                                    <th className="text-left p-2">Done</th>
+                                    <th className="text-left p-2">Comment</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {grReady.map(r => {
+                                    const itemKey = `${r.hop}::${r.sogName}`
+                                    const isCompleted = !!grFocusCompleted[itemKey]
+                                    return (
+                                      <tr key={itemKey} className={`border-t border-gray-800 ${isCompleted ? 'opacity-50' : ''}`}>
+                                        <td className={`p-2 font-semibold whitespace-nowrap ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{r.hopDisplay}</td>
+                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.gc}</td>
+                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.sogName}</td>
+                                        <td className="p-2 text-gray-400 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
+                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.triggerDate || '—'}</td>
+                                        <td className="p-2">
+                                          <input type="checkbox" checked={isCompleted}
+                                            onChange={() => toggleGrFocusItem(itemKey)}
+                                            className="w-4 h-4 cursor-pointer accent-green-500" />
+                                        </td>
+                                        <td className="p-2">
+                                          <div className="flex gap-1">
+                                            <input type="text" placeholder="Note..."
+                                              value={grFocusCommentInput[itemKey] ?? (isCompleted ? grFocusCompleted[itemKey].comment : '')}
+                                              onChange={(e) => setGrFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                              className="w-40 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                                            <button onClick={() => saveGrComment(itemKey)}
+                                              className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                          )}
+                          {grAwareness.length > 0 && (
+                            <p className="text-gray-600 text-xs mt-3">
+                              👁 Awaiting Other PM (Decom/SCOP): {grAwareness.length} HOPs · {fmtMoneyShort(grAwareness.reduce((s, r) => s + r.spoValue, 0))} total · awareness only
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
           </main>

@@ -3,8 +3,10 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
+import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 
 interface ReportSnapshot {
   filename: string
@@ -12,33 +14,14 @@ interface ReportSnapshot {
   row_count: number
 }
 
-const GC_CONFIG = [
-  { gc: 'Mastec',   cr_match: ['mastec'],           spo_match: ['mastec network solutions llc'],                                          cr_label: 'MasTec',    spo_label: 'MASTEC_NETWORK_SOLUTIONS_LLC' },
-  { gc: 'MZI',      cr_match: ['mzi group'],         spo_match: ['mzi group inc'],                                                          cr_label: 'MZI_Group', spo_label: 'MZI_GROUP_INC' },
-  { gc: 'NV Tel',   cr_match: ['nv-tel', 'nv tel'],  spo_match: ['nv tel inc'],                                                             cr_label: 'NV-Tel',    spo_label: 'NV_TEL_INC' },
-  { gc: 'Tech CX',  cr_match: ['tech cx'],            spo_match: ['tech construction inc'],                                                  cr_label: 'Tech_Cx',   spo_label: 'TECH_CONSTRUCTION_INC' },
-  { gc: 'Vikor',    cr_match: ['vikor'],              spo_match: ['sioux falls tower specialists inc.', 'sioux falls tower specialists inc'], cr_label: 'Vikor',     spo_label: 'SIOUX_FALLS_TOWER_SPECIALISTS_INC' },
-  { gc: 'TCE',      cr_match: ['tce'],                spo_match: ['tower communications experts. llc', 'tower communications experts llc'],  cr_label: 'TCE',       spo_label: 'TOWER_COMMUNICATIONS_EXPERTS_LLC' },
-  { gc: 'InSite',   cr_match: ['insite'],             spo_match: ['insite telecom llc'],                                                     cr_label: 'InSite',    spo_label: 'INSITE_TELECOM_LLC' },
-]
-
 const SPO_COL_IDX = [7, 8, 33, 40, 41, 43, 47, 48, 49, 50, 51]
 const SPO_HEADERS = ['Customer Site ID', 'Name', 'SOG Name', 'SPO Number', 'SPO Creation Date', 'SPO Vendor', 'SPO Value', 'IA Date', 'IA User', 'GR Date', 'GR Number']
 
 const CR_COL_IDX = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 11, 16, 18, 19, 25, 26, 27, 28, 29, 30, 31]
 const CR_HEADERS = ['Requestor', 'Supplier Name', 'Path ID', 'Site Name', 'Site #', 'Network Site Name', 'Risk Budget', 'Materials or Labor', 'Reason for CR Details', 'Viaero Operation CR Filed', 'CR Type', 'Sellable to Who', 'PM Status', 'PM Status Owner', 'SPO Cost', 'GC Quote Shared', 'CQT Package', 'SPO #', 'SPO Issued Date', 'SPO IA/GR', 'CQT ID']
 
-const SPO_VENDOR_COL_IN_MASTER = 43
-const CR_SUPPLIER_COL_IN_MASTER = 1
-
 const NAVY = '124191'
 const TEAL = '00A0B0'
-
-function matches(value: unknown, matchList: string[]): boolean {
-  if (!value) return false
-  const v = String(value).trim().toLowerCase()
-  return matchList.some(m => v === m.toLowerCase())
-}
 
 function fmtDate(val: unknown): string {
   if (!val) return ''
@@ -86,6 +69,7 @@ function downloadGCReport(rows: unknown[][], colIdx: number[], headers: string[]
 }
 
 export default function ReportsPage() {
+  const router = useRouter()
   const [spoRows, setSpoRows] = useState<unknown[][]>([])
   const [crRows, setCrRows] = useState<unknown[][]>([])
   const [spoInfo, setSpoInfo] = useState<ReportSnapshot | null>(null)
@@ -174,6 +158,19 @@ export default function ReportsPage() {
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Reports</h1>
           <p className="text-gray-400 mt-1">Upload SPO and CR master reports — download GC-specific filtered Excel files on demand</p>
+        </div>
+
+        {/* Tab Bar */}
+        <div className="flex gap-2 mb-6">
+          <button
+            className="px-5 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white shadow-lg">
+            SPO / CR Reports
+          </button>
+          <button
+            onClick={() => router.push('/gr-tracker')}
+            className="px-5 py-2 rounded-lg text-sm font-semibold bg-gray-800 text-gray-300 hover:bg-gray-700">
+            💰 GR Tracker
+          </button>
         </div>
 
         {/* Upload Section */}

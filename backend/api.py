@@ -17,6 +17,7 @@ from supabase import create_client
 # Ensure backend package path is importable when running this file directly
 sys.path.append(os.path.dirname(__file__))
 import build_deck
+import gr_tracker
 
 app = Flask(__name__)
 CORS(app)
@@ -140,6 +141,20 @@ def ntp_emails_endpoint():
 		emails = build_deck.generate_ntp_emails_from_file(ntp_path)
 		os.unlink(ntp_path)
 		return jsonify(emails)
+	except Exception as e:
+		tb = traceback.format_exc()
+		return jsonify({'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/gr_data', methods=['POST'])
+def gr_data_endpoint():
+	try:
+		if not supabase_client:
+			return jsonify({'error': 'Supabase not configured'}), 500
+		body = request.get_json(silent=True) or {}
+		gc_filter = body.get('gc') or None
+		groups = gr_tracker.load_gr_data(supabase_client, gc_filter=gc_filter)
+		return jsonify(groups)
 	except Exception as e:
 		tb = traceback.format_exc()
 		return jsonify({'error': str(e), 'traceback': tb}), 500
