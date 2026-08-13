@@ -173,7 +173,7 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded }: GrInvoicingTabProps) {
                   {r.isDecomScop && <span className="mr-1">👁</span>}{r.hopDisplay}
                 </td>
                 <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
-                <td className="p-2 whitespace-nowrap">{r.sogName || '—'}</td>
+                <td className="p-2 whitespace-nowrap">{r.sogName || 'CR'}</td>
                 <td className="p-2 whitespace-nowrap">{r.spoNumber || '—'}</td>
                 <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
                 <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>

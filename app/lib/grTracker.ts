@@ -13,7 +13,7 @@ const SPO_COL = {
   grDate: 50,
 }
 
-export type GrTier = 'init20' | '60' | '70' | '20' | '30' | null
+export type GrTier = 'init20' | '60' | '70' | '20' | '30' | 'CR' | null
 export type GrTrigger = 'MS15A' | 'MS16A' | null
 export type GrStatus = 'GR Done' | 'Ready to Release' | 'Awaiting Trigger'
 
@@ -195,8 +195,9 @@ export function buildGrRows(spoRows: unknown[][], trackerDateMap: Map<string, Tr
 
     // CR rows have no SOG tier to classify, so they carry no trigger gate —
     // treated as always eligible for release until GR'd (business decision).
+    // "CR" is itself a formal tier so these rows participate in tier filtering.
     const sog = rowType === 'cr'
-      ? { tier: null as GrTier, trigger: null as GrTrigger, cjActionable: true, tierLabel: '', isDecomScop: false }
+      ? { tier: 'CR' as GrTier, trigger: null as GrTrigger, cjActionable: true, tierLabel: 'CR', isDecomScop: false }
       : classifySog(sogNameRaw)
 
     const vendor = row[SPO_COL.spoVendor]
@@ -380,7 +381,7 @@ export function buildGrEmailMailto(gc: string, rows: GrRow[]): string {
     body += `★ ${g.hopDisplay} ★  |  Path ID: ${g.pathId}\n`
     g.rows.forEach(r => {
       total += r.spoValue
-      body += `  • ${r.sogName} — SPO #: ${r.spoNumber || '—'} — Value: ${fmtMoney(r.spoValue)} — Trigger: ${r.triggerDate || '—'}\n`
+      body += `  • ${r.sogName || 'CR'} — SPO #: ${r.spoNumber || '—'} — Value: ${fmtMoney(r.spoValue)} — Trigger: ${r.triggerDate || '—'}\n`
     })
     body += `\n`
   })

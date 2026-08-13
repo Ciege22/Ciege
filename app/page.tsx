@@ -168,6 +168,7 @@ export default function Home() {
   const [grFocusCompleted, setGrFocusCompleted] = useState<Record<string, { comment: string; completedAt: string }>>({})
   const [grFocusCommentInput, setGrFocusCommentInput] = useState<Record<string, string>>({})
   const [grSortBy, setGrSortBy] = useState<GrSortOption>('trigger')
+  const [grRowTypeFilter, setGrRowTypeFilter] = useState<'all' | 'base' | 'cr'>('all')
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -822,7 +823,8 @@ export default function Home() {
 
   const grFiltered = pmFilter === 'ALL' ? grRows : grRows.filter(r => r.nokiaPm === pmFilter)
   const grGroups = groupGrRows(grFiltered)
-  const grReady = sortGrRowsBy(grGroups.ready, grSortBy)
+  const grReadyByType = grRowTypeFilter === 'all' ? grGroups.ready : grGroups.ready.filter(r => r.rowType === grRowTypeFilter)
+  const grReady = sortGrRowsBy(grReadyByType, grSortBy)
   const grAwareness = grGroups.awareness
 
   const focusItems = filteredKpis ? [
@@ -1278,6 +1280,18 @@ export default function Home() {
 
                       {grExpanded && (
                         <div className="bg-gray-900 border border-t-0 border-gray-700 rounded-b-xl p-4">
+                          <div className="flex gap-2 mb-3">
+                            {([
+                              { value: 'all', label: 'Show All' },
+                              { value: 'base', label: 'Base POs Only' },
+                              { value: 'cr', label: 'CRs Only' },
+                            ] as const).map(o => (
+                              <button key={o.value} onClick={() => setGrRowTypeFilter(o.value)}
+                                className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${grRowTypeFilter === o.value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                                {o.label}
+                              </button>
+                            ))}
+                          </div>
                           {grReady.length === 0 ? (
                             <p className="text-gray-500 text-sm">No GR releases pending right now</p>
                           ) : (
@@ -1310,7 +1324,7 @@ export default function Home() {
                                         <td className={`p-2 font-semibold whitespace-nowrap ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{r.hopDisplay}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.gc}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.spoNumber || '—'}</td>
-                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.sogName || '—'}</td>
+                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.sogName || 'CR'}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.triggerDate || '—'}</td>
                                         <td className="p-2">

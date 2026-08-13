@@ -10,13 +10,20 @@ import {
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
 } from '../lib/grTracker'
 
-const TIER_OPTIONS: { value: string; label: string }[] = [
-  { value: 'all', label: 'All Tiers' },
+const TIER_CHECKBOX_OPTIONS: { value: string; label: string }[] = [
   { value: 'init20', label: 'Init 20% (MS15A)' },
   { value: '60', label: '60% (MS16A)' },
   { value: '70', label: '70% (MS16A)' },
   { value: '20', label: '20% Decom/SCOP' },
   { value: '30', label: '30% Decom/SCOP' },
+  { value: 'CR', label: 'CR (SOG Name blank)' },
+]
+const ALL_TIER_VALUES = TIER_CHECKBOX_OPTIONS.map(t => t.value)
+
+const ROW_TYPE_OPTIONS: { value: 'all' | 'base' | 'cr'; label: string }[] = [
+  { value: 'all', label: 'Show All' },
+  { value: 'base', label: 'Base POs Only' },
+  { value: 'cr', label: 'CRs Only' },
 ]
 
 const STATUS_OPTIONS = ['All', 'Ready to Release', 'Awaiting Trigger', 'GR Done'] as const
@@ -47,7 +54,8 @@ export default function GrTrackerPage() {
   const [loaded, setLoaded] = useState(false)
   const [pmFilter, setPmFilter] = useState('CJ')
   const [gcFilter, setGcFilter] = useState('ALL')
-  const [tierFilter, setTierFilter] = useState('all')
+  const [tierFilters, setTierFilters] = useState<Set<string>>(new Set(ALL_TIER_VALUES))
+  const [rowTypeFilter, setRowTypeFilter] = useState<'all' | 'base' | 'cr'>('all')
   const [statusFilter, setStatusFilter] = useState<StatusOption>('All')
   const [sortBy, setSortBy] = useState<GrSortOption>('trigger')
   const [specialFilter, setSpecialFilter] = useState<GrTileFilter>(null)
@@ -74,8 +82,19 @@ export default function GrTrackerPage() {
   const selectTile = (filter: GrTileFilter) => {
     setSpecialFilter(prev => prev === filter ? null : filter)
     setGcFilter('ALL')
-    setTierFilter('all')
+    setTierFilters(new Set(ALL_TIER_VALUES))
+    setRowTypeFilter('all')
     setStatusFilter('All')
+  }
+
+  const toggleTier = (value: string) => {
+    setSpecialFilter(null)
+    setTierFilters(prev => {
+      const next = new Set(prev)
+      if (next.has(value)) next.delete(value)
+      else next.add(value)
+      return next
+    })
   }
 
   let displayRows: GrRow[]
@@ -84,10 +103,17 @@ export default function GrTrackerPage() {
   } else {
     displayRows = pmFiltered.filter(r => {
       if (gcFilter !== 'ALL' && r.gc !== gcFilter) return false
-      if (tierFilter !== 'all' && r.tier !== tierFilter) return false
       if (statusFilter !== 'All' && r.status !== statusFilter) return false
       return true
     })
+  }
+  // Row type toggle + tier checkboxes filter instantly on top of whatever's displayed,
+  // regardless of how the row set got there (dropdowns or a tile click).
+  if (rowTypeFilter !== 'all') {
+    displayRows = displayRows.filter(r => r.rowType === rowTypeFilter)
+  }
+  if (tierFilters.size < ALL_TIER_VALUES.length) {
+    displayRows = displayRows.filter(r => r.tier != null && tierFilters.has(r.tier))
   }
   displayRows = sortGrRowsBy(displayRows, sortBy)
 
@@ -173,10 +199,6 @@ export default function GrTrackerPage() {
                 <option value="ALL">All GCs</option>
                 {GC_CONFIG.map(cfg => <option key={cfg.gc} value={cfg.gc}>{cfg.gc}</option>)}
               </select>
-              <select value={tierFilter} onChange={(e) => { setTierFilter(e.target.value); setSpecialFilter(null) }}
-                className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2">
-                {TIER_OPTIONS.map(t => <option key={t.value} value={t.value}>{t.label}</option>)}
-              </select>
               <select value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value as StatusOption); setSpecialFilter(null) }}
                 className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2">
                 {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
@@ -190,6 +212,19 @@ export default function GrTrackerPage() {
                   className="text-gray-400 hover:text-white text-xs underline">✕ Clear tile filter</button>
               )}
               <span className="text-gray-500 text-xs ml-auto">{displayRows.length} rows</span>
+            </div>
+
+            {/* Tier Filter — multi-select */}
+            <div className="flex flex-wrap gap-3 items-center bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 mb-4">
+              <span className="text-gray-500 text-xs font-semibold">Tier:</span>
+              {TIER_CHECKBOX_OPTIONS.map(t => (
+                <label key={t.value} className="flex items-center gap-1.5 text-xs text-gray-300 cursor-pointer">
+                  <input type="checkbox" checked={tierFilters.has(t.value)}
+                    onChange={() => toggleTier(t.value)}
+                    className="w-3.5 h-3.5 cursor-pointer accent-blue-500" />
+                  {t.label}
+                </label>
+              ))}
             </div>
 
             {/* Batch Email */}
@@ -208,6 +243,16 @@ export default function GrTrackerPage() {
                   ))}
                 </div>
               )}
+            </div>
+
+            {/* Row Type Toggle */}
+            <div className="flex gap-2 mb-3">
+              {ROW_TYPE_OPTIONS.map(o => (
+                <button key={o.value} onClick={() => setRowTypeFilter(o.value)}
+                  className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${rowTypeFilter === o.value ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                  {o.label}
+                </button>
+              ))}
             </div>
 
             {/* Main Table */}
@@ -236,7 +281,7 @@ export default function GrTrackerPage() {
                       </td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-600' : 'text-gray-400'}`}>{r.pathId || '—'}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.gc}</td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.sogName || '—'}</td>
+                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.sogName || 'CR'}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.spoNumber || '—'}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{fmtMoney(r.spoValue)}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.triggerDate || '—'}</td>

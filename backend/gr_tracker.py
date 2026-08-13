@@ -166,7 +166,7 @@ def classify_row_type(sog_name_raw, spo_number_raw):
     """Foundational row filter — must run before any other row processing.
 
     Base PO = has SPO Number AND has SOG Name
-    CR      = has SPO Number AND SOG Name is blank — displayed as-is, no "CR" label in UI
+    CR      = has SPO Number AND SOG Name is blank — "CR" is itself a formal tier
     Error   = has SOG Name but NO SPO Number — excluded entirely, never returned
     """
     has_spo = bool((spo_number_raw or '').strip())
@@ -201,9 +201,10 @@ def build_gr_rows(spo_rows, tracker_date_map):
 
         # CR rows have no SOG tier to classify, so they carry no trigger gate —
         # treated as always eligible for release until GR'd (business decision).
+        # "CR" is itself a formal tier so these rows participate in tier filtering.
         if row_type == 'cr':
-            sog = {'tier': None, 'trigger': None, 'cj_actionable': True,
-                   'tier_label': '', 'is_decom_scop': False}
+            sog = {'tier': 'CR', 'trigger': None, 'cj_actionable': True,
+                   'tier_label': 'CR', 'is_decom_scop': False}
         else:
             sog = classify_sog(sog_name_raw)
 
@@ -249,6 +250,7 @@ def build_gr_rows(spo_rows, tracker_date_map):
             'trigger_met': is_trigger_met,
             'gr_date': gr_date.strftime('%Y-%m-%d') if gr_date else None,
             'status': status,
+            'tier': sog['tier'],
             'tier_label': sog['tier_label'],
             'cj_actionable': sog['cj_actionable'],
             'is_decom_scop': sog['is_decom_scop'],
