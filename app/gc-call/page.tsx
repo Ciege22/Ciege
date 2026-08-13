@@ -6,7 +6,10 @@ import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
-import { GrRow, loadGrRows, groupGrRows, sortGrRows, buildGrEmailMailto, fmtMoney } from '../lib/grTracker'
+import {
+  GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
+  buildGrEmailMailto, fmtMoney, fmtMoneyShort,
+} from '../lib/grTracker'
 
 
 const GC_CM_MAP: Record<string, string> = {
@@ -66,19 +69,34 @@ interface GrInvoicingTabProps {
   grLoaded: boolean
 }
 
+function GrTile({ emoji, label, value, sub, color, valueColor, active, onClick }: {
+  emoji: string; label: string; value: string; sub: string; color: string; valueColor?: string; active?: boolean; onClick: () => void
+}) {
+  return (
+    <div onClick={onClick}
+      className={`bg-gray-900 rounded-xl border p-4 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all ${active ? 'ring-2 ring-blue-500' : ''} ${color}`}>
+      <p className="text-2xl mb-1">{emoji}</p>
+      <p className={`text-2xl font-bold ${valueColor || 'text-white'}`}>{value}</p>
+      <p className="text-gray-400 text-xs mt-1 font-semibold">{label}</p>
+      <p className="text-gray-600 text-xs mt-0.5">{sub}</p>
+    </div>
+  )
+}
+
 function GrInvoicingTab({ selectedGC, grRows, grLoaded }: GrInvoicingTabProps) {
-  const [readyOpen, setReadyOpen] = useState(true)
-  const [awaitingOpen, setAwaitingOpen] = useState(true)
-  const [awarenessOpen, setAwarenessOpen] = useState(true)
+  const [tileFilter, setTileFilter] = useState<GrTileFilter>(null)
 
   if (!grLoaded) return <p className="text-gray-400 text-sm">Loading GR data...</p>
 
+  // Scoped to the currently selected GC — recalculates immediately when selectedGC changes.
   const gcGrRows = grRows.filter(r => r.gc === selectedGC)
-  const groups = groupGrRows(gcGrRows)
-  const ready = sortGrRows(groups.ready)
-  const awaiting = sortGrRows(groups.awaiting)
-  const awareness = groups.awareness
+  const breakdown = computeGrBreakdown(gcGrRows)
+  const ready = groupGrRows(gcGrRows).ready
   const emailMailto = ready.length > 0 ? buildGrEmailMailto(selectedGC, ready) : null
+
+  const displayRows = sortGrRowsBy(rowsForTileFilter(gcGrRows, tileFilter), 'trigger')
+
+  const selectTile = (filter: GrTileFilter) => setTileFilter(prev => prev === filter ? null : filter)
 
   const statusChip = (status: GrRow['status']) => (
     <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
@@ -91,129 +109,83 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded }: GrInvoicingTabProps) {
   )
 
   return (
-    <div className="space-y-6">
-      {/* Section 1 — Ready to Release */}
-      <div>
-        <div className="flex items-center justify-between cursor-pointer mb-2" onClick={() => setReadyOpen(!readyOpen)}>
-          <h3 className="text-lg font-semibold text-white">✅ Ready to Release ({ready.length})</h3>
-          <span className="text-gray-500 text-sm">{readyOpen ? '▲' : '▼'}</span>
+    <div className="space-y-4">
+      {/* KPI Tiles — Row 1: Volume */}
+      <div className="grid grid-cols-2 gap-3">
+        <GrTile emoji="📄" label="Total Base POs" value={String(breakdown.totalBasePOs)} sub="valid SPO + SOG rows"
+          color="border-gray-700" active={tileFilter === 'totalBasePOs'}
+          onClick={() => selectTile('totalBasePOs')} />
+        <GrTile emoji="🔧" label="Total CRs" value={String(breakdown.totalCRs)} sub="SPO issued, no SOG tier"
+          color="border-gray-700" active={tileFilter === 'totalCRs'}
+          onClick={() => selectTile('totalCRs')} />
+      </div>
+
+      {/* KPI Tiles — Row 2: Value */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <GrTile emoji="✅" label="Base PO Value GR'd" value={fmtMoneyShort(breakdown.basePOValueGRd)} sub="GR Date populated"
+          color="border-green-700" valueColor="text-green-400" active={tileFilter === 'basePOGRd'}
+          onClick={() => selectTile('basePOGRd')} />
+        <GrTile emoji="⏳" label="Base PO Value Pending" value={fmtMoneyShort(breakdown.basePOValuePending)} sub="trigger met, GR Date blank"
+          color="border-orange-700" valueColor="text-orange-400" active={tileFilter === 'basePOPending'}
+          onClick={() => selectTile('basePOPending')} />
+        <GrTile emoji="✅" label="CR Value GR'd" value={fmtMoneyShort(breakdown.crValueGRd)} sub="GR Date populated"
+          color="border-green-700" valueColor="text-green-400" active={tileFilter === 'crGRd'}
+          onClick={() => selectTile('crGRd')} />
+        <GrTile emoji="⏳" label="CR Value Pending" value={fmtMoneyShort(breakdown.crValuePending)} sub="GR Date blank"
+          color="border-orange-700" valueColor="text-orange-400" active={tileFilter === 'crPending'}
+          onClick={() => selectTile('crPending')} />
+      </div>
+
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          {tileFilter && (
+            <button onClick={() => setTileFilter(null)}
+              className="text-gray-400 hover:text-white text-xs underline">✕ Clear tile filter</button>
+          )}
+          <span className="text-gray-500 text-xs">{displayRows.length} rows</span>
         </div>
-        {readyOpen && (
-          ready.length === 0 ? <p className="text-gray-500 text-sm">No sites ready to release</p> : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-gray-800 text-gray-400">
-                    <th className="text-left p-2">HOP</th>
-                    <th className="text-left p-2">Path ID</th>
-                    <th className="text-left p-2">SOG Name</th>
-                    <th className="text-left p-2">SPO #</th>
-                    <th className="text-left p-2">SPO Value</th>
-                    <th className="text-left p-2">Trigger Date</th>
-                    <th className="text-left p-2">GR Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {ready.map(r => (
-                    <tr key={`${r.hop}-${r.sogName}`} className="border-t border-gray-800 text-gray-200">
-                      <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hopDisplay}</td>
-                      <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
-                      <td className="p-2 whitespace-nowrap">{r.sogName}</td>
-                      <td className="p-2 whitespace-nowrap">{r.spoNumber || '—'}</td>
-                      <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
-                      <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>
-                      <td className="p-2">{statusChip(r.status)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
-        )}
         <button onClick={() => { if (emailMailto) window.open(emailMailto) }}
           disabled={!emailMailto}
-          className="mt-3 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
+          className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
           ✉️ Generate GR Email — {selectedGC} ({ready.length} pending)
         </button>
       </div>
 
-      {/* Section 2 — Awaiting Trigger */}
-      <div>
-        <div className="flex items-center justify-between cursor-pointer mb-2" onClick={() => setAwaitingOpen(!awaitingOpen)}>
-          <h3 className="text-lg font-semibold text-gray-400">⏳ Awaiting Trigger ({awaiting.length})</h3>
-          <span className="text-gray-500 text-sm">{awaitingOpen ? '▲' : '▼'}</span>
-        </div>
-        {awaitingOpen && (
-          awaiting.length === 0 ? <p className="text-gray-500 text-sm">No sites awaiting trigger</p> : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="bg-gray-800 text-gray-500">
-                    <th className="text-left p-2">HOP</th>
-                    <th className="text-left p-2">Path ID</th>
-                    <th className="text-left p-2">SOG Name</th>
-                    <th className="text-left p-2">SPO #</th>
-                    <th className="text-left p-2">SPO Value</th>
-                    <th className="text-left p-2">Trigger Date</th>
-                    <th className="text-left p-2">GR Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {awaiting.map(r => (
-                    <tr key={`${r.hop}-${r.sogName}`} className="border-t border-gray-800 text-gray-500">
-                      <td className="p-2 font-semibold whitespace-nowrap">{r.hopDisplay}</td>
-                      <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
-                      <td className="p-2 whitespace-nowrap">{r.sogName}</td>
-                      <td className="p-2 whitespace-nowrap">{r.spoNumber || '—'}</td>
-                      <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
-                      <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>
-                      <td className="p-2">{statusChip(r.status)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )
-        )}
-      </div>
-
-      {/* Section 3 — Awaiting Other PM (Decom/SCOP) */}
-      <div>
-        <div className="flex items-center justify-between cursor-pointer mb-2" onClick={() => setAwarenessOpen(!awarenessOpen)}>
-          <h3 className="text-base font-semibold text-gray-500">👁 Awaiting Other PM — Decom/SCOP (awareness only)</h3>
-          <span className="text-gray-600 text-sm">{awarenessOpen ? '▲' : '▼'}</span>
-        </div>
-        {awarenessOpen && (
-          <>
-            <p className="text-gray-600 text-xs mb-2">Not your action — shown for awareness only</p>
-            {awareness.length === 0 ? <p className="text-gray-600 text-sm">No Decom/SCOP rows</p> : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="bg-gray-900 text-gray-600">
-                      <th className="text-left p-2">HOP</th>
-                      <th className="text-left p-2">Path ID</th>
-                      <th className="text-left p-2">SOG Name</th>
-                      <th className="text-left p-2">SPO Value</th>
-                      <th className="text-left p-2">GR Status</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {awareness.map(r => (
-                      <tr key={`${r.hop}-${r.sogName}`} className="border-t border-gray-900 text-gray-600">
-                        <td className="p-2 whitespace-nowrap">{r.hopDisplay}</td>
-                        <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
-                        <td className="p-2 whitespace-nowrap">{r.sogName}</td>
-                        <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
-                        <td className="p-2 whitespace-nowrap">{r.grDate ? '✓ GR Done' : 'Not Yet'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+      {/* Main Table */}
+      <div className="overflow-x-auto bg-gray-900 rounded-xl border border-gray-700">
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="bg-gray-800 text-gray-400">
+              <th className="text-left p-2">HOP</th>
+              <th className="text-left p-2">Path ID</th>
+              <th className="text-left p-2">SOG Name</th>
+              <th className="text-left p-2">SPO #</th>
+              <th className="text-left p-2">SPO Value</th>
+              <th className="text-left p-2">Trigger Date</th>
+              <th className="text-left p-2">GR Status</th>
+              <th className="text-left p-2">GR Date</th>
+            </tr>
+          </thead>
+          <tbody>
+            {displayRows.map(r => (
+              <tr key={`${r.hop}-${r.sogName}-${r.spoNumber}`} className={`border-t border-gray-800 ${r.isDecomScop ? 'text-gray-600' : 'text-gray-200'}`}>
+                <td className={`p-2 font-semibold whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-white'}`}>
+                  {r.isDecomScop && <span className="mr-1">👁</span>}{r.hopDisplay}
+                </td>
+                <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
+                <td className="p-2 whitespace-nowrap">{r.sogName || '—'}</td>
+                <td className="p-2 whitespace-nowrap">{r.spoNumber || '—'}</td>
+                <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
+                <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>
+                <td className="p-2">{statusChip(r.status)}</td>
+                <td className="p-2 whitespace-nowrap">{r.grDate || '—'}</td>
+              </tr>
+            ))}
+            {displayRows.length === 0 && (
+              <tr><td colSpan={8} className="p-6 text-center text-gray-500">No rows match the current filter</td></tr>
             )}
-          </>
-        )}
+          </tbody>
+        </table>
       </div>
     </div>
   )

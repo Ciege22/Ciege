@@ -2,10 +2,12 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { GC_CONFIG } from '../lib/gcConfig'
 import {
-  GrRow, loadGrRows, groupGrRows, sortGrRows, buildGrEmailMailto, fmtMoney, fmtMoneyShort,
+  GrRow, GrTileFilter, GrSortOption, GR_SORT_OPTIONS,
+  loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
+  buildGrEmailMailto, fmtMoney, fmtMoneyShort,
 } from '../lib/grTracker'
 
 const TIER_OPTIONS: { value: string; label: string }[] = [
@@ -20,16 +22,14 @@ const TIER_OPTIONS: { value: string; label: string }[] = [
 const STATUS_OPTIONS = ['All', 'Ready to Release', 'Awaiting Trigger', 'GR Done'] as const
 type StatusOption = typeof STATUS_OPTIONS[number]
 
-type SpecialFilter = null | 'ready' | 'awaiting' | 'doneThisMonth' | 'decomScop'
-
-function KpiTile({ emoji, label, value, sub, color, onClick }: {
-  emoji: string; label: string; value: string; sub: string; color: string; onClick: () => void
+function KpiTile({ emoji, label, value, sub, color, valueColor, active, onClick }: {
+  emoji: string; label: string; value: string; sub: string; color: string; valueColor?: string; active?: boolean; onClick: () => void
 }) {
   return (
     <div onClick={onClick}
-      className={`bg-gray-900 rounded-xl border p-4 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all ${color}`}>
+      className={`bg-gray-900 rounded-xl border p-4 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all ${active ? 'ring-2 ring-blue-500' : ''} ${color}`}>
       <p className="text-2xl mb-1">{emoji}</p>
-      <p className="text-white text-2xl font-bold">{value}</p>
+      <p className={`text-2xl font-bold ${valueColor || 'text-white'}`}>{value}</p>
       <p className="text-gray-400 text-xs mt-1 font-semibold">{label}</p>
       <p className="text-gray-600 text-xs mt-0.5">{sub}</p>
     </div>
@@ -45,10 +45,12 @@ function StatusChip({ status }: { status: GrRow['status'] }) {
 export default function GrTrackerPage() {
   const [rows, setRows] = useState<GrRow[]>([])
   const [loaded, setLoaded] = useState(false)
+  const [pmFilter, setPmFilter] = useState('CJ')
   const [gcFilter, setGcFilter] = useState('ALL')
   const [tierFilter, setTierFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState<StatusOption>('All')
-  const [specialFilter, setSpecialFilter] = useState<SpecialFilter>(null)
+  const [sortBy, setSortBy] = useState<GrSortOption>('trigger')
+  const [specialFilter, setSpecialFilter] = useState<GrTileFilter>(null)
   const [emailGroups, setEmailGroups] = useState<{ gc: string; count: number; mailto: string }[] | null>(null)
 
   useEffect(() => {
@@ -60,35 +62,37 @@ export default function GrTrackerPage() {
     load()
   }, [])
 
-  const groups = groupGrRows(rows)
-  const now = new Date()
-  const doneThisMonth = groups.done.filter(r => r.grDateRaw && r.grDateRaw.getMonth() === now.getMonth() && r.grDateRaw.getFullYear() === now.getFullYear())
-  const totalPendingValue = groups.ready.reduce((sum, r) => sum + r.spoValue, 0)
-  const awarenessTotalValue = groups.awareness.reduce((sum, r) => sum + r.spoValue, 0)
+  const pmOptions = useMemo(() => {
+    const set = new Set<string>()
+    rows.forEach(r => { if (r.nokiaPm) set.add(r.nokiaPm) })
+    return ['ALL', ...Array.from(set).sort()]
+  }, [rows])
 
-  const selectTile = (filter: SpecialFilter) => {
-    setSpecialFilter(filter)
+  const pmFiltered = pmFilter === 'ALL' ? rows : rows.filter(r => r.nokiaPm === pmFilter)
+  const breakdown = computeGrBreakdown(pmFiltered)
+
+  const selectTile = (filter: GrTileFilter) => {
+    setSpecialFilter(prev => prev === filter ? null : filter)
     setGcFilter('ALL')
     setTierFilter('all')
     setStatusFilter('All')
   }
 
   let displayRows: GrRow[]
-  if (specialFilter === 'ready') displayRows = groups.ready
-  else if (specialFilter === 'awaiting') displayRows = groups.awaiting
-  else if (specialFilter === 'doneThisMonth') displayRows = doneThisMonth
-  else if (specialFilter === 'decomScop') displayRows = groups.awareness
-  else {
-    displayRows = rows.filter(r => {
+  if (specialFilter) {
+    displayRows = rowsForTileFilter(pmFiltered, specialFilter)
+  } else {
+    displayRows = pmFiltered.filter(r => {
       if (gcFilter !== 'ALL' && r.gc !== gcFilter) return false
       if (tierFilter !== 'all' && r.tier !== tierFilter) return false
       if (statusFilter !== 'All' && r.status !== statusFilter) return false
       return true
     })
   }
-  displayRows = sortGrRows(displayRows)
+  displayRows = sortGrRowsBy(displayRows, sortBy)
 
   const generateEmails = () => {
+    const groups = groupGrRows(rows)
     const byGc = new Map<string, GrRow[]>()
     groups.ready.forEach(r => {
       if (!byGc.has(r.gc)) byGc.set(r.gc, [])
@@ -96,11 +100,13 @@ export default function GrTrackerPage() {
     })
     const out: { gc: string; count: number; mailto: string }[] = []
     byGc.forEach((gcRows, gc) => {
-      out.push({ gc, count: gcRows.length, mailto: buildGrEmailMailto(gc, sortGrRows(gcRows)) })
+      out.push({ gc, count: gcRows.length, mailto: buildGrEmailMailto(gc, gcRows) })
     })
     out.sort((a, b) => a.gc.localeCompare(b.gc))
     setEmailGroups(out)
   }
+
+  const readyCount = groupGrRows(rows).ready.length
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
@@ -121,23 +127,43 @@ export default function GrTrackerPage() {
 
         {loaded && rows.length > 0 && (
           <>
-            {/* KPI Tiles */}
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
-              <KpiTile emoji="🟠" label="Ready to Release" value={String(groups.ready.length)} sub="CJ action needed"
-                color={groups.ready.length > 0 ? 'border-orange-600' : 'border-gray-700'}
-                onClick={() => selectTile('ready')} />
-              <KpiTile emoji="💵" label="Total Value Pending" value={fmtMoneyShort(totalPendingValue)} sub="sum of Ready SPOs"
-                color={groups.ready.length > 0 ? 'border-orange-600' : 'border-gray-700'}
-                onClick={() => selectTile('ready')} />
-              <KpiTile emoji="⏳" label="Awaiting Trigger" value={String(groups.awaiting.length)} sub="not yet eligible"
-                color="border-gray-700"
-                onClick={() => selectTile('awaiting')} />
-              <KpiTile emoji="✅" label="GR Done This Month" value={String(doneThisMonth.length)} sub={now.toLocaleString('default', { month: 'long' })}
-                color="border-green-700"
-                onClick={() => selectTile('doneThisMonth')} />
-              <KpiTile emoji="👁" label="Awaiting Other PM" value={String(groups.awareness.length)} sub="Decom/SCOP — awareness"
-                color="border-gray-700"
-                onClick={() => selectTile('decomScop')} />
+            {/* PM Filter */}
+            {pmOptions.length > 1 && (
+              <div className="flex gap-2 mb-4 flex-wrap items-center">
+                <span className="text-gray-500 text-xs font-semibold">Nokia PM:</span>
+                {pmOptions.map(pm => (
+                  <button key={pm} onClick={() => setPmFilter(pm)}
+                    className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${pmFilter === pm ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                    {pm}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* KPI Tiles — Row 1: Volume */}
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <KpiTile emoji="📄" label="Total Base POs" value={String(breakdown.totalBasePOs)} sub="valid SPO + SOG rows"
+                color="border-gray-700" active={specialFilter === 'totalBasePOs'}
+                onClick={() => selectTile('totalBasePOs')} />
+              <KpiTile emoji="🔧" label="Total CRs" value={String(breakdown.totalCRs)} sub="SPO issued, no SOG tier"
+                color="border-gray-700" active={specialFilter === 'totalCRs'}
+                onClick={() => selectTile('totalCRs')} />
+            </div>
+
+            {/* KPI Tiles — Row 2: Value */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+              <KpiTile emoji="✅" label="Base PO Value GR'd" value={fmtMoneyShort(breakdown.basePOValueGRd)} sub="GR Date populated"
+                color="border-green-700" valueColor="text-green-400" active={specialFilter === 'basePOGRd'}
+                onClick={() => selectTile('basePOGRd')} />
+              <KpiTile emoji="⏳" label="Base PO Value Pending" value={fmtMoneyShort(breakdown.basePOValuePending)} sub="trigger met, GR Date blank"
+                color="border-orange-700" valueColor="text-orange-400" active={specialFilter === 'basePOPending'}
+                onClick={() => selectTile('basePOPending')} />
+              <KpiTile emoji="✅" label="CR Value GR'd" value={fmtMoneyShort(breakdown.crValueGRd)} sub="GR Date populated"
+                color="border-green-700" valueColor="text-green-400" active={specialFilter === 'crGRd'}
+                onClick={() => selectTile('crGRd')} />
+              <KpiTile emoji="⏳" label="CR Value Pending" value={fmtMoneyShort(breakdown.crValuePending)} sub="GR Date blank"
+                color="border-orange-700" valueColor="text-orange-400" active={specialFilter === 'crPending'}
+                onClick={() => selectTile('crPending')} />
             </div>
 
             {/* Filter Bar */}
@@ -155,6 +181,10 @@ export default function GrTrackerPage() {
                 className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2">
                 {STATUS_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+              <select value={sortBy} onChange={(e) => setSortBy(e.target.value as GrSortOption)}
+                className="bg-gray-800 border border-gray-600 text-white text-sm rounded px-3 py-2">
+                {GR_SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>Sort: {o.label}</option>)}
+              </select>
               {specialFilter && (
                 <button onClick={() => setSpecialFilter(null)}
                   className="text-gray-400 hover:text-white text-xs underline">✕ Clear tile filter</button>
@@ -164,7 +194,7 @@ export default function GrTrackerPage() {
 
             {/* Batch Email */}
             <div className="mb-4">
-              <button onClick={generateEmails} disabled={groups.ready.length === 0}
+              <button onClick={generateEmails} disabled={readyCount === 0}
                 className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
                 ✉️ Generate GR Emails — All GCs
               </button>
@@ -198,7 +228,7 @@ export default function GrTrackerPage() {
                 </thead>
                 <tbody>
                   {displayRows.map((r, i) => (
-                    <tr key={`${r.hop}-${r.sogName}-${i}`}
+                    <tr key={`${r.hop}-${r.sogName}-${r.spoNumber}-${i}`}
                       className={`border-t border-gray-800 ${r.isDecomScop ? 'bg-gray-950' : 'bg-gray-900'}`}>
                       <td className="p-2 font-semibold whitespace-nowrap">
                         {r.isDecomScop && <span className="mr-1">👁</span>}
@@ -206,7 +236,7 @@ export default function GrTrackerPage() {
                       </td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-600' : 'text-gray-400'}`}>{r.pathId || '—'}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.gc}</td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.sogName}</td>
+                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.sogName || '—'}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.spoNumber || '—'}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{fmtMoney(r.spoValue)}</td>
                       <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.triggerDate || '—'}</td>
@@ -220,10 +250,6 @@ export default function GrTrackerPage() {
                 </tbody>
               </table>
             </div>
-
-            {groups.awareness.length > 0 && (
-              <p className="text-gray-600 text-xs mt-3">👁 {groups.awareness.length} Decom/SCOP rows totaling {fmtMoneyShort(awarenessTotalValue)} — awareness only, not CJ's action</p>
-            )}
           </>
         )}
       </div>

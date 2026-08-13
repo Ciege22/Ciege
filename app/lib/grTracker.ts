@@ -17,6 +17,12 @@ export type GrTier = 'init20' | '60' | '70' | '20' | '30' | null
 export type GrTrigger = 'MS15A' | 'MS16A' | null
 export type GrStatus = 'GR Done' | 'Ready to Release' | 'Awaiting Trigger'
 
+// Row classification (foundational — everything else derives from this):
+//   Base PO = has SPO Number AND has SOG Name
+//   CR      = has SPO Number AND SOG Name is blank — displayed as-is, no "CR" label in UI
+//   Error   = has SOG Name but NO SPO Number — excluded entirely, never returned/displayed
+export type GrRowType = 'base' | 'cr'
+
 export interface GrRow {
   hop: string            // normalized lowercase key used for matching
   hopDisplay: string      // SPO report Name column, as-is
@@ -26,9 +32,11 @@ export interface GrRow {
   sogName: string
   spoNumber: string
   spoValue: number
+  rowType: GrRowType
   triggerDate: string     // MM/DD/YYYY, blank if unknown
   triggerDateRaw: Date | null
   trigger: GrTrigger
+  triggerMet: boolean     // CR rows have no trigger gate — always true until GR'd
   grDate: string          // MM/DD/YYYY, blank if not processed
   grDateRaw: Date | null
   status: GrStatus
@@ -149,11 +157,22 @@ export function buildTrackerDateMap(rows: unknown[][]): Map<string, TrackerDates
   return map
 }
 
-function triggerMet(trigger: GrTrigger, dates: TrackerDates | undefined): boolean {
+// Base PO trigger gate. CR rows never call this — they have no trigger gate (see buildGrRows).
+function isTriggerMet(trigger: GrTrigger, dates: TrackerDates | undefined): boolean {
   if (!trigger || !dates) return false
   if (trigger === 'MS15A') return !!dates.ms15a
   if (trigger === 'MS16A') return !!dates.ms16a
   return false
+}
+
+// Classifies a raw SPO report row into Base PO / CR / Error+empty (excluded).
+// Must run before any other row processing — this is the foundational filter.
+function classifyRowType(sogNameRaw: string, spoNumberRaw: string): GrRowType | null {
+  const hasSpo = !!spoNumberRaw.trim()
+  const hasSog = !!sogNameRaw.trim()
+  if (hasSpo && hasSog) return 'base'
+  if (hasSpo && !hasSog) return 'cr'
+  return null // Error row (SOG present, no SPO) or empty row — excluded entirely
 }
 
 function computeStatus(grDate: Date | null, isTriggerMet: boolean): GrStatus {
@@ -170,7 +189,15 @@ export function buildGrRows(spoRows: unknown[][], trackerDateMap: Map<string, Tr
     if (!nameRaw) return
 
     const sogNameRaw = String(row[SPO_COL.sogName] || '').trim()
-    const sog = classifySog(sogNameRaw)
+    const spoNumberRaw = String(row[SPO_COL.spoNumber] || '').trim()
+    const rowType = classifyRowType(sogNameRaw, spoNumberRaw)
+    if (!rowType) return // Error row (SOG, no SPO) or empty row — excluded entirely
+
+    // CR rows have no SOG tier to classify, so they carry no trigger gate —
+    // treated as always eligible for release until GR'd (business decision).
+    const sog = rowType === 'cr'
+      ? { tier: null as GrTier, trigger: null as GrTrigger, cjActionable: true, tierLabel: '', isDecomScop: false }
+      : classifySog(sogNameRaw)
 
     const vendor = row[SPO_COL.spoVendor]
     const gcEntry = GC_CONFIG.find(cfg => matches(vendor, cfg.spo_match))
@@ -180,10 +207,10 @@ export function buildGrRows(spoRows: unknown[][], trackerDateMap: Map<string, Tr
     // normalized when it was built, so we match against the raw SPO name here.
     const key = matchKey(nameRaw)
     const dates = trackerDateMap.get(key)
-    const isTriggerMet = triggerMet(sog.trigger, dates)
+    const triggerMetFlag = rowType === 'cr' ? true : isTriggerMet(sog.trigger, dates)
 
     const grDateRaw = parseDateAny(row[SPO_COL.grDate])
-    const status = computeStatus(grDateRaw, isTriggerMet)
+    const status = computeStatus(grDateRaw, triggerMetFlag)
 
     const triggerDateRaw = sog.trigger === 'MS15A' ? (dates?.ms15a ?? null)
       : sog.trigger === 'MS16A' ? (dates?.ms16a ?? null)
@@ -199,11 +226,13 @@ export function buildGrRows(spoRows: unknown[][], trackerDateMap: Map<string, Tr
       gc,
       nokiaPm: dates?.nokiaPm || '',
       sogName: sogNameRaw,
-      spoNumber: String(row[SPO_COL.spoNumber] || '').trim(),
+      spoNumber: spoNumberRaw,
       spoValue,
+      rowType,
       triggerDate: fmtDate(triggerDateRaw),
       triggerDateRaw,
       trigger: sog.trigger,
+      triggerMet: triggerMetFlag,
       grDate: fmtDate(grDateRaw),
       grDateRaw,
       status,
@@ -216,16 +245,72 @@ export function buildGrRows(spoRows: unknown[][], trackerDateMap: Map<string, Tr
   return out
 }
 
-// Default sort: Ready to Release first, then Trigger Date ascending (oldest = most overdue).
-export function sortGrRows(rows: GrRow[]): GrRow[] {
+// Sort dropdown shared by the GR Tracker page and Dashboard GR expand panel.
+export type GrSortOption = 'trigger' | 'hop' | 'sog' | 'value' | 'status'
+
+export const GR_SORT_OPTIONS: { value: GrSortOption; label: string }[] = [
+  { value: 'trigger', label: 'Trigger Date (oldest first)' },
+  { value: 'hop', label: 'HOP Name (A→Z)' },
+  { value: 'sog', label: 'SOG Name' },
+  { value: 'value', label: 'SPO Value (largest first)' },
+  { value: 'status', label: 'GR Status' },
+]
+
+export function sortGrRowsBy(rows: GrRow[], sortBy: GrSortOption): GrRow[] {
   const statusRank = (r: GrRow) => r.status === 'Ready to Release' ? 0 : r.status === 'Awaiting Trigger' ? 1 : 2
-  return [...rows].sort((a, b) => {
-    const rankDiff = statusRank(a) - statusRank(b)
-    if (rankDiff !== 0) return rankDiff
-    const at = a.triggerDateRaw ? a.triggerDateRaw.getTime() : Infinity
-    const bt = b.triggerDateRaw ? b.triggerDateRaw.getTime() : Infinity
-    return at - bt
-  })
+  const arr = [...rows]
+  switch (sortBy) {
+    case 'hop':
+      return arr.sort((a, b) => a.hopDisplay.localeCompare(b.hopDisplay) || a.sogName.localeCompare(b.sogName))
+    case 'sog':
+      return arr.sort((a, b) => a.sogName.localeCompare(b.sogName) || a.hopDisplay.localeCompare(b.hopDisplay))
+    case 'value':
+      return arr.sort((a, b) => b.spoValue - a.spoValue)
+    case 'status':
+      return arr.sort((a, b) => statusRank(a) - statusRank(b))
+    case 'trigger':
+    default: {
+      const t = (r: GrRow) => r.triggerDateRaw ? r.triggerDateRaw.getTime() : Infinity
+      return arr.sort((a, b) => t(a) - t(b))
+    }
+  }
+}
+
+// Base PO vs CR volume/value breakdown that drives the KPI tiles.
+export interface GrBreakdown {
+  totalBasePOs: number
+  totalCRs: number
+  basePOValueGRd: number
+  basePOValuePending: number
+  crValueGRd: number
+  crValuePending: number
+}
+
+export function computeGrBreakdown(rows: GrRow[]): GrBreakdown {
+  const base = rows.filter(r => r.rowType === 'base')
+  const cr = rows.filter(r => r.rowType === 'cr')
+  return {
+    totalBasePOs: base.length,
+    totalCRs: cr.length,
+    basePOValueGRd: base.filter(r => !!r.grDate).reduce((s, r) => s + r.spoValue, 0),
+    basePOValuePending: base.filter(r => !r.grDate && r.triggerMet).reduce((s, r) => s + r.spoValue, 0),
+    crValueGRd: cr.filter(r => !!r.grDate).reduce((s, r) => s + r.spoValue, 0),
+    crValuePending: cr.filter(r => !r.grDate && r.triggerMet).reduce((s, r) => s + r.spoValue, 0),
+  }
+}
+
+export type GrTileFilter = 'totalBasePOs' | 'totalCRs' | 'basePOGRd' | 'basePOPending' | 'crGRd' | 'crPending' | null
+
+export function rowsForTileFilter(rows: GrRow[], filter: GrTileFilter): GrRow[] {
+  switch (filter) {
+    case 'totalBasePOs': return rows.filter(r => r.rowType === 'base')
+    case 'totalCRs': return rows.filter(r => r.rowType === 'cr')
+    case 'basePOGRd': return rows.filter(r => r.rowType === 'base' && !!r.grDate)
+    case 'basePOPending': return rows.filter(r => r.rowType === 'base' && !r.grDate && r.triggerMet)
+    case 'crGRd': return rows.filter(r => r.rowType === 'cr' && !!r.grDate)
+    case 'crPending': return rows.filter(r => r.rowType === 'cr' && !r.grDate && r.triggerMet)
+    default: return rows
+  }
 }
 
 export interface GrGroups {
@@ -281,18 +366,23 @@ export function buildGrEmailMailto(gc: string, rows: GrRow[]): string {
   const subject = `GR Release Request — ${gc} — ${dateStr}`
   const div = '═'.repeat(40)
 
+  // Group by HOP first, then list every SOG/CR line underneath its HOP.
+  const byHop = new Map<string, { pathId: string; hopDisplay: string; rows: GrRow[] }>()
+  rows.forEach(r => {
+    if (!byHop.has(r.hop)) byHop.set(r.hop, { pathId: r.pathId, hopDisplay: r.hopDisplay, rows: [] })
+    byHop.get(r.hop)!.rows.push(r)
+  })
+  const hopGroups = Array.from(byHop.values()).sort((a, b) => a.hopDisplay.localeCompare(b.hopDisplay))
+
   let body = `Please see below for GR release requests ready for processing.\n\n${div}\n\n`
   let total = 0
-  rows.forEach(r => {
-    total += r.spoValue
-    const triggerLabel = r.trigger === 'MS15A'
-      ? `MS15A — Site Started on ${r.triggerDate || 'TBD'}`
-      : `MS16A — CX Complete on ${r.triggerDate || 'TBD'}`
-    body += `★ ${r.hopDisplay} ★  |  Path ID: ${r.pathId}\n`
-    body += `SOG: ${r.sogName}\n`
-    body += `Trigger: ${triggerLabel}\n`
-    body += `SPO Number: ${r.spoNumber}\n`
-    body += `SPO Value: ${fmtMoney(r.spoValue)}\n\n`
+  hopGroups.forEach(g => {
+    body += `★ ${g.hopDisplay} ★  |  Path ID: ${g.pathId}\n`
+    g.rows.forEach(r => {
+      total += r.spoValue
+      body += `  • ${r.sogName} — SPO #: ${r.spoNumber || '—'} — Value: ${fmtMoney(r.spoValue)} — Trigger: ${r.triggerDate || '—'}\n`
+    })
+    body += `\n`
   })
   body += `${div}\n`
   body += `Total Pending Release: ${fmtMoney(total)}\n\n`

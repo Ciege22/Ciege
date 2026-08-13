@@ -162,6 +162,22 @@ def _trigger_met(trigger, dates):
     return False
 
 
+def classify_row_type(sog_name_raw, spo_number_raw):
+    """Foundational row filter — must run before any other row processing.
+
+    Base PO = has SPO Number AND has SOG Name
+    CR      = has SPO Number AND SOG Name is blank — displayed as-is, no "CR" label in UI
+    Error   = has SOG Name but NO SPO Number — excluded entirely, never returned
+    """
+    has_spo = bool((spo_number_raw or '').strip())
+    has_sog = bool((sog_name_raw or '').strip())
+    if has_spo and has_sog:
+        return 'base'
+    if has_spo and not has_sog:
+        return 'cr'
+    return None
+
+
 def _compute_status(gr_date, is_trigger_met):
     if gr_date:
         return 'GR Done'
@@ -178,7 +194,18 @@ def build_gr_rows(spo_rows, tracker_date_map):
             continue
 
         sog_name_raw = str(_row_get(row, SPO_COL['sog_name']) or '').strip()
-        sog = classify_sog(sog_name_raw)
+        spo_number_raw = str(_row_get(row, SPO_COL['spo_number']) or '').strip()
+        row_type = classify_row_type(sog_name_raw, spo_number_raw)
+        if not row_type:
+            continue  # Error row (SOG, no SPO) or empty row — excluded entirely
+
+        # CR rows have no SOG tier to classify, so they carry no trigger gate —
+        # treated as always eligible for release until GR'd (business decision).
+        if row_type == 'cr':
+            sog = {'tier': None, 'trigger': None, 'cj_actionable': True,
+                   'tier_label': '', 'is_decom_scop': False}
+        else:
+            sog = classify_sog(sog_name_raw)
 
         vendor = _row_get(row, SPO_COL['spo_vendor'])
         gc = gc_for_vendor(vendor)
@@ -187,7 +214,7 @@ def build_gr_rows(spo_rows, tracker_date_map):
         # normalized when it was built, so we match against the raw SPO name here.
         key = match_key(name_raw)
         dates = tracker_date_map.get(key)
-        is_trigger_met = _trigger_met(sog['trigger'], dates)
+        is_trigger_met = True if row_type == 'cr' else _trigger_met(sog['trigger'], dates)
 
         gr_date = parse_date_any(_row_get(row, SPO_COL['gr_date']))
         status = _compute_status(gr_date, is_trigger_met)
@@ -215,9 +242,11 @@ def build_gr_rows(spo_rows, tracker_date_map):
             'gc': gc,
             'nokia_pm': (dates or {}).get('nokia_pm', ''),
             'sog_name': sog_name_raw,
-            'spo_number': str(_row_get(row, SPO_COL['spo_number']) or '').strip(),
+            'spo_number': spo_number_raw,
             'spo_value': spo_value,
+            'row_type': row_type,
             'trigger_date': trigger_date.strftime('%Y-%m-%d') if trigger_date else None,
+            'trigger_met': is_trigger_met,
             'gr_date': gr_date.strftime('%Y-%m-%d') if gr_date else None,
             'status': status,
             'tier_label': sog['tier_label'],
@@ -227,6 +256,19 @@ def build_gr_rows(spo_rows, tracker_date_map):
     return out
 
 
+def compute_gr_breakdown(rows):
+    base = [r for r in rows if r['row_type'] == 'base']
+    cr = [r for r in rows if r['row_type'] == 'cr']
+    return {
+        'total_base_pos': len(base),
+        'total_crs': len(cr),
+        'base_po_value_grd': sum(r['spo_value'] for r in base if r['gr_date']),
+        'base_po_value_pending': sum(r['spo_value'] for r in base if not r['gr_date'] and r['trigger_met']),
+        'cr_value_grd': sum(r['spo_value'] for r in cr if r['gr_date']),
+        'cr_value_pending': sum(r['spo_value'] for r in cr if not r['gr_date'] and r['trigger_met']),
+    }
+
+
 def group_gr_rows(rows, gc_filter=None):
     if gc_filter:
         rows = [r for r in rows if r['gc'] == gc_filter]
@@ -234,7 +276,10 @@ def group_gr_rows(rows, gc_filter=None):
     awaiting = [r for r in rows if r['cj_actionable'] and r['status'] == 'Awaiting Trigger']
     done = [r for r in rows if r['status'] == 'GR Done']
     awareness = [r for r in rows if r['is_decom_scop']]
-    return {'ready': ready, 'awaiting': awaiting, 'done': done, 'awareness': awareness}
+    return {
+        'ready': ready, 'awaiting': awaiting, 'done': done, 'awareness': awareness,
+        'breakdown': compute_gr_breakdown(rows),
+    }
 
 
 def load_gr_data(supabase_client, gc_filter=None):

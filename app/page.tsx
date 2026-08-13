@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
-import { GrRow, loadGrRows, groupGrRows, sortGrRows, fmtMoney, fmtMoneyShort } from './lib/grTracker'
+import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
@@ -167,6 +167,7 @@ export default function Home() {
   const [grExpanded, setGrExpanded] = useState(false)
   const [grFocusCompleted, setGrFocusCompleted] = useState<Record<string, { comment: string; completedAt: string }>>({})
   const [grFocusCommentInput, setGrFocusCommentInput] = useState<Record<string, string>>({})
+  const [grSortBy, setGrSortBy] = useState<GrSortOption>('trigger')
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -821,7 +822,7 @@ export default function Home() {
 
   const grFiltered = pmFilter === 'ALL' ? grRows : grRows.filter(r => r.nokiaPm === pmFilter)
   const grGroups = groupGrRows(grFiltered)
-  const grReady = sortGrRows(grGroups.ready)
+  const grReady = sortGrRowsBy(grGroups.ready, grSortBy)
   const grAwareness = grGroups.awareness
 
   const focusItems = filteredKpis ? [
@@ -1281,11 +1282,18 @@ export default function Home() {
                             <p className="text-gray-500 text-sm">No GR releases pending right now</p>
                           ) : (
                             <div className="overflow-x-auto">
+                              <div className="flex justify-end mb-2">
+                                <select value={grSortBy} onChange={(e) => setGrSortBy(e.target.value as GrSortOption)}
+                                  className="bg-gray-800 border border-gray-600 text-white text-xs rounded px-2 py-1">
+                                  {GR_SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>Sort: {o.label}</option>)}
+                                </select>
+                              </div>
                               <table className="w-full text-xs">
                                 <thead>
                                   <tr className="bg-gray-800 text-gray-400">
                                     <th className="text-left p-2">HOP</th>
                                     <th className="text-left p-2">GC</th>
+                                    <th className="text-left p-2">SPO Number</th>
                                     <th className="text-left p-2">SOG Name</th>
                                     <th className="text-left p-2">SPO Value</th>
                                     <th className="text-left p-2">Trigger Date</th>
@@ -1301,7 +1309,8 @@ export default function Home() {
                                       <tr key={itemKey} className={`border-t border-gray-800 ${isCompleted ? 'opacity-50' : ''}`}>
                                         <td className={`p-2 font-semibold whitespace-nowrap ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{r.hopDisplay}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.gc}</td>
-                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.sogName}</td>
+                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.spoNumber || '—'}</td>
+                                        <td className="p-2 text-gray-400 whitespace-nowrap">{r.sogName || '—'}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.triggerDate || '—'}</td>
                                         <td className="p-2">
