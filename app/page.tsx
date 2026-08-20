@@ -777,7 +777,10 @@ export default function Home() {
           lastDataRow--
         }
         const rows = rawRows.slice(0, lastDataRow + 1)
+        const firstNonBlankIdx = rows.findIndex(r => (r || []).some(c => c !== null && c !== undefined && String(c).trim() !== ''))
         console.log(`[dashboard] sheet_to_json returned ${rawRows.length} raw rows, trimmed to ${rows.length} after removing trailing blank rows`)
+        console.log(`[dashboard] first non-blank row (index ${firstNonBlankIdx}):`, rows[firstNonBlankIdx])
+        console.log(`[dashboard] last non-blank row (index ${rows.length - 1}):`, rows[rows.length - 1])
         const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
         const newSnap = await saveTrackerSnapshot(file.name, hopCount, rows)
         setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
