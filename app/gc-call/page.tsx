@@ -640,6 +640,10 @@ export default function GCCallPage() {
   const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
 
   useEffect(() => {
+    if (selectedGC) console.log(`[gc-call] selectedGC: '${selectedGC}'`)
+  }, [selectedGC])
+
+  useEffect(() => {
     const loadGr = async () => {
       const rows = await loadGrRows()
       setGrRows(rows)
@@ -1055,6 +1059,9 @@ export default function GCCallPage() {
       }
       hopObj.blockers    = getBlockers(hopObj)
       hopObj.pullInStatus = getPullInStatus(hopObj)
+      if (hop === 'NE-SQUAW_MOUND-NE-CHADRON') {
+        console.log(`[gc-call] SQUAW_MOUND gc field: '${gc}'`)
+      }
       parsed.push(hopObj)
     })
 
