@@ -605,7 +605,7 @@ export default function CMViewPage() {
     const hopCol      = col('HOP')
     const gcCol       = col('General Contractor')
     const regionPmCol = col('Region PM')
-    const newCmCol    = col('New CM')
+    const siteCmCol   = col('Site CM')
     const opsCol      = col('Viaero Ops Field Ops')
     const don444Col   = col('DON 444')
     const ms15fCol    = col('MS15 Implementation Start F')
@@ -666,8 +666,10 @@ export default function CMViewPage() {
 
     const parsed: HOP[] = []
     hopRows.forEach((rows2, hop) => {
-      const row  = rows2[0]
-      const row2 = rows2[1] || null
+      // Prefer the row where GC and Site CM are both populated — the other
+      // row for this HOP may be a blank/partial duplicate.
+      const row  = rows2.find(r => String(r[gcCol] || '').trim() && String(r[siteCmCol] || '').trim()) || rows2[0]
+      const row2 = rows2.find(r => r !== row) || null
 
       const ms15f    = parseDateAny(row[ms15fCol])
       const ms15a    = parseDate(row[ms15aCol])
@@ -741,8 +743,8 @@ export default function CMViewPage() {
       const hopObj: HOP = {
         hop,
         pathId:       String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
-        gc:           String(row[gcCol] || '').trim(),
-        cm:           String(row[newCmCol] || '').trim() || String(row2?.[newCmCol] || '').trim(),
+        gc:           String(row[gcCol] || '').trim() || String(row2?.[gcCol] || '').trim(),
+        cm:           String(row[siteCmCol] || '').trim() || String(row2?.[siteCmCol] || '').trim(),
         ops:          String(row[opsCol] || '').trim(),
         ms15f:        fmtDate(ms15f),
         ms15a:        fmtDate(ms15a),

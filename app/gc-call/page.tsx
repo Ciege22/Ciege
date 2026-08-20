@@ -839,7 +839,7 @@ export default function GCCallPage() {
         // Fallback — known position from tracker
         return 59
       })()
-    const newCmCol     = col('New CM')
+    const siteCmCol    = col('Site CM')
     const mssCol       = col('MSS Completed NMS Ready ')
     const powerCol     = col('Power-Up Completion')
     const gcPickupFCol = col('GC Material Pick-up (F)')
@@ -895,10 +895,12 @@ export default function GCCallPage() {
     const parsed: HOP[] = []
 
     hopRows.forEach((rows2, hop) => {
-      const row  = rows2[0]
-      const row2 = rows2[1] || null
+      // Prefer the row where GC and Site CM are both populated — the other
+      // row for this HOP may be a blank/partial duplicate.
+      const row  = rows2.find(r => String(r[gcCol] || '').trim() && String(r[siteCmCol] || '').trim()) || rows2[0]
+      const row2 = rows2.find(r => r !== row) || null
 
-      const gc      = String(row[gcCol] || '').trim()
+      const gc      = String(row[gcCol] || '').trim() || String(row2?.[gcCol] || '').trim()
       const ms15f   = parseDateAny(row[ms15fCol])
       const ms15a   = parseDate(row[ms15aCol])
       const ms16f   = parseDateAny(row[ms16fCol])
@@ -1042,7 +1044,7 @@ export default function GCCallPage() {
         blockers: [],
         pullInReady: hasNtp && hasMat && !vendorWindow.includes('🔴') && !vendorWindow.includes('⚠️') && !inProgress && !complete,
         pullInStatus: '',
-        cm:        String(row[newCmCol] || '').trim() || String(row2?.[newCmCol] || '').trim(),
+        cm:        String(row[siteCmCol] || '').trim() || String(row2?.[siteCmCol] || '').trim(),
         mss:       fmtDate(parseDateAny(row[mssCol])),
         powerUp:   fmtDate(parseDateAny(row[powerCol])),
         gcPickupF: fmtDate(parseDateAny(row[gcPickupFCol])),
