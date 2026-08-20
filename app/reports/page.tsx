@@ -107,12 +107,23 @@ export default function ReportsPage() {
         const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
         const dataRows = allRows.slice(headerRowIndex + 1).filter(row => row.some(v => v !== null))
 
-        await supabase.from('report_snapshots').upsert({
-          id: type,
-          filename: file.name,
-          uploaded_at: new Date().toISOString(),
-          data: JSON.stringify(dataRows)
-        })
+        if (type === 'spo') {
+          console.log('[report-upload] upserting id="spo"', 'filename=', file.name)
+          await supabase.from('report_snapshots').upsert({
+            id: 'spo',
+            filename: file.name,
+            uploaded_at: new Date().toISOString(),
+            data: JSON.stringify(dataRows)
+          })
+        } else {
+          console.log('[report-upload] upserting id="cr"', 'filename=', file.name)
+          await supabase.from('report_snapshots').upsert({
+            id: 'cr',
+            filename: file.name,
+            uploaded_at: new Date().toISOString(),
+            data: JSON.stringify(dataRows)
+          })
+        }
 
         if (type === 'spo') {
           setSpoRows(dataRows)
