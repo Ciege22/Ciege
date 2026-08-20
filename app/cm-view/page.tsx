@@ -584,6 +584,8 @@ export default function CMViewPage() {
     const loadFromSnapshot = async () => {
       const snap = await loadTrackerSnapshot()
       if (!snap) return
+      console.log('[cm-view] fetched', snap.data.length, 'rows from Supabase')
+      console.log('[cm-view] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
       setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
       setFileName(snap.filename)
       processRows(snap.data, snap.filename)
