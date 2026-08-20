@@ -767,7 +767,17 @@ export default function Home() {
         const wb = XLSX.read(data, { type: 'array', cellDates: true })
         const ws = wb.Sheets['HOPs']
         if (!ws) { alert('HOPs tab not found'); setUploading(false); return }
-        const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
+        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
+        // The worksheet's used range (!ref) can be inflated by formatting applied to
+        // whole columns, making sheet_to_json emit rows all the way to Excel's max
+        // row (1,048,576) even though only ~800-900 rows have real data. Trim the
+        // trailing blank rows before this ever reaches Supabase.
+        let lastDataRow = rawRows.length - 1
+        while (lastDataRow >= 0 && !(rawRows[lastDataRow] || []).some(c => c !== null && c !== undefined && String(c).trim() !== '')) {
+          lastDataRow--
+        }
+        const rows = rawRows.slice(0, lastDataRow + 1)
+        console.log(`[dashboard] sheet_to_json returned ${rawRows.length} raw rows, trimmed to ${rows.length} after removing trailing blank rows`)
         const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
         const newSnap = await saveTrackerSnapshot(file.name, hopCount, rows)
         setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
