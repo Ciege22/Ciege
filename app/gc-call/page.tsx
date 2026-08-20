@@ -89,7 +89,7 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded }: GrInvoicingTabProps) {
   if (!grLoaded) return <p className="text-gray-400 text-sm">Loading GR data...</p>
 
   // Scoped to the currently selected GC — recalculates immediately when selectedGC changes.
-  const gcGrRows = grRows.filter(r => r.gc === selectedGC)
+  const gcGrRows = grRows.filter(r => r.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
   const breakdown = computeGrBreakdown(gcGrRows)
   const ready = groupGrRows(gcGrRows).ready
   const emailMailto = ready.length > 0 ? buildGrEmailMailto(selectedGC, ready) : null
@@ -198,7 +198,7 @@ interface GcReportsTabProps {
 }
 
 function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) {
-  const cfg = GC_CONFIG.find(c => c.gc === selectedGC)
+  const cfg = GC_CONFIG.find(c => c.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
   const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
 
   if (!cfg) return <p className="text-gray-400 text-sm">No report configuration found for {selectedGC}.</p>
@@ -1057,7 +1057,7 @@ export default function GCCallPage() {
     setHops(parsed)
 
     // Build GC list dynamically from parsed HOPs
-    const uniqueGCs = Array.from(new Set(parsed.map(h => h.gc).filter(Boolean))).sort()
+    const uniqueGCs = Array.from(new Set(parsed.map(h => h.gc?.trim().toLowerCase()).filter(Boolean))).sort()
     setGcList(uniqueGCs)
     setSelectedGC('')
     setLoaded(true)
@@ -1086,7 +1086,7 @@ export default function GCCallPage() {
     })
   }
 
-  const gcHops      = hops.filter(h => h.gc === selectedGC)
+  const gcHops      = hops.filter(h => h.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
   const active      = gcHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
   const thisWeek    = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const next2Weeks  = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
@@ -1430,7 +1430,7 @@ export default function GCCallPage() {
         <div className="flex gap-3 mb-6 flex-wrap">
           {gcList.map((gc) => (
             <button key={gc} onClick={() => setSelectedGC(gc)}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all ${selectedGC === gc ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all ${selectedGC?.trim().toLowerCase() === gc?.trim().toLowerCase() ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
               {gc}
             </button>
           ))}

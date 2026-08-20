@@ -796,7 +796,7 @@ export default function CMViewPage() {
       parsed.push(hopObj)
     })
 
-    const uniqueCMs = Array.from(new Set(parsed.map(h => h.cm).filter(Boolean))).sort()
+    const uniqueCMs = Array.from(new Set(parsed.map(h => h.cm?.trim().toLowerCase()).filter(Boolean))).sort()
     setCmList(uniqueCMs)
     setHops(parsed)
     setLoaded(true)
@@ -817,7 +817,7 @@ export default function CMViewPage() {
     reader.readAsArrayBuffer(file)
   }, [processRows])
 
-  const cmHops    = hops.filter(h => h.cm === selectedCM)
+  const cmHops    = hops.filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
   const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
   const thisWeek  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const next2Wks  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
@@ -1181,7 +1181,7 @@ export default function CMViewPage() {
         <div className="flex gap-3 mb-6 flex-wrap">
           {cmList.map((cm) => (
             <button key={cm} onClick={() => setSelectedCM(cm)}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all ${selectedCM === cm ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all ${selectedCM?.trim().toLowerCase() === cm?.trim().toLowerCase() ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
               {cm}
             </button>
           ))}
