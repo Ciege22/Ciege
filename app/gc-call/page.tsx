@@ -865,17 +865,38 @@ export default function GCCallPage() {
     // First pass — collect all rows per HOP
     const hopRows = new Map<string, unknown[][]>()
 
+    const TARGET_HOP = 'NE-SQUAW_MOUND-NE-CHADRON'
+    let rawRowCount = 0
+    let don444SurviveCount = 0
+    let nokiaPmSurviveCount = 0
+    let sawTargetRaw = false
+    let sawTargetAfterDon444 = false
+    let sawTargetAfterNokiaPm = false
+
     for (let i = headerRow + 1; i < rows.length; i++) {
       const row = rows[i] as unknown[]
+      rawRowCount++
+      const hopRaw = String(row[hopCol] || '').trim()
+      if (hopRaw === TARGET_HOP) sawTargetRaw = true
+
       const don = String(row[don444Col] || '').trim().toUpperCase()
       if (don !== 'DON 444') continue
+      don444SurviveCount++
+      if (hopRaw === TARGET_HOP) sawTargetAfterDon444 = true
+
       const nokiaPm = String(row[nokiaPmCol] || '').trim().toUpperCase()
       if (nokiaPm !== 'CJ') continue
+      nokiaPmSurviveCount++
+      if (hopRaw === TARGET_HOP) sawTargetAfterNokiaPm = true
+
       const hop = String(row[hopCol] || '').trim()
       if (!hop || hop === 'undefined') continue
       if (!hopRows.has(hop)) hopRows.set(hop, [])
       hopRows.get(hop)!.push(row)
     }
+
+    console.log(`[gc-call] processRows: raw rows=${rawRowCount}, survived DON 444=${don444SurviveCount}, survived Nokia PM=${nokiaPmSurviveCount}, unique HOPs after dedup=${hopRows.size}`)
+    console.log(`[gc-call] ${TARGET_HOP} present — raw: ${sawTargetRaw}, after DON 444: ${sawTargetAfterDon444}, after Nokia PM: ${sawTargetAfterNokiaPm}, after dedup: ${hopRows.has(TARGET_HOP)}`)
 
     // Build site occupancy map from all in-progress HOPs
     // Maps "SiteName|SiteNumber" -> { gc, hop, ms16f }
