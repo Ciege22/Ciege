@@ -180,6 +180,11 @@ export default function Home() {
 
   const computeKPIs = useCallback((rows: unknown[][]) => {
     const today = new Date()
+    // Zero out the time-of-day so daysOut is a clean whole-day count — otherwise
+    // a HOP whose MS15F is literally today computes a negative fractional diff
+    // (midnight vs. the current time) and rounds to -1, dropping out of the
+    // `daysOut >= 0` "Starting This Week" window for most of the day.
+    today.setHours(0, 0, 0, 0)
     const currentMonth = today.getMonth()
     const currentYear = today.getFullYear()
 
