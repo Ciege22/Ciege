@@ -1086,8 +1086,8 @@ export default function GCCallPage() {
       parsed.push(hopObj)
     })
 
-    const techCxHops = parsed.filter(h => h.gc?.trim().toLowerCase() === 'tech cx').map(h => h.hop)
-    console.log('[gc-call] tech cx hops after dedup:', techCxHops)
+    const techCxHops = parsed.filter(h => h.gc?.trim().toLowerCase() === 'tech cx')
+    console.log('[gc-call] tech cx hops after dedup:', techCxHops.map(h => h.hop).join(', '))
 
     setHops(parsed)
 
