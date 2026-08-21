@@ -2,6 +2,7 @@
 
 import { useRef, useState, useEffect } from 'react'
 import { loadTrackerSnapshot, getPreviousSnapshot } from '../lib/supabase'
+import BackToDashboard from '../components/BackToDashboard'
 
 export default function DeckBuilderPage() {
   const [loading, setLoading] = useState(false)
@@ -229,6 +230,7 @@ export default function DeckBuilderPage() {
           {/* Main */}
           <main className="space-y-6">
             <section className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-[0_24px_120px_-80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
+              <BackToDashboard />
               <p className="text-sm uppercase tracking-[0.4em] text-emerald-300/80">Tools</p>
               <h2 className="mt-3 text-3xl font-semibold text-white">Deck Builder</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-400">

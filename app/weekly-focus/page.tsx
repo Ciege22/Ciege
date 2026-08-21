@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback } from 'react'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import BackToDashboard from '../components/BackToDashboard'
 
 interface HOP {
   hop: string
@@ -670,6 +671,8 @@ export default function WeeklyFocusPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-5xl mx-auto">
+
+        <BackToDashboard />
 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">

@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
 import { getChangeLog, getSchemaChanges, getAllSnapshots } from '../lib/supabase'
+import BackToDashboard from '../components/BackToDashboard'
 
 interface Change {
   id: string
@@ -99,6 +100,7 @@ export default function ChangeLogPage() {
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-full mx-auto">
 
+        <BackToDashboard />
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Tracker Change Log</h1>
           <p className="text-gray-400 mt-1">What changed between each tracker upload — HOPs, dates, milestones, and schema</p>

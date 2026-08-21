@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
 import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings } from './lib/settings'
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
@@ -169,6 +170,7 @@ export default function Home() {
   const [grFocusCommentInput, setGrFocusCommentInput] = useState<Record<string, string>>({})
   const [grSortBy, setGrSortBy] = useState<GrSortOption>('trigger')
   const [grRowTypeFilter, setGrRowTypeFilter] = useState<'all' | 'base' | 'cr'>('all')
+  const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -176,6 +178,16 @@ export default function Home() {
       if (snap) setSnapshotInfo({ filename: snap.filename, uploaded_at: snap.uploaded_at, hop_count: snap.hop_count })
     }
     checkSnapshot()
+  }, [])
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      const [t, d] = await Promise.all([loadThresholdSettings(), loadDisplaySettings()])
+      setThresholds(t)
+      setPmFilter(d.defaultPmFilter)
+      setGrSortBy(d.defaultSortOrder as GrSortOption)
+    }
+    loadSettings()
   }, [])
 
   const computeKPIs = useCallback((rows: unknown[][]) => {
@@ -288,14 +300,14 @@ export default function Home() {
       if (started) startsToDate++
       if (complete) completesToDate++
       if (inProgress) activeNow++
-      if (inProgress && (daysElapsed ?? 0) > 18) over18d++
+      if (inProgress && (daysElapsed ?? 0) > thresholds.durationAlertDays) over18d++
       if (!started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7) startingThisWeek++
-      if (!hasNtp && !complete && daysOut !== null && daysOut <= 14) ntpUrgent++
+      if (!hasNtp && !complete && daysOut !== null && daysOut <= thresholds.ntpUrgentDays) ntpUrgent++
       if (!hasSpo && !complete) {
         if (hasCpo) cutSpoNow++
         else spoNeeded++
       }
-      if (!hasMat && !complete && daysOut !== null && daysOut <= 14) materialWatch++
+      if (!hasMat && !complete && daysOut !== null && daysOut <= thresholds.materialWatchDays) materialWatch++
 
       if (ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear) currentMonthFcComplete++
       if (ms16a && ms16a.getMonth() === currentMonth && ms16a.getFullYear() === currentYear) currentMonthActComplete++
@@ -362,12 +374,12 @@ export default function Home() {
         hasNtp, ntpWaitingOn: String(row[ntpWaitCol] || '').trim(),
         hasMat, hasSpo, hasCpo,
         daysOut, daysElapsed, inProgress, complete,
-        over18d: inProgress && (daysElapsed??0) > 18,
+        over18d: inProgress && (daysElapsed??0) > thresholds.durationAlertDays,
         startingThisWeek: !started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7,
-        ntpUrgent: !hasNtp && !complete && daysOut !== null && daysOut <= 14,
+        ntpUrgent: !hasNtp && !complete && daysOut !== null && daysOut <= thresholds.ntpUrgentDays,
         cutSpoNow: !hasSpo && !complete && hasCpo,
         spoNeeded: !hasSpo && !complete && !hasCpo,
-        materialWatch: !hasMat && !complete && daysOut !== null && daysOut <= 14,
+        materialWatch: !hasMat && !complete && daysOut !== null && daysOut <= thresholds.materialWatchDays,
         vendorConflict: hasConflict2 && !complete,
         currentMonthFc: !!(ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear),
         currentMonthAct: !!(ms16a && ms16a.getMonth() === currentMonth && ms16a.getFullYear() === currentYear),
@@ -382,7 +394,7 @@ export default function Home() {
       openActions: 0, cutSpoNow, materialWatch, vendorConflicts,
       currentMonthFcComplete, currentMonthActComplete
     })
-  }, [])
+  }, [thresholds])
 
   useEffect(() => {
     const loadKPIs = async () => {
@@ -978,6 +990,16 @@ export default function Home() {
                 )
               )}
             </nav>
+
+            <button
+              onClick={() => router.push('/settings')}
+              aria-label="Settings"
+              title="Settings"
+              type="button"
+              className="mt-4 flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 transition hover:bg-white/10 hover:text-zinc-300"
+            >
+              ⚙️
+            </button>
           </aside>
 
           <main className="space-y-6">

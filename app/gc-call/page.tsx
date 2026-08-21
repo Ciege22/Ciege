@@ -6,6 +6,8 @@ import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
+import BackToDashboard from '../components/BackToDashboard'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
 import {
   GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
@@ -67,6 +69,7 @@ interface GrInvoicingTabProps {
   selectedGC: string
   grRows: GrRow[]
   grLoaded: boolean
+  emailSettings: EmailSettings
 }
 
 function GrTile({ emoji, label, value, sub, color, valueColor, active, onClick }: {
@@ -83,7 +86,7 @@ function GrTile({ emoji, label, value, sub, color, valueColor, active, onClick }
   )
 }
 
-function GrInvoicingTab({ selectedGC, grRows, grLoaded }: GrInvoicingTabProps) {
+function GrInvoicingTab({ selectedGC, grRows, grLoaded, emailSettings }: GrInvoicingTabProps) {
   const [tileFilter, setTileFilter] = useState<GrTileFilter>(null)
 
   if (!grLoaded) return <p className="text-gray-400 text-sm">Loading GR data...</p>
@@ -92,7 +95,9 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded }: GrInvoicingTabProps) {
   const gcGrRows = grRows.filter(r => r.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
   const breakdown = computeGrBreakdown(gcGrRows)
   const ready = groupGrRows(gcGrRows).ready
-  const emailMailto = ready.length > 0 ? buildGrEmailMailto(selectedGC, ready) : null
+  const emailMailto = ready.length > 0
+    ? buildGrEmailMailto(selectedGC, ready, { financeEmails: emailSettings.financeEmails, gcContactEmails: emailSettings.gcContactEmails })
+    : null
 
   const displayRows = sortGrRowsBy(rowsForTileFilter(gcGrRows, tileFilter), 'trigger')
 
@@ -638,6 +643,17 @@ export default function GCCallPage() {
   const [grLoaded, setGrLoaded] = useState(false)
   const [spoRawRows, setSpoRawRows] = useState<unknown[][]>([])
   const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
+  const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
+
+  useEffect(() => {
+    const loadSettings = async () => {
+      const [t, e] = await Promise.all([loadThresholdSettings(), loadEmailSettings()])
+      setThresholds(t)
+      setEmailSettings(e)
+    }
+    loadSettings()
+  }, [])
 
   useEffect(() => {
     if (selectedGC) console.log(`[gc-call] selectedGC: '${selectedGC}'`)
@@ -762,19 +778,6 @@ export default function GCCallPage() {
       setSessionNotes(s => ({ ...s, [hop]: '' }))
     }
   }
-
-  useEffect(() => {
-    const loadFromSnapshot = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) return
-      console.log('[gc-call] fetched', snap.data.length, 'rows from Supabase')
-      console.log('[gc-call] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
-      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
-      setFileName(snap.filename)
-      processRows(snap.data, snap.filename)
-    }
-    loadFromSnapshot()
-  }, [])
 
   useEffect(() => {
     const loadUpdates = async () => {
@@ -988,13 +991,13 @@ export default function GCCallPage() {
             allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}${siteLabel}`)
           } else if (endTime < ms15fTime) {
             const buf = Math.round((ms15fTime - endTime) / (1000 * 60 * 60 * 24))
-            if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d before start${siteLabel}`)
-            else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
-            else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
+            if (buf <= 5)                            allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d before start${siteLabel}`)
+            else if (buf <= thresholds.pullInBufferDays) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
+            else                                      allVendorParts.push(`✅ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
           } else {
             const buf = Math.round((startTime - ms15fTime) / (1000 * 60 * 60 * 24))
-            if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
-            else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
+            if (buf <= thresholds.pullInBufferDays) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
+            else                                  allVendorParts.push(`✅ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
           }
         }
         checkV('ITW', rItwS, rItwE)
@@ -1099,7 +1102,20 @@ export default function GCCallPage() {
     setGcList(uniqueGCs)
     setSelectedGC('')
     setLoaded(true)
-  }, [today])
+  }, [today, thresholds])
+
+  useEffect(() => {
+    const loadFromSnapshot = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (!snap) return
+      console.log('[gc-call] fetched', snap.data.length, 'rows from Supabase')
+      console.log('[gc-call] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
+      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
+      setFileName(snap.filename)
+      processRows(snap.data, snap.filename)
+    }
+    loadFromSnapshot()
+  }, [processRows])
 
   const handleFile = useCallback((file: File) => {
     setFileName(file.name)
@@ -1167,7 +1183,7 @@ export default function GCCallPage() {
       body += `★★★  ACTIVE SITES (${active.length})  ★★★\n`
       body += `${starDiv}\n\n`
       active.forEach(h => {
-        const status = (h.daysElapsed ?? 0) > 18
+        const status = (h.daysElapsed ?? 0) > thresholds.durationAlertDays
           ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
           : `✅ On track — ${h.daysElapsed}d elapsed`
         const spoStatusActive = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
@@ -1281,16 +1297,7 @@ export default function GCCallPage() {
     body += `Please coordinate with your Site CM ${cm} for all field questions.\n`
     body += `For schedule, finance, or contract matters contact CJ directly.`
 
-    const ccList = [
-      'thomas.meinke.ext@nokia.com',
-      'steve.jahr.ext@nokia.com',
-      'christopher.seebach@nokia.com',
-      'george.anson@nokia.com',
-      'curtiss.lindsey.ext@nokia.com',
-      'emily.rudolph@nokia.com',
-      'scott.tomlinson.ext@nokia.com',
-      'paul.1.barlow.ext@nokia.com'
-    ].join(',')
+    const ccList = emailSettings.ccList.join(',')
 
     window.open(`mailto:?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
@@ -1361,6 +1368,8 @@ export default function GCCallPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-full mx-auto">
+
+        <BackToDashboard />
 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
@@ -1569,13 +1578,13 @@ export default function GCCallPage() {
                           </thead>
                           <tbody>
                             {active.map((h) => (
-                              <tr key={h.hop} className={`border-t border-gray-800 ${(h.daysElapsed ?? 0) > 18 ? 'bg-red-950' : 'bg-gray-900'}`}>
+                              <tr key={h.hop} className={`border-t border-gray-800 ${(h.daysElapsed ?? 0) > thresholds.durationAlertDays ? 'bg-red-950' : 'bg-gray-900'}`}>
                                 <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
                                 <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms15a || '—'}</td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
-                                <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > 18 ? 'text-red-400' : 'text-green-400'}`}>{h.daysElapsed}d</td>
-                                <td className="p-2">{(h.daysElapsed ?? 0) > 18 ? <span className="text-red-400">⚠️ Over 18d</span> : <span className="text-green-400">On track</span>}</td>
+                                <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > thresholds.durationAlertDays ? 'text-red-400' : 'text-green-400'}`}>{h.daysElapsed}d</td>
+                                <td className="p-2">{(h.daysElapsed ?? 0) > thresholds.durationAlertDays ? <span className="text-red-400">⚠️ Over {thresholds.durationAlertDays}d</span> : <span className="text-green-400">On track</span>}</td>
                                 <td className="p-2">
                                   {h.hasSpo
                                     ? <span className="text-green-400 font-bold text-sm" title={h.spoIssued}>✓</span>
@@ -1654,6 +1663,7 @@ export default function GCCallPage() {
                 selectedGC={selectedGC}
                 grRows={grRows}
                 grLoaded={grLoaded}
+                emailSettings={emailSettings}
               />
             )}
 

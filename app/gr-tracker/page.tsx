@@ -9,6 +9,8 @@ import {
   loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
 } from '../lib/grTracker'
+import BackToDashboard from '../components/BackToDashboard'
+import { EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
 
 const TIER_CHECKBOX_OPTIONS: { value: string; label: string }[] = [
   { value: 'init20', label: 'Init 20% (MS15A)' },
@@ -60,6 +62,11 @@ export default function GrTrackerPage() {
   const [sortBy, setSortBy] = useState<GrSortOption>('trigger')
   const [specialFilter, setSpecialFilter] = useState<GrTileFilter>(null)
   const [emailGroups, setEmailGroups] = useState<{ gc: string; count: number; mailto: string }[] | null>(null)
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
+
+  useEffect(() => {
+    loadEmailSettings().then(setEmailSettings)
+  }, [])
 
   useEffect(() => {
     const load = async () => {
@@ -126,7 +133,7 @@ export default function GrTrackerPage() {
     })
     const out: { gc: string; count: number; mailto: string }[] = []
     byGc.forEach((gcRows, gc) => {
-      out.push({ gc, count: gcRows.length, mailto: buildGrEmailMailto(gc, gcRows) })
+      out.push({ gc, count: gcRows.length, mailto: buildGrEmailMailto(gc, gcRows, { financeEmails: emailSettings.financeEmails, gcContactEmails: emailSettings.gcContactEmails }) })
     })
     out.sort((a, b) => a.gc.localeCompare(b.gc))
     setEmailGroups(out)
@@ -137,6 +144,8 @@ export default function GrTrackerPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-7xl mx-auto">
+
+        <BackToDashboard />
 
         <div className="mb-6">
           <h1 className="text-3xl font-bold">💰 GR / Invoicing Tracker</h1>

@@ -5,6 +5,8 @@ export const dynamic = 'force-dynamic'
 import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import BackToDashboard from '../components/BackToDashboard'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings } from '../lib/settings'
 
 interface HOP {
   hop: string
@@ -118,34 +120,34 @@ function daysBetween(a: Date, b: Date): number {
   return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
 }
 
-function getStatuses(h: HOP): string[] {
+function getStatuses(h: HOP, durationAlertDays: number = DEFAULT_THRESHOLDS.durationAlertDays): string[] {
   // Single next-step status based on milestone sequence
   if (h.decom) return ['✅ Complete — verify close-out package']
   if (h.divCutover) return ['♻️ Diversity done — schedule decom pickup and return']
   if (h.mainCutover) return ['🔗 Main cutover done — schedule diversity cutover']
   if (h.powerUp) return ['🔗 Powered up — schedule main cutover']
   if (h.mss) return ['⚡ MSS done — chase Viaero power-up']
-  if ((h.daysElapsed ?? 0) > 18) return [`⚠️ Over target — ${h.daysElapsed}d elapsed — get updated completion date`]
+  if ((h.daysElapsed ?? 0) > durationAlertDays) return [`⚠️ Over target — ${h.daysElapsed}d elapsed — get updated completion date`]
   return [`🔨 Active — ${h.daysElapsed ?? 0}d elapsed — drive to completion`]
 }
 
-function getCmAction(h: HOP): string {
+function getCmAction(h: HOP, t: ThresholdSettings = DEFAULT_THRESHOLDS): string {
   if (h.complete) return '✅ Complete — verify close-out package uploaded to QB'
   if (h.inProgress) {
     const elapsed = h.daysElapsed ?? 0
     if (h.mss && !h.powerUp) return '📡 MSS/NMS done — chase Viaero for power-up, log wait time'
     if (h.mainCutover && !h.divCutover) return '🔗 Main cutover done — schedule diversity cutover'
     if (h.powerUp && !h.decom) return '♻️ Power-up complete — schedule decom pickup and return'
-    if (elapsed > 18) return `⚠️ ${elapsed}d elapsed — provide updated completion date to CJ`
+    if (elapsed > t.durationAlertDays) return `⚠️ ${elapsed}d elapsed — provide updated completion date to CJ`
     return '🔨 Active — confirm crew on site, no access issues, update CJ on M/W/F'
   }
   const days = h.daysOut
   if (!h.hasNtp && days !== null && days <= 7) return '🔴 CRITICAL — NTP missing, starts this week, alert CJ immediately'
   if (!h.hasMat && days !== null && days <= 7) return '🔴 CRITICAL — material not received, starts this week, alert CJ'
   if (h.hasMat && !h.gcPickup && days !== null && days <= 7) return '🔴 URGENT — material in warehouse, coordinate GC pickup today'
-  if (!h.hasNtp && days !== null && days <= 14) return '🟠 Chase NTP — starts in 2 weeks, alert CJ'
-  if (!h.hasMat && days !== null && days <= 14) return `🟠 Material not received — forecast ${h.matForecast || 'TBD'}, alert CJ`
-  if (h.hasMat && !h.gcPickup && days !== null && days <= 14) return '🟠 Material in warehouse — coordinate GC pickup this week'
+  if (!h.hasNtp && days !== null && days <= t.ntpUrgentDays) return '🟠 Chase NTP — starts in 2 weeks, alert CJ'
+  if (!h.hasMat && days !== null && days <= t.materialWatchDays) return `🟠 Material not received — forecast ${h.matForecast || 'TBD'}, alert CJ`
+  if (h.hasMat && !h.gcPickup && days !== null && days <= t.materialWatchDays) return '🟠 Material in warehouse — coordinate GC pickup this week'
   if (days !== null && days <= 30) return `🟡 Monitor — confirm readiness as start date approaches`
   return '👀 Pipeline — monitor'
 }
@@ -434,6 +436,11 @@ export default function CMViewPage() {
   const [fileName, setFileName] = useState('')
   const [selectedCM, setSelectedCM] = useState('')
   const [workloadMode, setWorkloadMode] = useState<'mine' | 'full'>('mine')
+  const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
+
+  useEffect(() => {
+    loadThresholdSettings().then(setThresholds)
+  }, [])
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
@@ -588,19 +595,6 @@ export default function CMViewPage() {
   }
 
 
-  useEffect(() => {
-    const loadFromSnapshot = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) return
-      console.log('[cm-view] fetched', snap.data.length, 'rows from Supabase')
-      console.log('[cm-view] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
-      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
-      setFileName(snap.filename)
-      processRows(snap.data, snap.filename)
-    }
-    loadFromSnapshot()
-  }, [])
-
   const processRows = useCallback((rows: unknown[][], _filename: string) => {
 
     let headerRow = -1
@@ -727,13 +721,13 @@ export default function CMViewPage() {
             allVendorParts.push(`🔴 ${name} on site thru ${fmtDM(end)}${siteLabel}`)
           } else if (endTime < ms15fTime) {
             const buf = Math.round((ms15fTime - endTime) / (1000 * 60 * 60 * 24))
-            if (buf <= 5)       allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d${siteLabel}`)
-            else if (buf <= 10) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
-            else                allVendorParts.push(`✅ ${name} clears ${fmtDM(end)}${siteLabel}`)
+            if (buf <= 5)                            allVendorParts.push(`🔴 ${name} clears ${fmtDM(end)} — only ${buf}d${siteLabel}`)
+            else if (buf <= thresholds.pullInBufferDays) allVendorParts.push(`⚠️ ${name} clears ${fmtDM(end)} — ${buf}d buffer${siteLabel}`)
+            else                                      allVendorParts.push(`✅ ${name} clears ${fmtDM(end)}${siteLabel}`)
           } else {
             const buf = Math.round((startTime - ms15fTime) / (1000 * 60 * 60 * 24))
-            if (buf <= 10) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
-            else           allVendorParts.push(`✅ ${name} starts ${fmtDM(start)}${siteLabel}`)
+            if (buf <= thresholds.pullInBufferDays) allVendorParts.push(`⚠️ ${name} starts ${fmtDM(start)} — ${buf}d after start${siteLabel}`)
+            else                                  allVendorParts.push(`✅ ${name} starts ${fmtDM(start)}${siteLabel}`)
           }
         }
         checkV('ITW', rItwS, rItwE)
@@ -807,15 +801,28 @@ export default function CMViewPage() {
         statuses: [],
         cmAction: ''
       }
-      hopObj.statuses = getStatuses(hopObj)
-      hopObj.cmAction = getCmAction(hopObj)
+      hopObj.statuses = getStatuses(hopObj, thresholds.durationAlertDays)
+      hopObj.cmAction = getCmAction(hopObj, thresholds)
       parsed.push(hopObj)
     })
 
     setHops(parsed)
     setLoaded(true)
     setSelectedCM('')
-  }, [today])
+  }, [today, thresholds])
+
+  useEffect(() => {
+    const loadFromSnapshot = async () => {
+      const snap = await loadTrackerSnapshot()
+      if (!snap) return
+      console.log('[cm-view] fetched', snap.data.length, 'rows from Supabase')
+      console.log('[cm-view] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
+      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
+      setFileName(snap.filename)
+      processRows(snap.data, snap.filename)
+    }
+    loadFromSnapshot()
+  }, [processRows])
 
   const handleFile = useCallback((file: File) => {
     setFileName(file.name)
@@ -937,7 +944,7 @@ export default function CMViewPage() {
             const elapsed = isActive && h.daysElapsed !== null ? `${h.daysElapsed}d` : ''
             const daysOut = !isActive && h.daysOut !== null ? `${h.daysOut}d` : ''
             const status = isActive
-              ? ((h.daysElapsed ?? 0) > 18 ? '⚠️ OVER TARGET' : '🔨 Active')
+              ? ((h.daysElapsed ?? 0) > thresholds.durationAlertDays ? '⚠️ OVER TARGET' : '🔨 Active')
               : h.daysOut !== null && h.daysOut <= 7 ? '🔴 This Week'
               : h.daysOut !== null && h.daysOut <= 14 ? '🟠 2 Weeks'
               : h.daysOut !== null && h.daysOut <= 30 ? '🟡 This Month'
@@ -1017,7 +1024,7 @@ export default function CMViewPage() {
       if (active.length > 0) {
         body += `★★ Active Sites (${active.length}) ★★\n\n`
         active.forEach(h => {
-          const status = (h.daysElapsed ?? 0) > 18
+          const status = (h.daysElapsed ?? 0) > thresholds.durationAlertDays
             ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
             : `✅ On track — ${h.daysElapsed}d elapsed`
           const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
@@ -1087,6 +1094,8 @@ export default function CMViewPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-full mx-auto">
+
+        <BackToDashboard />
 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
@@ -1301,7 +1310,7 @@ export default function CMViewPage() {
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15a}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
-                                <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > 18 ? 'text-red-400' : 'text-green-400'}`}>
+                                <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > thresholds.durationAlertDays ? 'text-red-400' : 'text-green-400'}`}>
                                   {h.daysElapsed}d
                                 </td>
                                 <td className="p-2">

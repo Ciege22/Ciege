@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
+import BackToDashboard from '../components/BackToDashboard'
 
 interface ReportSnapshot {
   filename: string
@@ -165,6 +166,8 @@ export default function ReportsPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-6xl mx-auto">
+
+        <BackToDashboard />
 
         <div className="mb-6">
           <h1 className="text-3xl font-bold">Reports</h1>

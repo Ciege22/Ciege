@@ -361,7 +361,11 @@ export const GR_EMAIL_CC_BASE = [
 // Any GC without an entry here simply omits the extra CC line (never blocks the email).
 export const GC_PRIMARY_CONTACT: Record<string, string> = {}
 
-export function buildGrEmailMailto(gc: string, rows: GrRow[]): string {
+export function buildGrEmailMailto(
+  gc: string,
+  rows: GrRow[],
+  emailOverrides?: { financeEmails?: string[]; gcContactEmails?: Record<string, string> }
+): string {
   const today = new Date()
   const dateStr = `${today.getMonth() + 1}/${today.getDate()}/${today.getFullYear()}`
   const subject = `GR Release Request — ${gc} — ${dateStr}`
@@ -389,8 +393,10 @@ export function buildGrEmailMailto(gc: string, rows: GrRow[]): string {
   body += `Total Pending Release: ${fmtMoney(total)}\n\n`
   body += `Thank you,\nCJ`
 
-  const gcContact = GC_PRIMARY_CONTACT[gc]
-  const cc = [...(gcContact ? [gcContact] : []), ...GR_EMAIL_CC_BASE].join(',')
+  const gcContactMap = emailOverrides?.gcContactEmails ?? GC_PRIMARY_CONTACT
+  const financeEmails = emailOverrides?.financeEmails ?? GR_EMAIL_CC_BASE
+  const gcContact = gcContactMap[gc]
+  const cc = [...(gcContact ? [gcContact] : []), ...financeEmails].join(',')
   const to = GR_EMAIL_TO.join(',')
 
   return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`

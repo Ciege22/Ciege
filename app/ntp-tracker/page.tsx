@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import BackToDashboard from '../components/BackToDashboard'
 
 interface HOP {
   hop: string
@@ -515,6 +516,8 @@ export default function NTPTrackerPage() {
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
       <div className="max-w-full mx-auto">
+
+        <BackToDashboard />
 
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
