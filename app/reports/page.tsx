@@ -24,6 +24,23 @@ const CR_HEADERS = ['Requestor', 'Supplier Name', 'Path ID', 'Site Name', 'Site 
 const NAVY = '124191'
 const TEAL = '00A0B0'
 
+// Store only the columns Ciege actually reads (SPO_COL_IDX / CR_COL_IDX above —
+// confirmed to be the full set referenced anywhere in the app or backend). Raw
+// tracker exports run 50-90+ columns wide, and storing every column was pushing
+// the Supabase upsert payload large enough to time out. Rows are truncated to a
+// sparse array (nulled-out gaps, original index positions preserved, everything
+// past the last needed column dropped entirely) rather than compacted or turned
+// into an object — every existing row[N] lookup throughout the app and the
+// Python backend (which indexes with a plain int, not a string key) keeps
+// working unchanged, since this stays a real array both in JS and after
+// json.loads() in Python.
+function stripRow(row: unknown[], keepCols: number[]): unknown[] {
+  const maxIdx = Math.max(...keepCols)
+  const stripped: unknown[] = new Array(maxIdx + 1).fill(null)
+  keepCols.forEach(i => { stripped[i] = row[i] ?? null })
+  return stripped
+}
+
 function fmtDate(val: unknown): string {
   if (!val) return ''
   if (val instanceof Date) return val.toLocaleDateString('en-US')
@@ -108,13 +125,18 @@ export default function ReportsPage() {
         const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
         const dataRows = allRows.slice(headerRowIndex + 1).filter(row => row.some(v => v !== null))
 
+        const keepCols = type === 'spo' ? SPO_COL_IDX : CR_COL_IDX
+        const totalCols = dataRows.reduce((max, row) => Math.max(max, row.length), 0)
+        const strippedRows = dataRows.map(row => stripRow(row, keepCols))
+        console.log(`[report-upload] ${type.toUpperCase()} columns: kept ${keepCols.length} of ${totalCols} (dropped ${totalCols - keepCols.length})`)
+
         if (type === 'spo') {
           console.log('[report-upload] upserting id="spo"', 'filename=', file.name)
           const { error } = await supabase.from('report_snapshots').upsert({
             id: 'spo',
             filename: file.name,
             uploaded_at: new Date().toISOString(),
-            data: JSON.stringify(dataRows)
+            data: JSON.stringify(strippedRows)
           })
           if (error) {
             console.error('[report-upload] SPO upsert failed:', error)
@@ -128,7 +150,7 @@ export default function ReportsPage() {
             id: 'cr',
             filename: file.name,
             uploaded_at: new Date().toISOString(),
-            data: JSON.stringify(dataRows)
+            data: JSON.stringify(strippedRows)
           })
           if (error) {
             console.error('[report-upload] CR upsert failed:', error)
@@ -139,11 +161,11 @@ export default function ReportsPage() {
         }
 
         if (type === 'spo') {
-          setSpoRows(dataRows)
-          setSpoInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: dataRows.length })
+          setSpoRows(strippedRows)
+          setSpoInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
         } else {
-          setCrRows(dataRows)
-          setCrInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: dataRows.length })
+          setCrRows(strippedRows)
+          setCrInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
         }
       } catch (err) {
         console.error('Upload error:', err)
