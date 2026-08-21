@@ -638,7 +638,6 @@ export default function GCCallPage() {
   const [grLoaded, setGrLoaded] = useState(false)
   const [spoRawRows, setSpoRawRows] = useState<unknown[][]>([])
   const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
-  const [rawDump, setRawDump] = useState<{ hop: string; gc: string; cm: string }[]>([])
 
   useEffect(() => {
     if (selectedGC) console.log(`[gc-call] selectedGC: '${selectedGC}'`)
@@ -863,19 +862,6 @@ export default function GCCallPage() {
     const ssSCol    = col('Samsung Schedule Start')
     const ssECol    = col('Samsung Schedule Complete')
 
-    // DEBUG: raw dump of every row exactly as parsed — no DON 444 check, no
-    // Nokia PM check, no dedup. Populated before any filtering runs.
-    const rawDumpRows: { hop: string; gc: string; cm: string }[] = []
-    for (let i = headerRow + 1; i < rows.length; i++) {
-      const row = rows[i] as unknown[]
-      rawDumpRows.push({
-        hop: String(row[hopCol] || '').trim(),
-        gc: String(row[gcCol] || '').trim(),
-        cm: String(row[siteCmCol] || '').trim()
-      })
-    }
-    setRawDump(rawDumpRows)
-
     // First pass — collect all rows per HOP
     const hopRows = new Map<string, unknown[][]>()
 
@@ -1099,6 +1085,9 @@ export default function GCCallPage() {
       }
       parsed.push(hopObj)
     })
+
+    const techCxHops = parsed.filter(h => h.gc?.trim().toLowerCase() === 'tech cx').map(h => h.hop)
+    console.log('[gc-call] tech cx hops after dedup:', techCxHops)
 
     setHops(parsed)
 
@@ -1485,15 +1474,175 @@ export default function GCCallPage() {
         {/* GC Panel */}
         {selectedGC && (
           <div className="bg-gray-900 rounded-xl border border-gray-700 p-6">
-            <h2 className="text-xl font-bold mb-1 text-yellow-400">🐛 RAW DEBUG DUMP — temporary, no filters/dedup/DON 444 check applied</h2>
-            <p className="text-gray-500 text-sm mb-4">{rawDump.length} total rows straight from the fetched snapshot, in original row order.</p>
-            <div className="font-mono text-xs text-gray-300 max-h-[75vh] overflow-y-auto border border-gray-800 rounded-lg p-3 space-y-0.5">
-              {rawDump.map((r, i) => (
-                <div key={i} className={r.hop === 'NE-SQUAW_MOUND-NE-CHADRON' ? 'bg-yellow-900/50 text-yellow-200' : ''}>
-                  {r.hop || '(blank)'} | {r.gc || '(blank)'} | {r.cm || '(blank)'}
-                </div>
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">{selectedGC}</h2>
+                <p className="text-gray-400 mt-1">
+                  Site CM: <span className="text-blue-400 font-semibold">{GC_CM_MAP[selectedGC] || 'See Contacts'}</span>
+                  {loaded && (
+                    <span className="text-gray-500">
+                      {' · '}{gcHops.length} HOPs{' · '}
+                      {active.length} active{' · '}
+                      {thisWeek.length} this week{' · '}
+                      {next2Weeks.length} next 2 wks{' · '}
+                      {thisMonth.length} this month{' · '}
+                      <span className="text-green-400">{pullInReady.length} pull-in ready</span>
+                    </span>
+                  )}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <button onClick={generateEmail}
+                  className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                  ✉️ Email
+                </button>
+                <button onClick={downloadGCExcel}
+                  className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                  📥 Download Excel
+                </button>
+              </div>
+            </div>
+
+            {/* Tab Bar */}
+            <div className="flex gap-2 mb-6 border-b border-gray-800 pb-3">
+              {([
+                { key: 'pipeline', label: 'Pipeline' },
+                { key: 'gr', label: '💰 GR / Invoicing' },
+                { key: 'reports', label: 'Reports' },
+              ] as const).map(t => (
+                <button key={t.key} onClick={() => setActiveTab(t.key)}
+                  className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === t.key ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                  {t.label}
+                </button>
               ))}
             </div>
+
+            {activeTab === 'pipeline' && (
+            <div className="space-y-8">
+
+                {/* Active Sites */}
+                <div>
+                  <h3 className="text-lg font-semibold text-white mb-3">🔨 Active Sites ({active.length})</h3>
+                  {active.length === 0
+                    ? <p className="text-gray-500 text-sm">No active sites</p>
+                    : (
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-xs">
+                          <thead>
+                            <tr className="bg-gray-800 text-gray-400">
+                              <th className="text-left p-2">HOP</th>
+                              <th className="text-left p-2">Path ID</th>
+                              <th className="text-left p-2">Started</th>
+                              <th className="text-left p-2">FC End</th>
+                              <th className="text-left p-2">Days Elapsed</th>
+                              <th className="text-left p-2">Status</th>
+                              <th className="text-left p-2">SPO Issued</th>
+                              <th className="text-left p-2">MS16 Fc</th>
+                              <th className="text-left p-2">Edit MS16 Fc</th>
+                              <th className="text-left p-2">MS16 Act</th>
+                              <th className="text-left p-2">Call Notes (Today)</th>
+                              <th className="text-left p-2">Notes History</th>
+                              <th className="text-left p-2">CX Notes</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {active.map((h) => (
+                              <tr key={h.hop} className={`border-t border-gray-800 ${(h.daysElapsed ?? 0) > 18 ? 'bg-red-950' : 'bg-gray-900'}`}>
+                                <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                                <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms15a || '—'}</td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
+                                <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > 18 ? 'text-red-400' : 'text-green-400'}`}>{h.daysElapsed}d</td>
+                                <td className="p-2">{(h.daysElapsed ?? 0) > 18 ? <span className="text-red-400">⚠️ Over 18d</span> : <span className="text-green-400">On track</span>}</td>
+                                <td className="p-2">
+                                  {h.hasSpo
+                                    ? <span className="text-green-400 font-bold text-sm" title={h.spoIssued}>✓</span>
+                                    : <span className="text-red-400 font-bold text-sm">✗</span>
+                                  }
+                                </td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
+                                <td className="p-2">
+                                  <GCEditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} editedDates={editedDates} logDateEdit={logDateEdit} />
+                                </td>
+                                <td className="p-2">
+                                  <GCEditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} editedDates={editedDates} logDateEdit={logDateEdit} />
+                                </td>
+                                <td className="p-2">
+                                  <div className="flex gap-1">
+                                    <input type="text" placeholder="Note..." value={sessionNotes[h.hop] || ''}
+                                      onChange={(e) => setSessionNotes(s => ({ ...s, [h.hop]: e.target.value }))}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') saveCallNote(h.hop) }}
+                                      className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                                    <button onClick={() => saveCallNote(h.hop)} className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
+                                  </div>
+                                </td>
+                                <td className="p-2 max-w-48">
+                                  <div className="max-h-20 overflow-y-auto flex flex-col gap-1">
+                                    {(noteHistory[h.hop] || []).slice(0, 5).map((n, i) => (
+                                      <div key={i} className="text-xs text-gray-300 border-b border-gray-700 pb-1">
+                                        <span className="text-gray-500 text-xs">{new Date(n.logged_at).toLocaleDateString()}</span>
+                                        <span className="ml-1">{n.note}</span>
+                                      </div>
+                                    ))}
+                                    {!noteHistory[h.hop]?.length && <span className="text-gray-600 text-xs">No history</span>}
+                                  </div>
+                                </td>
+                                <td className="p-2">
+                                  {h.cxNotes ? (
+                                    <button
+                                      onClick={() => setCxNotesModal({ hop: h.hop, notes: h.cxNotes })}
+                                      className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1 whitespace-nowrap">
+                                      📝 {h.cxNotes.split('\n').filter(Boolean).length || 1}
+                                    </button>
+                                  ) : (
+                                    <span className="text-gray-600 text-xs">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                </div>
+
+                {/* Pipeline Sections */}
+                <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+
+                {/* Pull-In Opportunities */}
+                <div>
+                  <div className="flex items-center gap-3 mb-3">
+                    <h3 className="text-lg font-semibold text-white">🚀 Full Pipeline + Pull-In Opportunities (30d+)</h3>
+                    {pullInReady.length > 0 && (
+                      <span className="bg-green-800 text-green-200 text-xs px-3 py-1 rounded-full font-semibold">
+                        {pullInReady.length} ready to pull in
+                      </span>
+                    )}
+                  </div>
+                  <PipelineTable title="" rows={pullIns} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                </div>
+
+              </div>
+            )}
+
+            {activeTab === 'gr' && (
+              <GrInvoicingTab
+                selectedGC={selectedGC}
+                grRows={grRows}
+                grLoaded={grLoaded}
+              />
+            )}
+
+            {activeTab === 'reports' && (
+              <GcReportsTab
+                selectedGC={selectedGC}
+                spoRawRows={spoRawRows}
+                crRawRows={crRawRows}
+              />
+            )}
+
           </div>
         )}
 
