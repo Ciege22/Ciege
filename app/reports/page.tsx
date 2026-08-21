@@ -124,7 +124,19 @@ export default function ReportsPage() {
           headerRowIndex = 1
         }
 
-        const allRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
+        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
+
+        let allRows = rawRows
+        if (type === 'cr') {
+          let lastDataRow = rawRows.length - 1
+          while (lastDataRow >= 0 && !(rawRows[lastDataRow] || []).some(c => c !== null && c !== undefined && String(c).trim() !== '')) {
+            lastDataRow--
+          }
+          const rows = rawRows.slice(0, lastDataRow + 1)
+          console.log('[report-upload] CR raw rows:', rawRows.length, '→ trimmed:', rows.length)
+          allRows = rows
+        }
+
         const dataRows = allRows.slice(headerRowIndex + 1).filter(row => row.some(v => v !== null))
 
         const keepCols = type === 'spo' ? SPO_COL_IDX : CR_COL_IDX
