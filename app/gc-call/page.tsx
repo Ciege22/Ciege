@@ -1129,6 +1129,25 @@ export default function GCCallPage() {
   const pullIns     = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const pullInReady = pullIns.filter(h => h.pullInReady)
 
+  const squawMound = gcHops.find(h => h.hop === 'NE-SQUAW_MOUND-NE-CHADRON')
+  if (squawMound) {
+    const bucket =
+      squawMound.inProgress ? 'active' :
+      squawMound.complete ? 'NONE — complete=true excludes it from every bucket' :
+      squawMound.daysOut === null ? 'NONE — daysOut is null (no parseable MS15F), excludes it from every bucket' :
+      squawMound.daysOut <= 7 ? 'thisWeek' :
+      squawMound.daysOut <= 14 ? 'next2Weeks' :
+      squawMound.daysOut <= 30 ? 'thisMonth' : 'pullIns'
+    console.log('[gc-call] SQUAW_MOUND render-split check:', {
+      ms15f: squawMound.ms15f, ms15a: squawMound.ms15a,
+      ms16f: squawMound.ms16f, ms16a: squawMound.ms16a,
+      daysOut: squawMound.daysOut, inProgress: squawMound.inProgress, complete: squawMound.complete,
+      resolvedBucket: bucket
+    })
+  } else {
+    console.log('[gc-call] SQUAW_MOUND render-split check: not present in gcHops for selectedGC =', selectedGC)
+  }
+
   const generateEmail = () => {
     const cm   = GC_CM_MAP[selectedGC] || 'CM'
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
