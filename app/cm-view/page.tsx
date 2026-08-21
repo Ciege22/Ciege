@@ -11,6 +11,8 @@ interface HOP {
   pathId: string
   gc: string
   cm: string
+  nokiaPm: string
+  regionPm: string
   ops: string
   ms15f: string
   ms15a: string
@@ -275,9 +277,10 @@ interface PipelineSectionProps {
   editedDates: Record<string, Record<string, string>>
   logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
   setCxNotesModal: (val: { hop: string; notes: string } | null) => void
+  showNokiaPm?: boolean
 }
 
-function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal }: PipelineSectionProps) {
+function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal, showNokiaPm }: PipelineSectionProps) {
   return (
     <div className="mb-8">
       <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
@@ -290,6 +293,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                 <tr className="bg-gray-800 text-gray-400">
                   <th className="text-left p-2">HOP</th>
                   <th className="text-left p-2">Path ID</th>
+                  {showNokiaPm && <th className="text-left p-2">Nokia PM</th>}
                   <th className="text-left p-2">GC</th>
                   <th className="text-left p-2">Days Out</th>
                   <th className="text-left p-2">NTP</th>
@@ -320,6 +324,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                     <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
                       <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
+                      {showNokiaPm && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
                       <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>
                         {h.daysOut !== null ? `${h.daysOut}d` : '—'}
@@ -428,7 +433,7 @@ export default function CMViewPage() {
   const [loaded, setLoaded] = useState(false)
   const [fileName, setFileName] = useState('')
   const [selectedCM, setSelectedCM] = useState('')
-  const [cmList, setCmList] = useState<string[]>([])
+  const [workloadMode, setWorkloadMode] = useState<'mine' | 'full'>('mine')
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
@@ -610,6 +615,7 @@ export default function CMViewPage() {
     const hopCol      = col('HOP')
     const gcCol       = col('General Contractor')
     const regionPmCol = col('Region PM')
+    const nokiaPmCol  = col('Nokia PM')
     const siteCmCol   = col('New CM')
     const opsCol      = col('Viaero Ops Field Ops')
     const don444Col   = col('DON 444')
@@ -661,8 +667,9 @@ export default function CMViewPage() {
       const row = rows[i] as unknown[]
       const don = String(row[don444Col] || '').trim().toUpperCase()
       if (don !== 'DON 444') continue
-      const regionPm = String(row[regionPmCol] || '').trim().toUpperCase()
-      if (regionPm !== 'CJ') continue
+      // Region PM is no longer gated here — collect rows for every PM so the
+      // "Full CM Workload" toggle can show them. The CJ-only default is
+      // applied at render time via cmHops instead.
       const hop = String(row[hopCol] || '').trim()
       if (!hop || hop === 'undefined') continue
       if (!hopRows.has(hop)) hopRows.set(hop, [])
@@ -750,6 +757,8 @@ export default function CMViewPage() {
         pathId:       String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         gc:           String(row[gcCol] || '').trim() || String(row2?.[gcCol] || '').trim(),
         cm:           String(row[siteCmCol] || '').trim() || String(row2?.[siteCmCol] || '').trim(),
+        nokiaPm:      String(row[nokiaPmCol] || '').trim() || String(row2?.[nokiaPmCol] || '').trim(),
+        regionPm:     String(row[regionPmCol] || '').trim() || String(row2?.[regionPmCol] || '').trim(),
         ops:          String(row[opsCol] || '').trim(),
         ms15f:        fmtDate(ms15f),
         ms15a:        fmtDate(ms15a),
@@ -803,8 +812,6 @@ export default function CMViewPage() {
       parsed.push(hopObj)
     })
 
-    const uniqueCMs = Array.from(new Set(parsed.map(h => h.cm?.trim().toLowerCase()).filter(Boolean))).sort()
-    setCmList(uniqueCMs)
     setHops(parsed)
     setLoaded(true)
     setSelectedCM('')
@@ -824,7 +831,15 @@ export default function CMViewPage() {
     reader.readAsArrayBuffer(file)
   }, [processRows])
 
-  const cmHops    = hops.filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
+  // "My HOPs Only" preserves the original behavior of scoping to CJ's HOPs;
+  // bulk all-CM actions (download/email) always use cjHops regardless of the
+  // toggle, since that toggle is scoped to the selected-CM view only.
+  const cjHops    = hops.filter(h => h.regionPm?.trim().toUpperCase() === 'CJ')
+  const cmList    = Array.from(new Set(
+    (workloadMode === 'full' ? hops : cjHops).map(h => h.cm?.trim().toLowerCase()).filter(Boolean)
+  )).sort()
+  const cmHops    = (workloadMode === 'full' ? hops : cjHops)
+    .filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
   const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
   const thisWeek  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const next2Wks  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
@@ -889,11 +904,11 @@ export default function CMViewPage() {
   const downloadAllCMs = () => {
     try {
       const wb = XLSX.utils.book_new()
-      const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
+      const cmNames = Array.from(new Set(cjHops.map(h => h.cm).filter(Boolean))).sort()
       const date = today.toLocaleDateString('en-US').replace(/\//g, '-')
 
       cmNames.forEach(cm => {
-        const cmHops = hops.filter(h => h.cm === cm && !h.complete)
+        const cmHops = cjHops.filter(h => h.cm === cm && !h.complete)
         if (cmHops.length === 0) return
 
         const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
@@ -973,7 +988,7 @@ export default function CMViewPage() {
   }
 
   const generateAllCMsEmail = () => {
-    const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
+    const cmNames = Array.from(new Set(cjHops.map(h => h.cm).filter(Boolean))).sort()
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     const div     = '─'.repeat(60)
     const starDiv = '═'.repeat(60)
@@ -984,7 +999,7 @@ export default function CMViewPage() {
     body += `${div}\n\n`
 
     cmNames.forEach(cm => {
-      const cmHops = hops.filter(h => h.cm === cm && !h.complete)
+      const cmHops = cjHops.filter(h => h.cm === cm && !h.complete)
       if (cmHops.length === 0) return
 
       const active   = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
@@ -1175,7 +1190,7 @@ export default function CMViewPage() {
         {snapshotTime && (
           <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
             <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
-            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+            <p className="text-gray-500 text-xs">{fileName} — {cjHops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
           </div>
         )}
         {!snapshotTime && (
@@ -1183,6 +1198,18 @@ export default function CMViewPage() {
             <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
           </div>
         )}
+
+        {/* Workload Toggle */}
+        <div className="flex gap-2 mb-4">
+          <button onClick={() => setWorkloadMode('mine')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${workloadMode === 'mine' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+            My HOPs Only
+          </button>
+          <button onClick={() => setWorkloadMode('full')}
+            className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${workloadMode === 'full' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+            Full CM Workload
+          </button>
+        </div>
 
         {/* CM Selector */}
         <div className="flex gap-3 mb-6 flex-wrap">
@@ -1239,6 +1266,7 @@ export default function CMViewPage() {
                             <tr className="bg-gray-800 text-gray-400">
                               <th className="text-left p-2">HOP</th>
                               <th className="text-left p-2">Path ID</th>
+                              {workloadMode === 'full' && <th className="text-left p-2">Nokia PM</th>}
                               <th className="text-left p-2">GC</th>
                               <th className="text-left p-2">Started</th>
                               <th className="text-left p-2">FC End</th>
@@ -1262,6 +1290,7 @@ export default function CMViewPage() {
                               <tr key={h.hop} className={`border-t border-gray-800 ${h.statuses.some(s => s.includes('⚠️')) ? 'bg-red-950' : 'bg-gray-900'}`}>
                                 <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
                                 <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
+                                {workloadMode === 'full' && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15a}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
@@ -1327,10 +1356,10 @@ export default function CMViewPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
-                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
-                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
-                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
+                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
+                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
+                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
 
               </div>
             )}
