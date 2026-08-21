@@ -110,20 +110,32 @@ export default function ReportsPage() {
 
         if (type === 'spo') {
           console.log('[report-upload] upserting id="spo"', 'filename=', file.name)
-          await supabase.from('report_snapshots').upsert({
+          const { error } = await supabase.from('report_snapshots').upsert({
             id: 'spo',
             filename: file.name,
             uploaded_at: new Date().toISOString(),
             data: JSON.stringify(dataRows)
           })
+          if (error) {
+            console.error('[report-upload] SPO upsert failed:', error)
+            alert('SPO upload failed to save — check console for details')
+            setUploading(null)
+            return
+          }
         } else {
           console.log('[report-upload] upserting id="cr"', 'filename=', file.name)
-          await supabase.from('report_snapshots').upsert({
+          const { error } = await supabase.from('report_snapshots').upsert({
             id: 'cr',
             filename: file.name,
             uploaded_at: new Date().toISOString(),
             data: JSON.stringify(dataRows)
           })
+          if (error) {
+            console.error('[report-upload] CR upsert failed:', error)
+            alert('CR upload failed to save — check console for details')
+            setUploading(null)
+            return
+          }
         }
 
         if (type === 'spo') {
