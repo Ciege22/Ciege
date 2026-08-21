@@ -610,7 +610,7 @@ export default function CMViewPage() {
     const hopCol      = col('HOP')
     const gcCol       = col('General Contractor')
     const regionPmCol = col('Region PM')
-    const siteCmCol   = col('Site CM')
+    const siteCmCol   = col('New CM')
     const opsCol      = col('Viaero Ops Field Ops')
     const don444Col   = col('DON 444')
     const ms15fCol    = col('MS15 Implementation Start F')

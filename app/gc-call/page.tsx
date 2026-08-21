@@ -848,7 +848,7 @@ export default function GCCallPage() {
         // Fallback — known position from tracker
         return 59
       })()
-    const siteCmCol    = col('Site CM')
+    const siteCmCol    = col('New CM')
     const mssCol       = col('MSS Completed NMS Ready ')
     const powerCol     = col('Power-Up Completion')
     const gcPickupFCol = col('GC Material Pick-up (F)')
