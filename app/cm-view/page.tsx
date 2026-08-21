@@ -904,11 +904,12 @@ export default function CMViewPage() {
   const downloadAllCMs = () => {
     try {
       const wb = XLSX.utils.book_new()
-      const cmNames = Array.from(new Set(cjHops.map(h => h.cm).filter(Boolean))).sort()
+      // Always uses the full, PM-unfiltered workload regardless of the toggle.
+      const cmNames = Array.from(new Set(hops.map(h => h.cm).filter(Boolean))).sort()
       const date = today.toLocaleDateString('en-US').replace(/\//g, '-')
 
       cmNames.forEach(cm => {
-        const cmHops = cjHops.filter(h => h.cm === cm && !h.complete)
+        const cmHops = hops.filter(h => h.cm === cm && !h.complete)
         if (cmHops.length === 0) return
 
         const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
@@ -917,7 +918,7 @@ export default function CMViewPage() {
         const thisMonth = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
         const pipeline  = cmHops.filter(h => !h.inProgress && (h.daysOut === null || h.daysOut > 30)).sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999))
 
-        const headers = ['HOP', 'GC', 'Status', 'Days Elapsed', 'Days Out', 'FC Start', 'AC Start', 'FC End', 'AC End', 'NTP', 'Material', 'Steel From', 'Mat Location', 'GC Pickup F', 'GC Pickup A', 'SPO', 'Vendor Window', 'CM Action', 'Latest Note']
+        const headers = ['HOP', 'Path ID', 'Nokia PM', 'GC', 'Status', 'Days Elapsed', 'Days Out', 'FC Start', 'AC Start', 'FC End', 'AC End', 'NTP', 'Material', 'Steel From', 'Mat Location', 'GC Pickup F', 'GC Pickup A', 'SPO', 'Vendor Window', 'CM Action', 'Latest Note']
 
         const rows: unknown[][] = []
 
@@ -942,7 +943,7 @@ export default function CMViewPage() {
               : h.daysOut !== null && h.daysOut <= 30 ? '🟡 This Month'
               : '🔵 Pipeline'
             rows.push([
-              h.hop, h.gc, status, elapsed, daysOut,
+              h.hop, h.pathId || '—', h.nokiaPm || '—', h.gc, status, elapsed, daysOut,
               h.ms15f || '—', h.ms15a || '—', h.ms16f || '—', h.ms16a || '—',
               h.hasNtp ? '✓' : '✗',
               h.hasMat ? '✓' : '✗',
@@ -972,7 +973,7 @@ export default function CMViewPage() {
 
         const ws = XLSX.utils.aoa_to_sheet(rows)
         ws['!cols'] = [
-          { wch: 36 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 10 },
+          { wch: 36 }, { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 16 }, { wch: 12 }, { wch: 10 },
           { wch: 12 }, { wch: 12 }, { wch: 12 }, { wch: 12 },
           { wch: 6 }, { wch: 6 }, { wch: 12 }, { wch: 20 }, { wch: 14 }, { wch: 14 },
           { wch: 14 }, { wch: 30 }, { wch: 45 }, { wch: 50 }
@@ -988,18 +989,22 @@ export default function CMViewPage() {
   }
 
   const generateAllCMsEmail = () => {
-    const cmNames = Array.from(new Set(cjHops.map(h => h.cm).filter(Boolean))).sort()
+    const fullWorkload = workloadMode === 'full'
+    const sourceHops = fullWorkload ? hops : cjHops
+    const cmNames = Array.from(new Set(sourceHops.map(h => h.cm).filter(Boolean))).sort()
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     const div     = '─'.repeat(60)
     const starDiv = '═'.repeat(60)
-    const subj = `Viaero/Nokia MW Program — CM Call Follow-Up | ${date}`
+    const subj = fullWorkload
+      ? `Viaero/Nokia MW Program — Full CM Workload Summary | ${date}`
+      : `Viaero/Nokia MW Program — CM Call Follow-Up | ${date}`
 
     let body = `Hap, Steve, Benny,\n\n`
     body += `Please find below and attached your weekly updates to include Cx Pipeline, active sites, and action items.\n`
     body += `${div}\n\n`
 
     cmNames.forEach(cm => {
-      const cmHops = cjHops.filter(h => h.cm === cm && !h.complete)
+      const cmHops = sourceHops.filter(h => h.cm === cm && !h.complete)
       if (cmHops.length === 0) return
 
       const active   = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
@@ -1021,6 +1026,7 @@ export default function CMViewPage() {
             : ''
           body += `★ ${h.hop} ★`
           if (h.pathId) body += `  |  Path ID: ${h.pathId}`
+          if (fullWorkload) body += `  |  Nokia PM: ${h.nokiaPm || '—'}`
           body += '\n'
           body += `  SPO: ${spoStatus}\n`
           body += `  AC Start: ${h.ms15a || '—'}  |  FC End: ${h.ms16f || '—'}\n`
@@ -1042,6 +1048,7 @@ export default function CMViewPage() {
             : ''
           body += `★ ${h.hop} ★`
           if (h.pathId) body += `  |  Path ID: ${h.pathId}`
+          if (fullWorkload) body += `  |  Nokia PM: ${h.nokiaPm || '—'}`
           body += '\n'
           body += `  SPO: ${spoStatus}\n`
           body += `  NTP: ${h.hasNtp ? '✓' : '✗'}`
