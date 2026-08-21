@@ -8,6 +8,7 @@ import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
+import { loadChunkedReport } from '../lib/reportChunks'
 import {
   GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
@@ -671,9 +672,10 @@ export default function GCCallPage() {
   useEffect(() => {
     const loadReports = async () => {
       const { data: spoSnap } = await supabase.from('report_snapshots').select('data').eq('id', 'spo').single()
-      const { data: crSnap } = await supabase.from('report_snapshots').select('data').eq('id', 'cr').single()
       if (spoSnap?.data) setSpoRawRows(JSON.parse(spoSnap.data))
-      if (crSnap?.data) setCrRawRows(JSON.parse(crSnap.data))
+
+      const crReport = await loadChunkedReport('cr')
+      if (crReport) setCrRawRows(crReport.rows)
     }
     loadReports()
   }, [])

@@ -8,6 +8,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
+import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
 
 interface ReportSnapshot {
   filename: string
@@ -98,9 +99,10 @@ export default function ReportsPage() {
   useEffect(() => {
     const load = async () => {
       const { data: spoSnap } = await supabase.from('report_snapshots').select('*').eq('id', 'spo').single()
-      const { data: crSnap } = await supabase.from('report_snapshots').select('*').eq('id', 'cr').single()
       if (spoSnap) { setSpoRows(JSON.parse(spoSnap.data)); setSpoInfo({ filename: spoSnap.filename, uploaded_at: spoSnap.uploaded_at, row_count: JSON.parse(spoSnap.data).length }) }
-      if (crSnap) { setCrRows(JSON.parse(crSnap.data)); setCrInfo({ filename: crSnap.filename, uploaded_at: crSnap.uploaded_at, row_count: JSON.parse(crSnap.data).length }) }
+
+      const crReport = await loadChunkedReport('cr')
+      if (crReport) { setCrRows(crReport.rows); setCrInfo({ filename: crReport.filename, uploaded_at: crReport.uploaded_at, row_count: crReport.rows.length }) }
     }
     load()
   }, [])
@@ -145,15 +147,10 @@ export default function ReportsPage() {
             return
           }
         } else {
-          console.log('[report-upload] upserting id="cr"', 'filename=', file.name)
-          const { error } = await supabase.from('report_snapshots').upsert({
-            id: 'cr',
-            filename: file.name,
-            uploaded_at: new Date().toISOString(),
-            data: JSON.stringify(strippedRows)
-          })
+          console.log('[report-upload] chunking id="cr"', 'filename=', file.name, 'rows=', strippedRows.length)
+          const { error } = await saveChunkedReport('cr', file.name, strippedRows)
           if (error) {
-            console.error('[report-upload] CR upsert failed:', error)
+            console.error('[report-upload] CR chunked save failed:', error)
             alert('CR upload failed to save — check console for details')
             setUploading(null)
             return
