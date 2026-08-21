@@ -688,6 +688,9 @@ export default function GCCallPage() {
     loadClearedNotes()
   }, [])
   const today = new Date()
+  // Zero out the time-of-day so daysOut is a clean whole-day count — same fix
+  // as the dashboard's computeKPIs (commit 8a32098).
+  today.setHours(0, 0, 0, 0)
 
   const todayStr = today.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
 
