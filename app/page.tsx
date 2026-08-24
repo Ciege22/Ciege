@@ -168,8 +168,6 @@ export default function Home() {
   const [grRows, setGrRows] = useState<GrRow[]>([])
   const [grLoaded, setGrLoaded] = useState(false)
   const [grExpanded, setGrExpanded] = useState(false)
-  const [grFocusCompleted, setGrFocusCompleted] = useState<Record<string, { comment: string; completedAt: string }>>({})
-  const [grFocusCommentInput, setGrFocusCommentInput] = useState<Record<string, string>>({})
   const [grSortBy, setGrSortBy] = useState<GrSortOption>('trigger')
   const [grRowTypeFilter, setGrRowTypeFilter] = useState<'all' | 'base' | 'cr'>('all')
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
@@ -465,23 +463,6 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    const loadGrFocusCompleted = async () => {
-      const todayKey = `focus-gr-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
-      const { data } = await supabase
-        .from('pm_updates_cache')
-        .select('updates')
-        .eq('id', todayKey)
-        .single()
-      if (data?.updates) {
-        try {
-          setGrFocusCompleted(JSON.parse(data.updates))
-        } catch {}
-      }
-    }
-    loadGrFocusCompleted()
-  }, [])
-
-  useEffect(() => {
     const loadOpenActions = async () => {
       const { data } = await supabase
         .from('hop_actions')
@@ -492,37 +473,6 @@ export default function Home() {
     }
     loadOpenActions()
   }, [])
-
-  const saveGrFocusCompleted = async (updated: typeof grFocusCompleted) => {
-    const todayKey = `focus-gr-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
-    await supabase.from('pm_updates_cache').upsert({
-      id: todayKey,
-      updates: JSON.stringify(updated),
-      updated_at: new Date().toISOString()
-    })
-  }
-
-  const toggleGrFocusItem = async (itemKey: string) => {
-    const updated = { ...grFocusCompleted }
-    if (updated[itemKey]) {
-      delete updated[itemKey]
-    } else {
-      updated[itemKey] = {
-        comment: grFocusCommentInput[itemKey] || '',
-        completedAt: new Date().toISOString()
-      }
-    }
-    setGrFocusCompleted(updated)
-    await saveGrFocusCompleted(updated)
-  }
-
-  const saveGrComment = async (itemKey: string) => {
-    if (!grFocusCompleted[itemKey]) return
-    const comment = (grFocusCommentInput[itemKey] || '').trim()
-    const updated = { ...grFocusCompleted, [itemKey]: { ...grFocusCompleted[itemKey], comment } }
-    setGrFocusCompleted(updated)
-    await saveGrFocusCompleted(updated)
-  }
 
   // Comment history is permanent, per HOP + action type — appends only, never overwrites.
   const saveComment = async (hop: string, actionType: string) => {
@@ -1377,28 +1327,38 @@ export default function Home() {
                                 </thead>
                                 <tbody>
                                   {grReady.map(r => {
-                                    const itemKey = `${r.hop}::${r.sogName}`
-                                    const isCompleted = !!grFocusCompleted[itemKey]
+                                    const compositeKey = `${r.hop}-gr`
+                                    const isChecked = !!focusChecks[compositeKey]
+                                    const history = focusHistory[compositeKey] || []
                                     return (
-                                      <tr key={itemKey} className={`border-t border-gray-800 ${isCompleted ? 'opacity-50' : ''}`}>
-                                        <td className={`p-2 font-semibold whitespace-nowrap ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{r.hopDisplay}</td>
+                                      <tr key={`${r.hop}::${r.sogName}`} className={`border-t border-gray-800 ${isChecked ? 'opacity-50' : ''}`}>
+                                        <td className={`p-2 font-semibold whitespace-nowrap ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{r.hopDisplay}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.gc}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.spoNumber || '—'}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.sogName || 'CR'}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.triggerDate || '—'}</td>
                                         <td className="p-2">
-                                          <input type="checkbox" checked={isCompleted}
-                                            onChange={() => toggleGrFocusItem(itemKey)}
+                                          <input type="checkbox" checked={isChecked}
+                                            onChange={() => toggleFocusItem(r.hop, 'gr')}
                                             className="w-4 h-4 cursor-pointer accent-green-500" />
                                         </td>
                                         <td className="p-2">
+                                          {history.length > 0 && (
+                                            <div className="mb-1">
+                                              <p className="text-gray-500 text-xs font-semibold">📋 History</p>
+                                              {history.map((entry, i) => (
+                                                <p key={i} className="text-gray-500 text-xs">{entry.date.split('/').slice(0, 2).join('/')}: {entry.text}</p>
+                                              ))}
+                                            </div>
+                                          )}
                                           <div className="flex gap-1">
                                             <input type="text" placeholder="Note..."
-                                              value={grFocusCommentInput[itemKey] ?? (isCompleted ? grFocusCompleted[itemKey].comment : '')}
-                                              onChange={(e) => setGrFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
+                                              value={focusCommentInput[compositeKey] || ''}
+                                              onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [compositeKey]: e.target.value }))}
+                                              onKeyDown={(e) => { if (e.key === 'Enter') saveComment(r.hop, 'gr') }}
                                               className="w-40 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
-                                            <button onClick={() => saveGrComment(itemKey)}
+                                            <button onClick={() => saveComment(r.hop, 'gr')}
                                               className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
                                           </div>
                                         </td>
