@@ -1327,11 +1327,13 @@ export default function Home() {
                                 </thead>
                                 <tbody>
                                   {grReady.map(r => {
-                                    const compositeKey = `${r.hop}-gr`
+                                    const sogSlug = (r.sogName || 'CR').trim().replace(/\s+/g, '_').replace(/[^a-zA-Z0-9_]/g, '')
+                                    const actionType = `gr-${sogSlug}`
+                                    const compositeKey = `${r.hop}-${actionType}`
                                     const isChecked = !!focusChecks[compositeKey]
                                     const history = focusHistory[compositeKey] || []
                                     return (
-                                      <tr key={`${r.hop}::${r.sogName}`} className={`border-t border-gray-800 ${isChecked ? 'opacity-50' : ''}`}>
+                                      <tr key={compositeKey} className={`border-t border-gray-800 ${isChecked ? 'opacity-50' : ''}`}>
                                         <td className={`p-2 font-semibold whitespace-nowrap ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{r.hopDisplay}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.gc}</td>
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.spoNumber || '—'}</td>
@@ -1340,7 +1342,7 @@ export default function Home() {
                                         <td className="p-2 text-gray-400 whitespace-nowrap">{r.triggerDate || '—'}</td>
                                         <td className="p-2">
                                           <input type="checkbox" checked={isChecked}
-                                            onChange={() => toggleFocusItem(r.hop, 'gr')}
+                                            onChange={() => toggleFocusItem(r.hop, actionType)}
                                             className="w-4 h-4 cursor-pointer accent-green-500" />
                                         </td>
                                         <td className="p-2">
@@ -1356,9 +1358,9 @@ export default function Home() {
                                             <input type="text" placeholder="Note..."
                                               value={focusCommentInput[compositeKey] || ''}
                                               onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [compositeKey]: e.target.value }))}
-                                              onKeyDown={(e) => { if (e.key === 'Enter') saveComment(r.hop, 'gr') }}
+                                              onKeyDown={(e) => { if (e.key === 'Enter') saveComment(r.hop, actionType) }}
                                               className="w-40 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
-                                            <button onClick={() => saveComment(r.hop, 'gr')}
+                                            <button onClick={() => saveComment(r.hop, actionType)}
                                               className="text-xs bg-blue-700 hover:bg-blue-600 text-white px-2 py-1 rounded">💾</button>
                                           </div>
                                         </td>
