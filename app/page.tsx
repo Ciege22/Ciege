@@ -415,11 +415,13 @@ export default function Home() {
   useEffect(() => {
     const loadFocusCompleted = async () => {
       const todayKey = `focus-completed-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+      console.log('[focus-load] checkoffs — reading key:', todayKey)
       const { data } = await supabase
         .from('pm_updates_cache')
         .select('updates')
         .eq('id', todayKey)
         .single()
+      console.log('[focus-load] checkoffs — value returned for key', todayKey, ':', data?.updates)
       if (data?.updates) {
         try {
           setFocusCompleted(JSON.parse(data.updates))
@@ -432,11 +434,13 @@ export default function Home() {
   useEffect(() => {
     const loadSavedComments = async () => {
       const todayKey = `focus-comments-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
+      console.log('[focus-load] comments — reading key:', todayKey)
       const { data } = await supabase
         .from('pm_updates_cache')
         .select('updates')
         .eq('id', todayKey)
         .single()
+      console.log('[focus-load] comments — value returned for key', todayKey, ':', data?.updates)
       if (data?.updates) {
         try {
           setSavedComments(JSON.parse(data.updates))
@@ -486,11 +490,13 @@ export default function Home() {
 
   const saveFocusCompleted = async (updated: typeof focusCompleted) => {
     const todayKey = `focus-completed-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
-    await supabase.from('pm_updates_cache').upsert({
+    console.log('[focus-save] checkoffs — writing key:', todayKey, 'value:', updated)
+    const { error } = await supabase.from('pm_updates_cache').upsert({
       id: todayKey,
       updates: JSON.stringify(updated),
       updated_at: new Date().toISOString()
     })
+    console.log('[focus-save] checkoffs — upsert error:', error)
   }
 
   const saveGrFocusCompleted = async (updated: typeof grFocusCompleted) => {
@@ -533,11 +539,13 @@ export default function Home() {
     updated[itemKey] = [...updated[itemKey], comment]
     setSavedComments(updated)
     setFocusCommentInput(prev => ({ ...prev, [itemKey]: '' }))
-    await supabase.from('pm_updates_cache').upsert({
+    console.log('[focus-save] comments — writing key:', todayKey, 'value:', updated)
+    const { error } = await supabase.from('pm_updates_cache').upsert({
       id: todayKey,
       updates: JSON.stringify(updated),
       updated_at: new Date().toISOString()
     })
+    console.log('[focus-save] comments — upsert error:', error)
   }
 
   const toggleFocusItem = async (itemKey: string, label: string) => {
