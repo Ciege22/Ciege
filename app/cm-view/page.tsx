@@ -808,7 +808,6 @@ export default function CMViewPage() {
 
     setHops(parsed)
     setLoaded(true)
-    setSelectedCM('')
   }, [today, thresholds])
 
   useEffect(() => {
@@ -833,6 +832,7 @@ export default function CMViewPage() {
       const ws = wb.Sheets['HOPs']
       if (!ws) { alert('HOPs tab not found'); return }
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
+      setSelectedCM('')
       processRows(rows, file.name)
     }
     reader.readAsArrayBuffer(file)

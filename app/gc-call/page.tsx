@@ -1102,7 +1102,6 @@ export default function GCCallPage() {
     // Build GC list dynamically from parsed HOPs
     const uniqueGCs = Array.from(new Set(parsed.map(h => h.gc?.trim().toLowerCase()).filter(Boolean))).sort()
     setGcList(uniqueGCs)
-    setSelectedGC('')
     setLoaded(true)
   }, [today, thresholds])
 
@@ -1128,6 +1127,7 @@ export default function GCCallPage() {
       const ws = wb.Sheets['HOPs']
       if (!ws) { alert('HOPs tab not found in tracker'); return }
       const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
+      setSelectedGC('')
       processRows(rows, file.name)
     }
     reader.readAsArrayBuffer(file)
