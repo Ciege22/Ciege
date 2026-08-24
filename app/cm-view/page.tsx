@@ -596,6 +596,14 @@ export default function CMViewPage() {
 
 
   const processRows = useCallback((rows: unknown[][], _filename: string) => {
+    // Computed locally (shadowing the render-scoped `today` above) so this
+    // callback's identity doesn't change on every render — `new Date()` is a
+    // fresh object reference each time, and putting it in the dependency
+    // array below made processRows (and the effect that depends on it)
+    // re-fire on every single render, including ones from unrelated state
+    // changes like typing a call note.
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
 
     let headerRow = -1
     for (let i = 0; i < 10; i++) {
@@ -808,7 +816,7 @@ export default function CMViewPage() {
 
     setHops(parsed)
     setLoaded(true)
-  }, [today, thresholds])
+  }, [thresholds])
 
   useEffect(() => {
     const loadFromSnapshot = async () => {
