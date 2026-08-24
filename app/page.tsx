@@ -535,12 +535,13 @@ export default function Home() {
     const updated = [...existing, { date: dateStr, text: comment }]
     setFocusHistory(h => ({ ...h, [compositeKey]: updated }))
     setFocusCommentInput(prev => ({ ...prev, [compositeKey]: '' }))
+    console.log('[focus-save] history — writing key:', historyId, 'value:', updated)
     const { error } = await supabase.from('pm_updates_cache').upsert({
       id: historyId,
       updates: JSON.stringify(updated),
       updated_at: new Date().toISOString()
     })
-    if (error) console.error('[focus-save] history upsert failed:', error)
+    console.log('[focus-save] history — upsert error:', error)
   }
 
   // Daily checkoff — independent of comment history, resets every calendar
