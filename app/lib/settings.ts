@@ -20,6 +20,12 @@ export interface ThresholdSettings {
   materialWatchDays: number
   durationAlertDays: number
   pullInBufferDays: number
+  // Schedule Optimizer
+  pushWindow: number
+  pushAmount: number
+  hopDuration: number
+  rampUpThreshold: number
+  rampUpWindow: number
 }
 
 export interface EmailSettings {
@@ -43,11 +49,34 @@ export const DEFAULT_PROGRAM: ProgramSettings = {
   gcs: [],
 }
 
+// Fallback crew counts used by the Schedule Optimizer when a GC has no
+// crewCount configured (or is 0) in the Program Settings GC roster.
+export const DEFAULT_CREW_COUNTS: Record<string, number> = {
+  Mastec: 2,
+  MZI: 2,
+  'NV Tel': 2,
+  'Tech CX': 4,
+  Vikor: 3,
+  TCE: 1,
+  InSite: 1,
+}
+
+export function crewCountForGc(program: ProgramSettings, gc: string): number {
+  const entry = program.gcs.find(g => g.gc?.trim().toLowerCase() === gc?.trim().toLowerCase())
+  if (entry && entry.crewCount > 0) return entry.crewCount
+  return DEFAULT_CREW_COUNTS[gc] || 1
+}
+
 export const DEFAULT_THRESHOLDS: ThresholdSettings = {
   ntpUrgentDays: 14,
   materialWatchDays: 14,
   durationAlertDays: 18,
   pullInBufferDays: 10,
+  pushWindow: 7,
+  pushAmount: 5,
+  hopDuration: 14,
+  rampUpThreshold: 3,
+  rampUpWindow: 30,
 }
 
 // Same 8 addresses that were previously hardcoded in app/lib/grTracker.ts

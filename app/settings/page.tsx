@@ -237,6 +237,36 @@ export default function SettingsPage() {
                     onChange={(e) => setThresholds(t => ({ ...t, pullInBufferDays: Number(e.target.value) || 0 }))}
                     className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
                 </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Schedule: Push Window (days)</label>
+                  <input type="number" value={thresholds.pushWindow}
+                    onChange={(e) => setThresholds(t => ({ ...t, pushWindow: Number(e.target.value) || 0 }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Schedule: Push Amount (days)</label>
+                  <input type="number" value={thresholds.pushAmount}
+                    onChange={(e) => setThresholds(t => ({ ...t, pushAmount: Number(e.target.value) || 0 }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Schedule: HOP Duration (days)</label>
+                  <input type="number" value={thresholds.hopDuration}
+                    onChange={(e) => setThresholds(t => ({ ...t, hopDuration: Number(e.target.value) || 0 }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Schedule: Ramp-Up Threshold (HOPs/crew)</label>
+                  <input type="number" value={thresholds.rampUpThreshold}
+                    onChange={(e) => setThresholds(t => ({ ...t, rampUpThreshold: Number(e.target.value) || 0 }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Schedule: Ramp-Up Window (days)</label>
+                  <input type="number" value={thresholds.rampUpWindow}
+                    onChange={(e) => setThresholds(t => ({ ...t, rampUpWindow: Number(e.target.value) || 0 }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                </div>
               </div>
               <SaveButton onClick={saveThresholds} saved={thresholdsSaved} />
             </SectionCard>
