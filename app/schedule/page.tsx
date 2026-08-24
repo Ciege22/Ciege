@@ -32,6 +32,7 @@ interface HOP {
   ms16a: Date | null
   hasNtp: boolean
   hasMat: boolean
+  materialForecastDate: Date | null
   vendorConflicts: { vendor: string; start: Date; end: Date }[]
 }
 
@@ -44,6 +45,7 @@ interface Row {
   ms15f: Date | null
   ms15a: Date | null
   ms16f: Date | null
+  materialForecastDate: Date | null
   daysElapsed: number | null
   hasNtp: boolean
   hasMat: boolean
@@ -51,6 +53,7 @@ interface Row {
   recommendation: Recommendation
   proposedStart: Date | null
   reassignNote: string
+  materialNote: string
 }
 
 function parseDate(val: unknown): Date | null {
@@ -143,12 +146,14 @@ function runSimulation(
       return {
         hop: h.hop, gc, crew: 1,
         ms15f: h.ms15f, ms15a: h.ms15a, ms16f: h.ms16f,
+        materialForecastDate: h.materialForecastDate,
         daysElapsed: elapsed,
         hasNtp: h.hasNtp, hasMat: h.hasMat,
         vendorConflict: '', // never flagged on in-progress HOPs
         recommendation: 'green',
         proposedStart: null,
         reassignNote: '',
+        materialNote: '',
       }
     })
 
@@ -180,14 +185,30 @@ function runSimulation(
         const daysOut = daysBetween(today, originalStart)
         const green = isGreen(h)
         const vc = vendorConflictFor(h)
-        const pushTriggered = !green && daysOut <= t.pushWindow && (!h.hasNtp || !h.hasMat)
+        const matDate = h.materialForecastDate
 
+        // Material forecast counts as its own push trigger when it's
+        // forecasted close to (or past) the planned start and material
+        // hasn't actually been received yet — independent of the general
+        // NTP/material-within-pushWindow trigger below.
+        const matNearStart = !!matDate && Math.abs(daysBetween(matDate, originalStart)) <= t.pushWindow
+        const pushTriggered = !green && (
+          (daysOut <= t.pushWindow && (!h.hasNtp || !h.hasMat)) ||
+          (!h.hasMat && matNearStart)
+        )
+
+        // Effective start = MAX(desired ms15f [+push], material forecast,
+        // crew available) — material forecast is always respected as a
+        // floor. For green HOPs the ms15f term is deliberately excluded so
+        // pull-in can still land earlier than ms15f; the "did this land
+        // earlier than ms15f" check further down is what gates pull-in.
         let proposedStart: Date
         if (green) {
-          // Pulled in as early as the crew queue allows.
           proposedStart = crewFree[crewIdx]
+          if (matDate && matDate > proposedStart) proposedStart = matDate
         } else {
-          const desired = pushTriggered ? addDays(originalStart, t.pushAmount) : originalStart
+          let desired = pushTriggered ? addDays(originalStart, t.pushAmount) : originalStart
+          if (matDate && matDate > desired) desired = matDate
           proposedStart = desired > crewFree[crewIdx] ? desired : crewFree[crewIdx]
         }
 
@@ -202,6 +223,10 @@ function runSimulation(
         else if (green && daysOut > PULL_IN_WINDOW && pulledIn) recommendation = 'pullInQueue'
         else if (green) recommendation = 'green'
         else recommendation = 'notReady'
+
+        const materialNote = (matDate && matDate > originalStart && !h.hasMat)
+          ? `📦 Material: ${fmtShort(matDate)}`
+          : ''
 
         // Informational reassign note — only for HOPs that aren't already
         // being pulled in / pushed, so it doesn't compete with an active
@@ -222,12 +247,14 @@ function runSimulation(
         pipelineRows.push({
           hop: h.hop, gc, crew: crewIdx + 1,
           ms15f: h.ms15f, ms15a: h.ms15a, ms16f: h.ms16f,
+          materialForecastDate: matDate,
           daysElapsed: null,
           hasNtp: h.hasNtp, hasMat: h.hasMat,
           vendorConflict: vc,
           recommendation,
           proposedStart,
           reassignNote,
+          materialNote,
         })
       })
     }
@@ -235,12 +262,14 @@ function runSimulation(
     const heldRows: Row[] = heldHops.map(h => ({
       hop: h.hop, gc, crew: crewOf.get(h.hop) != null ? (crewOf.get(h.hop) as number) + 1 : 0,
       ms15f: h.ms15f, ms15a: h.ms15a, ms16f: h.ms16f,
+      materialForecastDate: h.materialForecastDate,
       daysElapsed: null,
       hasNtp: h.hasNtp, hasMat: h.hasMat,
       vendorConflict: '',
       recommendation: 'onHold',
       proposedStart: null,
       reassignNote: '',
+      materialNote: '',
     }))
 
     const pullInQueue = pipelineRows.filter(r => r.recommendation === 'pullInQueue')
@@ -341,6 +370,7 @@ export default function SchedulePage() {
     const ms16aCol   = col('MS16 Implementation Ends A')
     const ntpCol     = col('NTP A')
     const matCol     = headers.findIndex(h => String(h).trim() === 'Material Received A ')
+    const matFcCol   = col('Material Forecast +4ish')
     const itwSCol    = col('ITW Schedule Start')
     const itwECol    = col('ITW Schedule Complete')
     const ssSCol     = col('Samsung Schedule Start')
@@ -371,6 +401,8 @@ export default function SchedulePage() {
       const matDate = parseDate(row[matCol])
       const hasNtp = !!(ntpDate && ntpDate.getFullYear() >= 2025)
       const hasMat = !!(matDate && matDate.getFullYear() >= 2020)
+      const matForecastRaw = parseDate(row[matFcCol])
+      const materialForecastDate = matForecastRaw && matForecastRaw.getFullYear() >= 2025 ? matForecastRaw : null
 
       const vendorConflicts: { vendor: string; start: Date; end: Date }[] = []
       rows2.forEach(r => {
@@ -385,7 +417,7 @@ export default function SchedulePage() {
         gc: String(row[gcCol] || '').trim(),
         pathId: String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         ms15f, ms15a, ms16f, ms16a,
-        hasNtp, hasMat,
+        hasNtp, hasMat, materialForecastDate,
         vendorConflicts,
       })
     })
@@ -561,6 +593,7 @@ export default function SchedulePage() {
                               <th className="text-left p-2">MS16F</th>
                               <th className="text-left p-2">NTP</th>
                               <th className="text-left p-2">Material</th>
+                              <th className="text-left p-2">Material Forecast</th>
                               <th className="text-left p-2">Vendor</th>
                               <th className="text-left p-2">Recommendation</th>
                               {hasOptimized && <th className="text-left p-2">Proposed Date</th>}
@@ -576,9 +609,11 @@ export default function SchedulePage() {
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDate(row.ms16f)}</td>
                                 <td className="p-2">{row.hasNtp ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                                 <td className="p-2">{row.hasMat ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
+                                <td className="p-2 text-gray-300 whitespace-nowrap">{fmtShort(row.materialForecastDate)}</td>
                                 <td className="p-2 text-xs text-yellow-300 whitespace-nowrap">{row.vendorConflict || '—'}</td>
                                 <td className="p-2 whitespace-nowrap">
                                   <span className={`text-xs font-bold ${RECOMMENDATION_COLOR[row.recommendation]}`}>{RECOMMENDATION_LABEL[row.recommendation]}</span>
+                                  {row.materialNote && <p className="text-orange-400 text-xs mt-0.5">{row.materialNote}</p>}
                                   {row.reassignNote && <p className="text-gray-500 text-xs mt-0.5">{row.reassignNote}</p>}
                                 </td>
                                 {hasOptimized && (
