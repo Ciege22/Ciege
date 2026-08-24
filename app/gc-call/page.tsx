@@ -1151,7 +1151,11 @@ export default function GCCallPage() {
   }
 
   const gcHops      = hops.filter(h => h.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
-  const active      = gcHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
+  const active      = gcHops.filter(h => h.inProgress).sort((a, b) => {
+    const aTime = a.ms16f ? new Date(a.ms16f).getTime() : Infinity
+    const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
+    return aTime - bTime
+  })
   const thisWeek    = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const next2Weeks  = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const thisMonth   = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))

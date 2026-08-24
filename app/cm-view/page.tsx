@@ -855,7 +855,11 @@ export default function CMViewPage() {
   )).sort()
   const cmHops    = (workloadMode === 'full' ? hops : cjHops)
     .filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
-  const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
+  const active    = cmHops.filter(h => h.inProgress).sort((a, b) => {
+    const aTime = a.ms16f ? new Date(a.ms16f).getTime() : Infinity
+    const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
+    return aTime - bTime
+  })
   const thisWeek  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const next2Wks  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const thisMonth = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
@@ -927,7 +931,11 @@ export default function CMViewPage() {
         const cmHops = hops.filter(h => h.cm === cm && !h.complete)
         if (cmHops.length === 0) return
 
-        const active    = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
+        const active    = cmHops.filter(h => h.inProgress).sort((a, b) => {
+          const aTime = a.ms16f ? new Date(a.ms16f).getTime() : Infinity
+          const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
+          return aTime - bTime
+        })
         const thisWeek  = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
         const next2Wks  = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
         const thisMonth = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
@@ -1022,7 +1030,11 @@ export default function CMViewPage() {
       const cmHops = sourceHops.filter(h => h.cm === cm && !h.complete)
       if (cmHops.length === 0) return
 
-      const active   = cmHops.filter(h => h.inProgress).sort((a, b) => (b.daysElapsed ?? 0) - (a.daysElapsed ?? 0))
+      const active   = cmHops.filter(h => h.inProgress).sort((a, b) => {
+        const aTime = a.ms16f ? new Date(a.ms16f).getTime() : Infinity
+        const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
+        return aTime - bTime
+      })
       const upcoming = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
 
       body += `${starDiv}\n`
