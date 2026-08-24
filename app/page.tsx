@@ -169,7 +169,7 @@ export default function Home() {
   const [grLoaded, setGrLoaded] = useState(false)
   const [grExpanded, setGrExpanded] = useState(false)
   const [grSortBy, setGrSortBy] = useState<GrSortOption>('trigger')
-  const [grRowTypeFilter, setGrRowTypeFilter] = useState<'all' | 'base' | 'cr'>('all')
+  const [grRowTypeFilter, setGrRowTypeFilter] = useState<'all' | 'base' | 'cr'>('base')
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
 
   useEffect(() => {
