@@ -156,13 +156,15 @@ export default function Home() {
   const [pmFilter, setPmFilter] = useState<string>('ALL')
   const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
   const [snapshots, setSnapshots] = useState<{hop_count: number, uploaded_at: string}[]>([])
-  const [focusCompleted, setFocusCompleted] = useState<Record<string, { comment: string; label: string; completedAt: string }>>({})
+  // Daily checkoff — resets every calendar day. Keyed by `${hop}-${actionType}`.
+  const [focusChecks, setFocusChecks] = useState<Record<string, boolean>>({})
   const [showUpdatesPanel, setShowUpdatesPanel] = useState(false)
   const [focusCommentInput, setFocusCommentInput] = useState<Record<string, string>>({})
   const [expandedFocusItem, setExpandedFocusItem] = useState<string | null>(null)
   const [focusModal, setFocusModal] = useState<{ label: string; items: typeof hopDetails } | null>(null)
   const [openActionsData, setOpenActionsData] = useState<{ id: string; hop_name: string; action_text: string; action_type: string }[]>([])
-  const [savedComments, setSavedComments] = useState<Record<string, string[]>>({})
+  // Permanent comment history, per HOP + action type — never resets. Keyed by `${hop}-${actionType}`.
+  const [focusHistory, setFocusHistory] = useState<Record<string, { date: string; text: string }[]>>({})
   const [grRows, setGrRows] = useState<GrRow[]>([])
   const [grLoaded, setGrLoaded] = useState(false)
   const [grExpanded, setGrExpanded] = useState(false)
@@ -413,41 +415,44 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    const loadFocusCompleted = async () => {
-      const todayKey = `focus-completed-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
-      console.log('[focus-load] checkoffs — reading key:', todayKey)
+    const loadFocusHistory = async () => {
+      // History is permanent — not scoped by date — so this fetches every
+      // focus-history-* row that exists, once. Bulk LIKE query rather than
+      // per-HOP round trips.
       const { data } = await supabase
         .from('pm_updates_cache')
-        .select('updates')
-        .eq('id', todayKey)
-        .single()
-      console.log('[focus-load] checkoffs — value returned for key', todayKey, ':', data?.updates)
-      if (data?.updates) {
-        try {
-          setFocusCompleted(JSON.parse(data.updates))
-        } catch {}
-      }
+        .select('id, updates')
+        .like('id', 'focus-history-%')
+      const map: Record<string, { date: string; text: string }[]> = {}
+      ;(data || []).forEach(row => {
+        const key = row.id.slice('focus-history-'.length)
+        try { map[key] = JSON.parse(row.updates) } catch {}
+      })
+      setFocusHistory(map)
     }
-    loadFocusCompleted()
+    loadFocusHistory()
   }, [])
 
   useEffect(() => {
-    const loadSavedComments = async () => {
-      const todayKey = `focus-comments-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
-      console.log('[focus-load] comments — reading key:', todayKey)
+    const loadFocusChecks = async () => {
+      // Checkoffs are scoped to today's date in the id itself, so this
+      // naturally only ever picks up today's checked items — a new
+      // calendar day means a new prefix, so nothing matches until checked
+      // again today.
+      const todayKey = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
+      const prefix = `focus-check-${todayKey}-`
       const { data } = await supabase
         .from('pm_updates_cache')
-        .select('updates')
-        .eq('id', todayKey)
-        .single()
-      console.log('[focus-load] comments — value returned for key', todayKey, ':', data?.updates)
-      if (data?.updates) {
-        try {
-          setSavedComments(JSON.parse(data.updates))
-        } catch {}
-      }
+        .select('id')
+        .like('id', `${prefix}%`)
+      const map: Record<string, boolean> = {}
+      ;(data || []).forEach(row => {
+        const key = row.id.slice(prefix.length)
+        map[key] = true
+      })
+      setFocusChecks(map)
     }
-    loadSavedComments()
+    loadFocusChecks()
   }, [])
 
   useEffect(() => {
@@ -488,17 +493,6 @@ export default function Home() {
     loadOpenActions()
   }, [])
 
-  const saveFocusCompleted = async (updated: typeof focusCompleted) => {
-    const todayKey = `focus-completed-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
-    console.log('[focus-save] checkoffs — writing key:', todayKey, 'value:', updated)
-    const { error } = await supabase.from('pm_updates_cache').upsert({
-      id: todayKey,
-      updates: JSON.stringify(updated),
-      updated_at: new Date().toISOString()
-    })
-    console.log('[focus-save] checkoffs — upsert error:', error)
-  }
-
   const saveGrFocusCompleted = async (updated: typeof grFocusCompleted) => {
     const todayKey = `focus-gr-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
     await supabase.from('pm_updates_cache').upsert({
@@ -530,73 +524,83 @@ export default function Home() {
     await saveGrFocusCompleted(updated)
   }
 
-  const saveComment = async (itemKey: string) => {
-    const comment = focusCommentInput[itemKey]?.trim()
+  // Comment history is permanent, per HOP + action type — appends only, never overwrites.
+  const saveComment = async (hop: string, actionType: string) => {
+    const compositeKey = `${hop}-${actionType}`
+    const comment = focusCommentInput[compositeKey]?.trim()
     if (!comment) return
-    const todayKey = `focus-comments-${new Date().toLocaleDateString('en-US').replace(/\//g, '-')}`
-    const updated = { ...savedComments }
-    if (!updated[itemKey]) updated[itemKey] = []
-    updated[itemKey] = [...updated[itemKey], comment]
-    setSavedComments(updated)
-    setFocusCommentInput(prev => ({ ...prev, [itemKey]: '' }))
-    console.log('[focus-save] comments — writing key:', todayKey, 'value:', updated)
+    const dateStr = new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
+    const historyId = `focus-history-${compositeKey}`
+    const existing = focusHistory[compositeKey] || []
+    const updated = [...existing, { date: dateStr, text: comment }]
+    setFocusHistory(h => ({ ...h, [compositeKey]: updated }))
+    setFocusCommentInput(prev => ({ ...prev, [compositeKey]: '' }))
     const { error } = await supabase.from('pm_updates_cache').upsert({
-      id: todayKey,
+      id: historyId,
       updates: JSON.stringify(updated),
       updated_at: new Date().toISOString()
     })
-    console.log('[focus-save] comments — upsert error:', error)
+    if (error) console.error('[focus-save] history upsert failed:', error)
   }
 
-  const toggleFocusItem = async (itemKey: string, label: string) => {
-    const updated = { ...focusCompleted }
-    if (updated[itemKey]) {
-      delete updated[itemKey]
+  // Daily checkoff — independent of comment history, resets every calendar
+  // day since the Supabase id embeds today's date.
+  const toggleFocusItem = async (hop: string, actionType: string) => {
+    const compositeKey = `${hop}-${actionType}`
+    const todayKey = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
+    const checkId = `focus-check-${todayKey}-${compositeKey}`
+    const isChecked = !!focusChecks[compositeKey]
+
+    if (isChecked) {
+      setFocusChecks(c => {
+        const next = { ...c }
+        delete next[compositeKey]
+        return next
+      })
+      const { error } = await supabase.from('pm_updates_cache').delete().eq('id', checkId)
+      if (error) console.error('[focus-save] checkoff delete failed:', error)
     } else {
-      const comments = savedComments[itemKey] || []
-      const currentInput = focusCommentInput[itemKey]?.trim()
-      if (currentInput) comments.push(currentInput)
-      const compiledComment = comments.join(' | ')
-      updated[itemKey] = {
-        comment: compiledComment,
-        label,
-        completedAt: new Date().toISOString()
-      }
+      setFocusChecks(c => ({ ...c, [compositeKey]: true }))
+      const { error } = await supabase.from('pm_updates_cache').upsert({
+        id: checkId,
+        updates: JSON.stringify({ completedAt: new Date().toISOString() }),
+        updated_at: new Date().toISOString()
+      })
+      if (error) console.error('[focus-save] checkoff upsert failed:', error)
     }
-    setFocusCompleted(updated)
-    await saveFocusCompleted(updated)
   }
 
   const copyUpdates = () => {
     const todayStr = new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
-    const completed = Object.entries(focusCompleted)
-    const uncompleted = focusItems
-      .filter(item => item.value > 0 && item.label !== 'Open Actions' && item.label !== 'Changed Since Last Upload')
-      .flatMap(item => item.getItems()
-        .filter(h => !focusCompleted[`${h.hop}::${item.label}`])
-        .map(h => ({ key: `${h.hop}::${item.label}`, hop: h.hop, label: item.label }))
-      )
+
+    const relevantItems = focusItems.filter(item => item.value > 0 && item.label !== 'Open Actions' && item.label !== 'Changed Since Last Upload')
+
+    const completed = relevantItems.flatMap(item => item.getItems()
+      .filter(h => !!focusChecks[`${h.hop}-${item.type}`])
+      .map(h => ({ hop: h.hop, type: item.type }))
+    )
+    const uncompleted = relevantItems.flatMap(item => item.getItems()
+      .filter(h => !focusChecks[`${h.hop}-${item.type}`])
+      .map(h => ({ hop: h.hop, label: item.label, type: item.type }))
+    )
 
     let text = `Daily Updates — ${todayStr}\n\n`
 
     if (completed.length > 0) {
       text += `COMPLETED:\n`
-      completed.forEach(([key, val]) => {
-        const hopName = key.split('::')[0]
-        const allComments = [
-          ...(savedComments[key] || []),
-          val.comment
-        ].filter(Boolean).join(' | ')
-        text += `${hopName}  |  ${todayStr}: (CJ) ${allComments || 'Action completed'}\n`
+      completed.forEach(({ hop, type }) => {
+        const history = focusHistory[`${hop}-${type}`] || []
+        const latest = history[history.length - 1]?.text
+        text += `${hop}  |  ${todayStr}: (CJ) ${latest || 'Action completed'}\n`
       })
       text += '\n'
     }
 
     if (uncompleted.length > 0) {
       text += `STILL PENDING:\n`
-      uncompleted.forEach(({ hop, label }) => {
-        const comments = savedComments[`${hop}::${label}`] || []
-        text += `${hop}  |  ${label}${comments.length > 0 ? ' — ' + comments.join(' | ') : ''}\n`
+      uncompleted.forEach(({ hop, label, type }) => {
+        const history = focusHistory[`${hop}-${type}`] || []
+        text += `${hop}  |  ${label}${history.length > 0 ? ' — ' + history.map(h => h.text).join(' | ') : ''}\n`
       })
     }
 
@@ -869,6 +873,7 @@ export default function Home() {
     {
       emoji: '🔴',
       label: 'Needs Attention Now',
+      type: 'overdue',
       value: filteredDetails.filter(h => !h.complete && !h.inProgress && h.daysOut !== null && h.daysOut <= 14 && (!h.hasNtp || !h.hasMat)).length,
       unit: 'sites',
       sub: 'starting ≤14 days with blockers',
@@ -879,6 +884,7 @@ export default function Home() {
     {
       emoji: '🔴',
       label: 'SPOs Ready to Cut',
+      type: 'spo',
       value: filteredDetails.filter(h => h.cutSpoNow).length,
       unit: 'HOPs',
       sub: 'CPO ready — cut SPO before GC call',
@@ -889,6 +895,7 @@ export default function Home() {
     {
       emoji: '⚡',
       label: 'NTP Urgent ≤14 Days',
+      type: 'ntp',
       value: filteredDetails.filter(h => h.ntpUrgent).length,
       unit: 'HOPs',
       sub: 'missing NTP — chase program team',
@@ -899,6 +906,7 @@ export default function Home() {
     {
       emoji: '📦',
       label: 'Material Watch',
+      type: 'material',
       value: filteredDetails.filter(h => h.materialWatch).length,
       unit: 'HOPs',
       sub: 'no material ≤14 days to start',
@@ -909,6 +917,7 @@ export default function Home() {
     {
       emoji: '🟡',
       label: 'Vendor Conflicts',
+      type: 'vendor',
       value: filteredDetails.filter(h => h.vendorConflict).length,
       unit: 'HOPs',
       sub: 'Samsung/ITW on site at FC start',
@@ -919,6 +928,7 @@ export default function Home() {
     {
       emoji: '📋',
       label: 'Open Actions',
+      type: '',
       value: openActionsData.length,
       unit: 'items',
       sub: 'from HOP Readiness tracker',
@@ -929,6 +939,7 @@ export default function Home() {
     {
       emoji: '🔄',
       label: 'Changed Since Last Upload',
+      type: '',
       value: snapshots.length > 1 ? Math.abs((snapshots[0]?.hop_count ?? 0) - (snapshots[1]?.hop_count ?? 0)) : 0,
       unit: 'changes',
       sub: 'view full change log',
@@ -1122,7 +1133,7 @@ export default function Home() {
                   <div className="flex justify-end mb-3">
                     <button onClick={() => setShowUpdatesPanel(!showUpdatesPanel)}
                       className="bg-gray-800 hover:bg-gray-700 border border-gray-600 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2">
-                      📝 Today&apos;s Updates ({Object.keys(focusCompleted).length} completed)
+                      📝 Today&apos;s Updates ({Object.keys(focusChecks).length} completed)
                     </button>
                   </div>
 
@@ -1136,40 +1147,45 @@ export default function Home() {
                           📋 Copy All Completed
                         </button>
                       </div>
-                      {Object.keys(focusCompleted).length === 0 && (
+                      {Object.keys(focusChecks).length === 0 && (
                         <p className="text-gray-500 text-sm">No completed items yet today — check off items as you action them below.</p>
                       )}
                       <div className="space-y-2">
                         {focusItems.filter(item => item.value > 0).map(item => (
                           <div key={item.label}>
                             {item.getItems().map(h => {
-                              const itemKey = `${h.hop}::${item.label}`
-                              const isCompleted = !!focusCompleted[itemKey]
+                              const compositeKey = `${h.hop}-${item.type}`
+                              const isChecked = !!focusChecks[compositeKey]
+                              const history = focusHistory[compositeKey] || []
+                              const latest = history[history.length - 1]?.text
                               return (
-                                <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
-                                  <input type="checkbox" checked={isCompleted}
-                                    onChange={() => toggleFocusItem(itemKey, item.label)}
+                                <div key={compositeKey} className={`flex items-center gap-3 p-2 rounded-lg ${isChecked ? 'opacity-60' : ''}`}>
+                                  <input type="checkbox" checked={isChecked}
+                                    onChange={() => toggleFocusItem(h.hop, item.type)}
                                     className="w-4 h-4 cursor-pointer accent-green-500" />
-                                  <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
+                                  <span className={`text-sm flex-1 ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                   <span className="text-gray-500 text-xs">{item.label}</span>
-                                  {isCompleted && focusCompleted[itemKey]?.comment && (
-                                    <span className="text-green-400 text-xs">✓ {focusCompleted[itemKey].comment}</span>
+                                  {isChecked && latest && (
+                                    <span className="text-green-400 text-xs">✓ {latest}</span>
                                   )}
                                 </div>
                               )
                             })}
                             {item.label === 'Open Actions' && openActionsData.map(a => {
-                              const itemKey = `${a.hop_name}::Open Action::${a.id}`
-                              const isCompleted = !!focusCompleted[itemKey]
+                              const actionType = `action-${a.id}`
+                              const compositeKey = `${a.hop_name}-${actionType}`
+                              const isChecked = !!focusChecks[compositeKey]
+                              const history = focusHistory[compositeKey] || []
+                              const latest = history[history.length - 1]?.text
                               return (
-                                <div key={itemKey} className={`flex items-center gap-3 p-2 rounded-lg ${isCompleted ? 'opacity-60' : ''}`}>
-                                  <input type="checkbox" checked={isCompleted}
-                                    onChange={() => toggleFocusItem(itemKey, 'Open Action')}
+                                <div key={compositeKey} className={`flex items-center gap-3 p-2 rounded-lg ${isChecked ? 'opacity-60' : ''}`}>
+                                  <input type="checkbox" checked={isChecked}
+                                    onChange={() => toggleFocusItem(a.hop_name, actionType)}
                                     className="w-4 h-4 cursor-pointer accent-green-500" />
-                                  <span className={`text-sm flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
+                                  <span className={`text-sm flex-1 ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
                                   <span className="text-gray-500 text-xs">{a.action_type}</span>
-                                  {isCompleted && focusCompleted[itemKey]?.comment && (
-                                    <span className="text-green-400 text-xs">✓ {focusCompleted[itemKey].comment}</span>
+                                  {isChecked && latest && (
+                                    <span className="text-green-400 text-xs">✓ {latest}</span>
                                   )}
                                 </div>
                               )
@@ -1207,55 +1223,51 @@ export default function Home() {
                         {expandedFocusItem === item.label && (
                           <div className="bg-gray-900 border border-t-0 border-gray-700 rounded-b-xl p-4 space-y-2">
                             {item.label === 'Open Actions' && openActionsData.map(a => {
-                              const itemKey = `${a.hop_name}::Open Action::${a.id}`
-                              const isCompleted = !!focusCompleted[itemKey]
+                              const actionType = `action-${a.id}`
+                              const compositeKey = `${a.hop_name}-${actionType}`
+                              const isChecked = !!focusChecks[compositeKey]
+                              const history = focusHistory[compositeKey] || []
                               return (
-                                <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
+                                <div key={compositeKey} className={`bg-gray-800 rounded-lg p-3 ${isChecked ? 'opacity-50' : ''}`}>
                                   <div className="flex items-center gap-2 mb-2">
-                                    <input type="checkbox" checked={isCompleted}
-                                      onChange={() => toggleFocusItem(itemKey, 'Open Action')}
-                                      className="w-4 h-4 cursor-pointer accent-green-500" />
-                                    <span className={`text-sm font-semibold flex-1 ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
+                                    <span className={`text-sm font-semibold flex-1 ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
                                     <span className="text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">{a.action_type}</span>
                                     <span className="text-xs text-gray-500">{a.action_text}</span>
                                   </div>
-                                  {!isCompleted && (
-                                    <div className="flex gap-2 mt-1">
-                                      <input type="text" placeholder="What did you do? Add note before completing..."
-                                        value={focusCommentInput[itemKey] || ''}
-                                        onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
-                                        onKeyDown={(e) => { if (e.key === 'Enter') saveComment(itemKey) }}
-                                        className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
-                                      />
-                                      <button onClick={() => saveComment(itemKey)}
-                                        className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
-                                        💾 Save
-                                      </button>
-                                    </div>
-                                  )}
-                                  {savedComments[itemKey]?.length > 0 && (
-                                    <div className="mt-1 space-y-0.5">
-                                      {savedComments[itemKey].map((c, i) => (
-                                        <p key={i} className="text-blue-300 text-xs">💬 {c}</p>
+                                  {history.length > 0 && (
+                                    <div className="mb-2">
+                                      <p className="text-gray-500 text-xs font-semibold mb-0.5">📋 History</p>
+                                      {history.map((entry, i) => (
+                                        <p key={i} className="text-gray-500 text-xs">{entry.date.split('/').slice(0, 2).join('/')}: {entry.text}</p>
                                       ))}
                                     </div>
                                   )}
-                                  {isCompleted && focusCompleted[itemKey]?.comment && (
-                                    <p className="text-green-400 text-xs mt-1">✓ {focusCompleted[itemKey].comment}</p>
-                                  )}
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <input type="text" placeholder="What did you do? Add note..."
+                                      value={focusCommentInput[compositeKey] || ''}
+                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [compositeKey]: e.target.value }))}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') saveComment(a.hop_name, actionType) }}
+                                      className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+                                    />
+                                    <button onClick={() => saveComment(a.hop_name, actionType)}
+                                      className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
+                                      💾 Save
+                                    </button>
+                                    <input type="checkbox" checked={isChecked}
+                                      onChange={() => toggleFocusItem(a.hop_name, actionType)}
+                                      className="w-4 h-4 cursor-pointer accent-green-500" />
+                                  </div>
                                 </div>
                               )
                             })}
                             {item.label !== 'Open Actions' && item.label !== 'Changed Since Last Upload' && item.getItems().map(h => {
-                              const itemKey = `${h.hop}::${item.label}`
-                              const isCompleted = !!focusCompleted[itemKey]
+                              const compositeKey = `${h.hop}-${item.type}`
+                              const isChecked = !!focusChecks[compositeKey]
+                              const history = focusHistory[compositeKey] || []
                               return (
-                                <div key={itemKey} className={`bg-gray-800 rounded-lg p-3 ${isCompleted ? 'opacity-50' : ''}`}>
+                                <div key={compositeKey} className={`bg-gray-800 rounded-lg p-3 ${isChecked ? 'opacity-50' : ''}`}>
                                   <div className="flex items-center gap-2 mb-2 flex-wrap">
-                                    <input type="checkbox" checked={isCompleted}
-                                      onChange={() => toggleFocusItem(itemKey, item.label)}
-                                      className="w-4 h-4 cursor-pointer accent-green-500" />
-                                    <span className={`text-sm font-semibold ${isCompleted ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
+                                    <span className={`text-sm font-semibold ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                     <span className="text-gray-400 text-xs">{h.gc}</span>
                                     {h.daysOut !== null && !h.inProgress && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>}
                                     {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
@@ -1263,30 +1275,29 @@ export default function Home() {
                                     {h.cutSpoNow && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO</span>}
                                     {h.ntpWaitingOn && <span className="text-gray-500 text-xs">Waiting: {h.ntpWaitingOn.slice(0,40)}</span>}
                                   </div>
-                                  {!isCompleted && (
-                                    <div className="flex gap-2 mt-1">
-                                      <input type="text" placeholder="What did you do? Add note before completing..."
-                                        value={focusCommentInput[itemKey] || ''}
-                                        onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [itemKey]: e.target.value }))}
-                                        onKeyDown={(e) => { if (e.key === 'Enter') saveComment(itemKey) }}
-                                        className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
-                                      />
-                                      <button onClick={() => saveComment(itemKey)}
-                                        className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
-                                        💾 Save
-                                      </button>
-                                    </div>
-                                  )}
-                                  {savedComments[itemKey]?.length > 0 && (
-                                    <div className="mt-1 space-y-0.5">
-                                      {savedComments[itemKey].map((c, i) => (
-                                        <p key={i} className="text-blue-300 text-xs">💬 {c}</p>
+                                  {history.length > 0 && (
+                                    <div className="mb-2">
+                                      <p className="text-gray-500 text-xs font-semibold mb-0.5">📋 History</p>
+                                      {history.map((entry, i) => (
+                                        <p key={i} className="text-gray-500 text-xs">{entry.date.split('/').slice(0, 2).join('/')}: {entry.text}</p>
                                       ))}
                                     </div>
                                   )}
-                                  {isCompleted && focusCompleted[itemKey]?.comment && (
-                                    <p className="text-green-400 text-xs mt-1">✓ {focusCompleted[itemKey].comment}</p>
-                                  )}
+                                  <div className="flex items-center gap-2 mt-1">
+                                    <input type="text" placeholder="What did you do? Add note..."
+                                      value={focusCommentInput[compositeKey] || ''}
+                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [compositeKey]: e.target.value }))}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') saveComment(h.hop, item.type) }}
+                                      className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+                                    />
+                                    <button onClick={() => saveComment(h.hop, item.type)}
+                                      className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
+                                      💾 Save
+                                    </button>
+                                    <input type="checkbox" checked={isChecked}
+                                      onChange={() => toggleFocusItem(h.hop, item.type)}
+                                      className="w-4 h-4 cursor-pointer accent-green-500" />
+                                  </div>
                                 </div>
                               )
                             })}
