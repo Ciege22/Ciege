@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import { loadChunkedReport } from '../lib/reportChunks'
 import {
   GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
@@ -465,9 +465,20 @@ interface PipelineTableProps {
   editedDates: Record<string, Record<string, string>>
   logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
   setCxNotesModal: (val: { hop: string; notes: string } | null) => void
+  crewAssignments: Record<string, string>
+  maxCrews: number
+  showCrewBadge: boolean
+  onCrewChange: (hop: string, crew: string) => void
 }
 
-function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal }: PipelineTableProps) {
+const CREW_BADGE_COLORS = [
+  'bg-blue-800 text-blue-200',
+  'bg-purple-800 text-purple-200',
+  'bg-teal-800 text-teal-200',
+  'bg-pink-800 text-pink-200',
+]
+
+function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal, crewAssignments, maxCrews, showCrewBadge, onCrewChange }: PipelineTableProps) {
   return (
     <div className="mb-6">
       <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
@@ -479,6 +490,7 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
               <thead>
                 <tr className="bg-gray-800 text-gray-400">
                   <th className="text-left p-2">HOP</th>
+                  <th className="text-left p-2">Crew</th>
                   <th className="text-left p-2">Path ID</th>
                   <th className="text-left p-2">FC Start</th>
                   <th className="text-left p-2">FC End</th>
@@ -510,7 +522,24 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
                   const rowBg = hasConflict ? 'bg-red-950' : isUrgent ? 'bg-yellow-950' : h.blockers.length === 0 ? 'bg-green-950' : 'bg-gray-900'
                   return (
                     <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
-                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">
+                        {h.hop}
+                        {showCrewBadge && crewAssignments[h.hop] && (
+                          <span className={`ml-2 text-xs font-bold px-1.5 py-0.5 rounded ${CREW_BADGE_COLORS[(parseInt(crewAssignments[h.hop].replace('Crew ', ''), 10) - 1) % CREW_BADGE_COLORS.length] || 'bg-gray-700 text-gray-300'}`}>
+                            C{crewAssignments[h.hop].replace('Crew ', '')}
+                          </span>
+                        )}
+                      </td>
+                      <td className="p-2">
+                        <select value={crewAssignments[h.hop] || ''}
+                          onChange={(e) => onCrewChange(h.hop, e.target.value)}
+                          className="bg-gray-800 text-gray-300 text-xs rounded px-1 py-1 border border-gray-600 focus:outline-none focus:border-blue-500">
+                          <option value="">--</option>
+                          {Array.from({ length: maxCrews }, (_, i) => `Crew ${i + 1}`).map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </td>
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15f}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
@@ -646,15 +675,58 @@ export default function GCCallPage() {
   const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
+  const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
+  // hop -> 'Crew 1' | 'Crew 2' | 'Crew 3' | 'Crew 4' — absent means unassigned
+  const [crewAssignments, setCrewAssignments] = useState<Record<string, string>>({})
+  // GC -> selected crew filter ('all' | 'unassigned' | 'Crew N') — remembered
+  // per GC; a GC with no entry yet defaults to 'all'.
+  const [crewFilterByGc, setCrewFilterByGc] = useState<Record<string, string>>({})
 
   useEffect(() => {
     const loadSettings = async () => {
-      const [t, e] = await Promise.all([loadThresholdSettings(), loadEmailSettings()])
+      const [t, e, p] = await Promise.all([loadThresholdSettings(), loadEmailSettings(), loadProgramSettings()])
       setThresholds(t)
       setEmailSettings(e)
+      setProgram(p)
     }
     loadSettings()
   }, [])
+
+  useEffect(() => {
+    const loadCrewAssignments = async () => {
+      const { data } = await supabase.from('pm_updates_cache').select('id, updates').like('id', 'crew-assign-%')
+      const map: Record<string, string> = {}
+      ;(data || []).forEach(row => {
+        const hop = row.id.slice('crew-assign-'.length)
+        try {
+          const parsed = JSON.parse(row.updates)
+          if (parsed?.crew) map[hop] = parsed.crew
+        } catch {}
+      })
+      setCrewAssignments(map)
+    }
+    loadCrewAssignments()
+  }, [])
+
+  const setCrewForHop = async (hop: string, crew: string) => {
+    setCrewAssignments(prev => {
+      const next = { ...prev }
+      if (crew) next[hop] = crew
+      else delete next[hop]
+      return next
+    })
+    if (crew) {
+      const { error } = await supabase.from('pm_updates_cache').upsert({
+        id: `crew-assign-${hop}`,
+        updates: JSON.stringify({ crew }),
+        updated_at: new Date().toISOString()
+      })
+      if (error) console.error('[crew-assign] upsert failed:', error)
+    } else {
+      const { error } = await supabase.from('pm_updates_cache').delete().eq('id', `crew-assign-${hop}`)
+      if (error) console.error('[crew-assign] delete failed:', error)
+    }
+  }
 
   useEffect(() => {
     if (selectedGC) console.log(`[gc-call] selectedGC: '${selectedGC}'`)
@@ -1156,10 +1228,35 @@ export default function GCCallPage() {
     const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
     return aTime - bTime
   })
-  const thisWeek    = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
-  const next2Weeks  = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
-  const thisMonth   = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
-  const pullIns     = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+
+  const maxCrews = crewCountForGc(program, selectedGC)
+  const crewFilter = crewFilterByGc[selectedGC] || 'all'
+  const setCrewFilter = (val: string) => setCrewFilterByGc(prev => ({ ...prev, [selectedGC]: val }))
+  const showCrewBadge = crewFilter === 'all'
+
+  const matchesCrewFilter = (h: HOP) => {
+    if (crewFilter === 'all') return true
+    if (crewFilter === 'unassigned') return !crewAssignments[h.hop]
+    return crewAssignments[h.hop] === crewFilter
+  }
+  const crewSortKey = (h: HOP) => {
+    const c = crewAssignments[h.hop]
+    if (!c) return 999
+    const n = parseInt(c.replace('Crew ', ''), 10)
+    return isNaN(n) ? 999 : n
+  }
+  const sortByCrewThenDate = (a: HOP, b: HOP) => {
+    if (crewFilter === 'all') {
+      const ck = crewSortKey(a) - crewSortKey(b)
+      if (ck !== 0) return ck
+    }
+    return (a.daysOut ?? 0) - (b.daysOut ?? 0)
+  }
+
+  const thisWeek    = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
+  const next2Weeks  = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
+  const thisMonth   = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
+  const pullIns     = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 30 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
   const pullInReady = pullIns.filter(h => h.pullInReady)
 
   const squawMound = gcHops.find(h => h.hop === 'NE-SQUAW_MOUND-NE-CHADRON')
@@ -1565,6 +1662,24 @@ export default function GCCallPage() {
             {activeTab === 'pipeline' && (
             <div className="space-y-8">
 
+                {/* Crew Filter */}
+                <div className="flex gap-2 flex-wrap">
+                  <button onClick={() => setCrewFilter('all')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${crewFilter === 'all' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                    All Crews
+                  </button>
+                  {Array.from({ length: maxCrews }, (_, i) => `Crew ${i + 1}`).map(c => (
+                    <button key={c} onClick={() => setCrewFilter(c)}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${crewFilter === c ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                      {c}
+                    </button>
+                  ))}
+                  <button onClick={() => setCrewFilter('unassigned')}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${crewFilter === 'unassigned' ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                    Unassigned
+                  </button>
+                </div>
+
                 {/* Active Sites */}
                 <div>
                   <h3 className="text-lg font-semibold text-white mb-3">🔨 Active Sites ({active.length})</h3>
@@ -1652,9 +1767,9 @@ export default function GCCallPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
-                <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
-                <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
+                <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
+                <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
 
                 {/* Pull-In Opportunities */}
                 <div>
@@ -1666,7 +1781,7 @@ export default function GCCallPage() {
                       </span>
                     )}
                   </div>
-                  <PipelineTable title="" rows={pullIns} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} />
+                  <PipelineTable title="" rows={pullIns} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
                 </div>
 
               </div>
