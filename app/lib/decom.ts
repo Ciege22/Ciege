@@ -133,15 +133,24 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
   const podPathwaveCol = col('POD In Pathwave')
   const podQuickBaseCol = col('POD In QuickBase')
 
+  console.log('[decom-parse] header row:', headers)
+  console.log('[decom-parse] resolved columns:', {
+    appPathIdCol, hopCol, pathIdCol, siteNameCol, siteNumberCol,
+    cxStartCol, cxCompleteCol, dropOffCol, cmCol, gcCol, cgCol,
+    podPathwaveCol, podQuickBaseCol,
+  })
+
   const today = new Date()
   const rows: DecomRow[] = []
+  let blankRowSkipped = 0
+  let blankHopSkipped = 0
 
   for (let i = 1; i < allRows.length; i++) {
     const row = allRows[i]
-    if (!row || !row.some(v => v !== null && v !== undefined && String(v).trim() !== '')) continue
+    if (!row || !row.some(v => v !== null && v !== undefined && String(v).trim() !== '')) { blankRowSkipped++; continue }
 
     const hop = String(row[hopCol] ?? '').trim()
-    if (!hop) continue
+    if (!hop) { blankHopSkipped++; continue }
 
     const cxStartRaw = parseDate(row[cxStartCol])
     const cxStart = yearOk(cxStartRaw) ? cxStartRaw : null
@@ -190,6 +199,8 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
       status,
     })
   }
+
+  console.log(`[decom-parse] ${allRows.length - 1} data rows in → ${rows.length} parsed out (${blankRowSkipped} fully blank, ${blankHopSkipped} blank HOP)`)
 
   return rows
 }

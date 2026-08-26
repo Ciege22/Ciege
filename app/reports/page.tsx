@@ -177,6 +177,7 @@ export default function ReportsPage() {
   const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
 
   const decomRows = parseDecomRows(decomRawRows)
+  console.log('[decom-render] decomRawRows:', decomRawRows.length, 'rows (incl. header) → decomRows parsed:', decomRows.length)
 
   useEffect(() => {
     const load = async () => {
@@ -187,6 +188,7 @@ export default function ReportsPage() {
       if (crReport) { setCrRows(crReport.rows); setCrInfo({ filename: crReport.filename, uploaded_at: crReport.uploaded_at, row_count: crReport.rows.length }) }
 
       const decomReport = await loadChunkedReport('decom')
+      console.log('[decom-load] loadChunkedReport("decom") returned', decomReport ? decomReport.rows.length : 0, 'rows')
       if (decomReport) { setDecomRawRows(decomReport.rows); setDecomInfo({ filename: decomReport.filename, uploaded_at: decomReport.uploaded_at, row_count: decomReport.rows.length }) }
     }
     load()
