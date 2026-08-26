@@ -210,7 +210,14 @@ export default function ReportsPage() {
           ws = wb.Sheets['CR Tracker'] || wb.Sheets[wb.SheetNames[0]]
           headerRowIndex = 1
         } else {
-          ws = wb.Sheets['R&R - Link Drop Off Status'] || wb.Sheets[wb.SheetNames[0]]
+          const DECOM_SHEET_NAME = 'R&R - Link Drop Off Status'
+          ws = wb.Sheets[DECOM_SHEET_NAME]
+          if (!ws) {
+            console.error(`[report-upload] Decom upload failed: sheet "${DECOM_SHEET_NAME}" not found. Available sheets:`, wb.SheetNames)
+            alert(`Could not find the "${DECOM_SHEET_NAME}" tab in this file — check the tab name and try again.`)
+            setUploading(null)
+            return
+          }
           headerRowIndex = 0
         }
 
