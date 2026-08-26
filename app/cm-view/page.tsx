@@ -6,7 +6,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings } from '../lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
 
 interface HOP {
   hop: string
@@ -437,9 +437,11 @@ export default function CMViewPage() {
   const [selectedCM, setSelectedCM] = useState('')
   const [workloadMode, setWorkloadMode] = useState<'mine' | 'full'>('mine')
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
 
   useEffect(() => {
     loadThresholdSettings().then(setThresholds)
+    loadEmailSettings().then(setEmailSettings)
   }, [])
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
@@ -1108,7 +1110,8 @@ export default function CMViewPage() {
       body += `${div}\n\n`
     })
 
-    window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+    const ccList = emailSettings.ccList.join(',')
+    window.open(`mailto:?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
   return (

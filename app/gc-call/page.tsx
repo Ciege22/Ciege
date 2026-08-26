@@ -1409,8 +1409,9 @@ export default function GCCallPage() {
     body += `For schedule, finance, or contract matters contact CJ directly.`
 
     const ccList = emailSettings.ccList.join(',')
+    const to = emailSettings.gcContactEmails[selectedGC] || ''
 
-    window.open(`mailto:?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+    window.open(`mailto:${to}?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
   const downloadGCExcel = () => {
