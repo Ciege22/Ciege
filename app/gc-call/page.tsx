@@ -9,6 +9,7 @@ import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import { loadChunkedReport } from '../lib/reportChunks'
+import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate } from '../lib/decom'
 import {
   GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
@@ -237,6 +238,172 @@ function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) 
       {spoRawRows.length === 0 && crRawRows.length === 0 && (
         <p className="text-gray-500 text-xs mt-3">Upload SPO/CR master reports on the Reports page to enable downloads here.</p>
       )}
+    </div>
+  )
+}
+
+interface DecomTabProps {
+  selectedGC: string
+  decomRawRows: unknown[][]
+  emailSettings: EmailSettings
+}
+
+function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
+  const [showComplete, setShowComplete] = useState(false)
+
+  if (decomRawRows.length === 0) {
+    return <p className="text-gray-400 text-sm">Upload the Decom Tracker on the Reports page to enable this view.</p>
+  }
+
+  const gcRows = decomRowsForGc(parseDecomRows(decomRawRows), selectedGC)
+  const outstandingPending = gcRows
+    .filter(r => r.status === 'outstanding' || r.status === 'pending')
+    .sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
+  const podGap = gcRows.filter(r => r.status === 'pod_gap')
+  const complete = gcRows.filter(r => r.status === 'complete')
+  const outstandingCount = gcRows.filter(r => r.status === 'outstanding').length
+
+  const generateDecomEmail = () => {
+    const mailto = buildDecomEmailMailto(selectedGC, outstandingPending, emailSettings)
+    window.open(mailto)
+  }
+
+  return (
+    <div className="space-y-8">
+      {/* Section 1 — Outstanding & Pending */}
+      <div>
+        <h3 className="text-lg font-semibold text-white mb-3">🔴 Outstanding &amp; Pending ({outstandingPending.length})</h3>
+        {outstandingPending.length === 0
+          ? <p className="text-gray-500 text-sm">No outstanding or pending decom items</p>
+          : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-800 text-gray-400">
+                    <th className="text-left p-2">HOP</th>
+                    <th className="text-left p-2">Path ID</th>
+                    <th className="text-left p-2">Site Name</th>
+                    <th className="text-left p-2">CM</th>
+                    <th className="text-left p-2">CX Complete</th>
+                    <th className="text-left p-2">Aging</th>
+                    <th className="text-left p-2">POD Pathwave</th>
+                    <th className="text-left p-2">POD QuickBase</th>
+                    <th className="text-left p-2">Comments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {outstandingPending.map(r => (
+                    <tr key={r.hop} className={`border-t border-gray-800 ${(r.aging ?? 0) >= 7 ? 'bg-red-950' : 'bg-yellow-950'}`}>
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
+                      <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{r.cm || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDecomDate(r.cxComplete) || '—'}</td>
+                      <td className="p-2">
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full whitespace-nowrap ${(r.aging ?? 0) >= 7 ? 'bg-red-800 text-red-200' : 'bg-yellow-800 text-yellow-200'}`}>
+                          {(r.aging ?? 0) >= 7 ? '🔴' : '🟡'} {r.aging ?? '—'}d
+                        </span>
+                      </td>
+                      <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
+                      <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
+                      <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+        <button onClick={generateDecomEmail}
+          disabled={outstandingCount === 0}
+          className="mt-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
+          ✉️ Generate Decom Email
+        </button>
+      </div>
+
+      {/* Section 2 — POD Gap */}
+      <div>
+        <h3 className="text-lg font-semibold text-white mb-3">⚠️ POD Gap ({podGap.length})</h3>
+        {podGap.length === 0
+          ? <p className="text-gray-500 text-sm">No POD gaps</p>
+          : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-800 text-gray-400">
+                    <th className="text-left p-2">HOP</th>
+                    <th className="text-left p-2">Path ID</th>
+                    <th className="text-left p-2">Site Name</th>
+                    <th className="text-left p-2">CM</th>
+                    <th className="text-left p-2">CX Complete</th>
+                    <th className="text-left p-2">POD Pathwave</th>
+                    <th className="text-left p-2">POD QuickBase</th>
+                    <th className="text-left p-2">Comments</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {podGap.map(r => (
+                    <tr key={r.hop} className="border-t border-gray-800 bg-yellow-950">
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
+                      <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{r.cm || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDecomDate(r.cxComplete) || '—'}</td>
+                      <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
+                      <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
+                      <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )
+        }
+      </div>
+
+      {/* Section 3 — Complete (collapsed by default) */}
+      <div>
+        <div className="flex items-center gap-3 mb-3 cursor-pointer" onClick={() => setShowComplete(s => !s)}>
+          <h3 className="text-lg font-semibold text-white">✅ Complete ({complete.length})</h3>
+          <span className="text-gray-500 text-sm">{showComplete ? '▲' : '▼'}</span>
+        </div>
+        {showComplete && (
+          complete.length === 0
+            ? <p className="text-gray-500 text-sm">No completed decom items</p>
+            : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-800 text-gray-400">
+                      <th className="text-left p-2">HOP</th>
+                      <th className="text-left p-2">Path ID</th>
+                      <th className="text-left p-2">Site Name</th>
+                      <th className="text-left p-2">CM</th>
+                      <th className="text-left p-2">CX Complete</th>
+                      <th className="text-left p-2">POD Pathwave</th>
+                      <th className="text-left p-2">POD QuickBase</th>
+                      <th className="text-left p-2">Comments</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {complete.map(r => (
+                      <tr key={r.hop} className="border-t border-gray-800 bg-green-950">
+                        <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
+                        <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
+                        <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
+                        <td className="p-2 text-gray-300 whitespace-nowrap">{r.cm || '—'}</td>
+                        <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDecomDate(r.cxComplete) || '—'}</td>
+                        <td className="p-2"><span className="text-green-400 font-bold">✓</span></td>
+                        <td className="p-2"><span className="text-green-400 font-bold">✓</span></td>
+                        <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+        )}
+      </div>
     </div>
   )
 }
@@ -668,11 +835,12 @@ export default function GCCallPage() {
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [clearedNoteIds, setClearedNoteIds] = useState<Set<string>>(new Set())
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'gr' | 'reports'>('pipeline')
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'gr' | 'decom' | 'reports'>('pipeline')
   const [grRows, setGrRows] = useState<GrRow[]>([])
   const [grLoaded, setGrLoaded] = useState(false)
   const [spoRawRows, setSpoRawRows] = useState<unknown[][]>([])
   const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
+  const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
   const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
@@ -748,6 +916,9 @@ export default function GCCallPage() {
 
       const crReport = await loadChunkedReport('cr')
       if (crReport) setCrRawRows(crReport.rows)
+
+      const decomReport = await loadChunkedReport('decom')
+      if (decomReport) setDecomRawRows(decomReport.rows)
     }
     loadReports()
   }, [])
@@ -1651,6 +1822,7 @@ export default function GCCallPage() {
               {([
                 { key: 'pipeline', label: 'Pipeline' },
                 { key: 'gr', label: '💰 GR / Invoicing' },
+                { key: 'decom', label: 'Decom' },
                 { key: 'reports', label: 'Reports' },
               ] as const).map(t => (
                 <button key={t.key} onClick={() => setActiveTab(t.key)}
@@ -1793,6 +1965,14 @@ export default function GCCallPage() {
                 selectedGC={selectedGC}
                 grRows={grRows}
                 grLoaded={grLoaded}
+                emailSettings={emailSettings}
+              />
+            )}
+
+            {activeTab === 'decom' && (
+              <DecomTab
+                selectedGC={selectedGC}
+                decomRawRows={decomRawRows}
                 emailSettings={emailSettings}
               />
             )}

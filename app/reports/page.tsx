@@ -9,6 +9,7 @@ import { supabase } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
 import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
+import { parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow } from '../lib/decom'
 
 interface ReportSnapshot {
   filename: string
@@ -87,113 +88,70 @@ function downloadGCReport(rows: unknown[][], colIdx: number[], headers: string[]
   XLSX.writeFile(wb, filename)
 }
 
-export default function ReportsPage() {
-  const router = useRouter()
-  const [spoRows, setSpoRows] = useState<unknown[][]>([])
-  const [crRows, setCrRows] = useState<unknown[][]>([])
-  const [spoInfo, setSpoInfo] = useState<ReportSnapshot | null>(null)
-  const [crInfo, setCrInfo] = useState<ReportSnapshot | null>(null)
-  const [uploading, setUploading] = useState<string | null>(null)
-  const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
+const DECOM_HEADERS = ['HOP', 'Path ID', 'Site Name', 'Site Number', 'CM', 'CX Start', 'CX Complete', 'Aging (days)', 'DECOM Drop Off Date', 'DECOM Comments', 'POD Pathwave', 'POD QuickBase']
 
-  useEffect(() => {
-    const load = async () => {
-      const { data: spoSnap } = await supabase.from('report_snapshots').select('*').eq('id', 'spo').single()
-      if (spoSnap) { setSpoRows(JSON.parse(spoSnap.data)); setSpoInfo({ filename: spoSnap.filename, uploaded_at: spoSnap.uploaded_at, row_count: JSON.parse(spoSnap.data).length }) }
+function decomRowToSheetRow(r: DecomRow): (string | number)[] {
+  return [
+    r.hop, r.pathId, r.siteName, r.siteNumber, r.cm,
+    fmtDate(r.cxStart), fmtDate(r.cxComplete),
+    r.aging ?? '',
+    fmtDate(r.dropOffDate), r.comment,
+    r.podPathwave ? 'Yes' : 'No', r.podQuickBase ? 'Yes' : 'No',
+  ]
+}
 
-      const crReport = await loadChunkedReport('cr')
-      if (crReport) { setCrRows(crReport.rows); setCrInfo({ filename: crReport.filename, uploaded_at: crReport.uploaded_at, row_count: crReport.rows.length }) }
-    }
-    load()
-  }, [])
-
-  const handleUpload = useCallback(async (file: File, type: 'spo' | 'cr') => {
-    setUploading(type)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer)
-        const wb = XLSX.read(data, { type: 'array', cellDates: true })
-
-        let ws, headerRowIndex
-        if (type === 'spo') {
-          ws = wb.Sheets['NDPd_NAM_003_Viaero_SPO_Report'] || wb.Sheets[wb.SheetNames[0]]
-          headerRowIndex = 0
-        } else {
-          ws = wb.Sheets['CR Tracker'] || wb.Sheets[wb.SheetNames[0]]
-          headerRowIndex = 1
-        }
-
-        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
-
-        let allRows = rawRows
-        if (type === 'cr') {
-          let lastDataRow = rawRows.length - 1
-          while (lastDataRow >= 0 && !(rawRows[lastDataRow] || []).some(c => c !== null && c !== undefined && String(c).trim() !== '')) {
-            lastDataRow--
-          }
-          const rows = rawRows.slice(0, lastDataRow + 1)
-          console.log('[report-upload] CR raw rows:', rawRows.length, '→ trimmed:', rows.length)
-          allRows = rows
-        }
-
-        const dataRows = allRows.slice(headerRowIndex + 1).filter(row => row.some(v => v !== null))
-
-        const keepCols = type === 'spo' ? SPO_COL_IDX : CR_COL_IDX
-        const totalCols = dataRows.reduce((max, row) => Math.max(max, row.length), 0)
-        const strippedRows = dataRows.map(row => stripRow(row, keepCols))
-        console.log(`[report-upload] ${type.toUpperCase()} columns: kept ${keepCols.length} of ${totalCols} (dropped ${totalCols - keepCols.length})`)
-
-        if (type === 'spo') {
-          console.log('[report-upload] upserting id="spo"', 'filename=', file.name)
-          const { error } = await supabase.from('report_snapshots').upsert({
-            id: 'spo',
-            filename: file.name,
-            uploaded_at: new Date().toISOString(),
-            data: JSON.stringify(strippedRows)
-          })
-          if (error) {
-            console.error('[report-upload] SPO upsert failed:', error)
-            alert('SPO upload failed to save — check console for details')
-            setUploading(null)
-            return
-          }
-        } else {
-          console.log('[report-upload] chunking id="cr"', 'filename=', file.name, 'rows=', strippedRows.length)
-          const { error } = await saveChunkedReport('cr', file.name, strippedRows)
-          if (error) {
-            console.error('[report-upload] CR chunked save failed:', error)
-            alert('CR upload failed to save — check console for details')
-            setUploading(null)
-            return
-          }
-        }
-
-        if (type === 'spo') {
-          setSpoRows(strippedRows)
-          setSpoInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
-        } else {
-          setCrRows(strippedRows)
-          setCrInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
-        }
-      } catch (err) {
-        console.error('Upload error:', err)
-        alert('Upload failed — check file format')
+function styleDecomSheet(ws: XLSX.WorkSheet) {
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: 0, c })]
+    if (cell) {
+      cell.s = {
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: NAVY } },
+        alignment: { horizontal: 'center', wrapText: true }
       }
-      setUploading(null)
     }
-    reader.readAsArrayBuffer(file)
-  }, [])
+  }
+  ws['!cols'] = DECOM_HEADERS.map(h => ({ wch: Math.max(h.length + 2, 12) }))
+}
 
-  const UploadBox = ({ type, info, label }: { type: 'spo' | 'cr', info: ReportSnapshot | null, label: string }) => (
+function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
+  const outstandingPending = gcRows
+    .filter(r => r.status === 'outstanding' || r.status === 'pending')
+    .sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
+  const podGap = gcRows.filter(r => r.status === 'pod_gap')
+
+  const wb = XLSX.utils.book_new()
+
+  const ws1 = XLSX.utils.aoa_to_sheet([DECOM_HEADERS, ...outstandingPending.map(decomRowToSheetRow)])
+  styleDecomSheet(ws1)
+  XLSX.utils.book_append_sheet(wb, ws1, 'Outstanding & Pending')
+
+  const ws2 = XLSX.utils.aoa_to_sheet([DECOM_HEADERS, ...podGap.map(decomRowToSheetRow)])
+  styleDecomSheet(ws2)
+  XLSX.utils.book_append_sheet(wb, ws2, 'POD Gap')
+
+  XLSX.writeFile(wb, filename)
+}
+
+interface UploadBoxProps {
+  type: 'spo' | 'cr' | 'decom'
+  info: ReportSnapshot | null
+  label: string
+  uploading: string | null
+  onUpload: (file: File, type: 'spo' | 'cr' | 'decom') => void
+}
+
+function UploadBox({ type, info, label, uploading, onUpload }: UploadBoxProps) {
+  return (
     <div
       className="border-2 border-dashed border-gray-600 rounded-xl p-5 cursor-pointer hover:border-blue-500 transition-colors"
       onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleUpload(f, type) }}
+      onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) onUpload(f, type) }}
       onClick={() => document.getElementById(`${type}-upload`)?.click()}
     >
       <input id={`${type}-upload`} type="file" accept=".xlsx" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f, type) }} />
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f, type) }} />
       {uploading === type
         ? <p className="text-blue-400 text-sm text-center">⏳ Processing...</p>
         : info
@@ -205,6 +163,128 @@ export default function ReportsPage() {
       }
     </div>
   )
+}
+
+export default function ReportsPage() {
+  const router = useRouter()
+  const [spoRows, setSpoRows] = useState<unknown[][]>([])
+  const [crRows, setCrRows] = useState<unknown[][]>([])
+  const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
+  const [spoInfo, setSpoInfo] = useState<ReportSnapshot | null>(null)
+  const [crInfo, setCrInfo] = useState<ReportSnapshot | null>(null)
+  const [decomInfo, setDecomInfo] = useState<ReportSnapshot | null>(null)
+  const [uploading, setUploading] = useState<string | null>(null)
+  const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
+
+  const decomRows = parseDecomRows(decomRawRows)
+
+  useEffect(() => {
+    const load = async () => {
+      const { data: spoSnap } = await supabase.from('report_snapshots').select('*').eq('id', 'spo').single()
+      if (spoSnap) { setSpoRows(JSON.parse(spoSnap.data)); setSpoInfo({ filename: spoSnap.filename, uploaded_at: spoSnap.uploaded_at, row_count: JSON.parse(spoSnap.data).length }) }
+
+      const crReport = await loadChunkedReport('cr')
+      if (crReport) { setCrRows(crReport.rows); setCrInfo({ filename: crReport.filename, uploaded_at: crReport.uploaded_at, row_count: crReport.rows.length }) }
+
+      const decomReport = await loadChunkedReport('decom')
+      if (decomReport) { setDecomRawRows(decomReport.rows); setDecomInfo({ filename: decomReport.filename, uploaded_at: decomReport.uploaded_at, row_count: decomReport.rows.length }) }
+    }
+    load()
+  }, [])
+
+  const handleUpload = useCallback(async (file: File, type: 'spo' | 'cr' | 'decom') => {
+    setUploading(type)
+    const reader = new FileReader()
+    reader.onload = async (e) => {
+      try {
+        const data = new Uint8Array(e.target?.result as ArrayBuffer)
+        const wb = XLSX.read(data, { type: 'array', cellDates: true })
+
+        let ws, headerRowIndex
+        if (type === 'spo') {
+          ws = wb.Sheets['NDPd_NAM_003_Viaero_SPO_Report'] || wb.Sheets[wb.SheetNames[0]]
+          headerRowIndex = 0
+        } else if (type === 'cr') {
+          ws = wb.Sheets['CR Tracker'] || wb.Sheets[wb.SheetNames[0]]
+          headerRowIndex = 1
+        } else {
+          ws = wb.Sheets['R&R - Link Drop Off Status'] || wb.Sheets[wb.SheetNames[0]]
+          headerRowIndex = 0
+        }
+
+        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
+
+        let allRows = rawRows
+        if (type === 'cr' || type === 'decom') {
+          let lastDataRow = rawRows.length - 1
+          while (lastDataRow >= 0 && !(rawRows[lastDataRow] || []).some(c => c !== null && c !== undefined && String(c).trim() !== '')) {
+            lastDataRow--
+          }
+          const rows = rawRows.slice(0, lastDataRow + 1)
+          console.log(`[report-upload] ${type.toUpperCase()} raw rows:`, rawRows.length, '→ trimmed:', rows.length)
+          allRows = rows
+        }
+
+        const dataRows = allRows.slice(headerRowIndex + 1).filter(row => row.some(v => v !== null))
+
+        if (type === 'spo' || type === 'cr') {
+          const keepCols = type === 'spo' ? SPO_COL_IDX : CR_COL_IDX
+          const totalCols = dataRows.reduce((max, row) => Math.max(max, row.length), 0)
+          const strippedRows = dataRows.map(row => stripRow(row, keepCols))
+          console.log(`[report-upload] ${type.toUpperCase()} columns: kept ${keepCols.length} of ${totalCols} (dropped ${totalCols - keepCols.length})`)
+
+          if (type === 'spo') {
+            console.log('[report-upload] upserting id="spo"', 'filename=', file.name)
+            const { error } = await supabase.from('report_snapshots').upsert({
+              id: 'spo',
+              filename: file.name,
+              uploaded_at: new Date().toISOString(),
+              data: JSON.stringify(strippedRows)
+            })
+            if (error) {
+              console.error('[report-upload] SPO upsert failed:', error)
+              alert('SPO upload failed to save — check console for details')
+              setUploading(null)
+              return
+            }
+            setSpoRows(strippedRows)
+            setSpoInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
+          } else {
+            console.log('[report-upload] chunking id="cr"', 'filename=', file.name, 'rows=', strippedRows.length)
+            const { error } = await saveChunkedReport('cr', file.name, strippedRows)
+            if (error) {
+              console.error('[report-upload] CR chunked save failed:', error)
+              alert('CR upload failed to save — check console for details')
+              setUploading(null)
+              return
+            }
+            setCrRows(strippedRows)
+            setCrInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
+          }
+        } else {
+          // Decom isn't column-stripped — the parser resolves columns by
+          // header name at load time, so the header row travels with the
+          // stored data instead of being dropped like SPO/CR.
+          const decomStoreRows = [allRows[headerRowIndex], ...dataRows]
+          console.log('[report-upload] chunking id="decom"', 'filename=', file.name, 'rows=', decomStoreRows.length)
+          const { error } = await saveChunkedReport('decom', file.name, decomStoreRows)
+          if (error) {
+            console.error('[report-upload] Decom chunked save failed:', error)
+            alert('Decom upload failed to save — check console for details')
+            setUploading(null)
+            return
+          }
+          setDecomRawRows(decomStoreRows)
+          setDecomInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: dataRows.length })
+        }
+      } catch (err) {
+        console.error('Upload error:', err)
+        alert('Upload failed — check file format')
+      }
+      setUploading(null)
+    }
+    reader.readAsArrayBuffer(file)
+  }, [])
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
@@ -231,25 +311,90 @@ export default function ReportsPage() {
         </div>
 
         {/* Upload Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
             <p className="text-sm font-semibold text-gray-400 mb-2">SPO MASTER REPORT</p>
-            <UploadBox type="spo" info={spoInfo} label="SPO Master Report" />
+            <UploadBox type="spo" info={spoInfo} label="SPO Master Report" uploading={uploading} onUpload={handleUpload} />
           </div>
           <div>
             <p className="text-sm font-semibold text-gray-400 mb-2">CR CLAIMS TRACKER</p>
-            <UploadBox type="cr" info={crInfo} label="CR Claims Tracker" />
+            <UploadBox type="cr" info={crInfo} label="CR Claims Tracker" uploading={uploading} onUpload={handleUpload} />
           </div>
         </div>
+        <div className="mb-8">
+          <p className="text-sm font-semibold text-gray-400 mb-2">DECOM TRACKER</p>
+          <UploadBox type="decom" info={decomInfo} label="Decom Tracker" uploading={uploading} onUpload={handleUpload} />
+        </div>
+
+        {/* Decom Summary */}
+        {decomRows.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-lg font-bold mb-4">Decom Summary by GC</h2>
+            <div className="overflow-x-auto bg-gray-900 rounded-xl border border-gray-700">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-800 text-gray-400">
+                    <th className="text-left p-2">GC</th>
+                    <th className="text-left p-2">Total Sites</th>
+                    <th className="text-left p-2">Decom Complete</th>
+                    <th className="text-left p-2">POD Gap</th>
+                    <th className="text-left p-2">Outstanding</th>
+                    <th className="text-left p-2">Pending</th>
+                    <th className="text-left p-2">Avg Aging (days)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(() => {
+                    const summary = summarizeDecomByGc(decomRows, GC_CONFIG.map(c => c.gc)).sort((a, b) => b.outstanding - a.outstanding)
+                    const totals = summary.reduce((t, s) => ({
+                      total: t.total + s.total,
+                      complete: t.complete + s.complete,
+                      podGap: t.podGap + s.podGap,
+                      outstanding: t.outstanding + s.outstanding,
+                      pending: t.pending + s.pending,
+                    }), { total: 0, complete: 0, podGap: 0, outstanding: 0, pending: 0 })
+                    const allAging = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending').map(r => r.aging).filter((a): a is number => a !== null)
+                    const totalAvgAging = allAging.length > 0 ? Math.round(allAging.reduce((s, a) => s + a, 0) / allAging.length) : null
+                    return (
+                      <>
+                        {summary.map(s => (
+                          <tr key={s.gc} className="border-t border-gray-800">
+                            <td className="p-2 font-semibold text-white whitespace-nowrap">{s.gc}</td>
+                            <td className="p-2 text-gray-300">{s.total}</td>
+                            <td className="p-2 text-green-400">{s.complete}</td>
+                            <td className="p-2 text-orange-400">{s.podGap}</td>
+                            <td className="p-2 text-red-400 font-bold">{s.outstanding}</td>
+                            <td className="p-2 text-yellow-400">{s.pending}</td>
+                            <td className="p-2 text-gray-300">{s.avgAging ?? '—'}</td>
+                          </tr>
+                        ))}
+                        <tr className="border-t border-gray-700 bg-gray-800 font-bold">
+                          <td className="p-2 text-white">Total</td>
+                          <td className="p-2 text-gray-200">{totals.total}</td>
+                          <td className="p-2 text-green-400">{totals.complete}</td>
+                          <td className="p-2 text-orange-400">{totals.podGap}</td>
+                          <td className="p-2 text-red-400">{totals.outstanding}</td>
+                          <td className="p-2 text-yellow-400">{totals.pending}</td>
+                          <td className="p-2 text-gray-200">{totalAvgAging ?? '—'}</td>
+                        </tr>
+                      </>
+                    )
+                  })()}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* GC Download Grid */}
-        {(spoRows.length > 0 || crRows.length > 0) && (
+        {(spoRows.length > 0 || crRows.length > 0 || decomRows.length > 0) && (
           <div>
             <h2 className="text-lg font-bold mb-4">GC-Specific Reports — Download on Demand</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {GC_CONFIG.map(cfg => {
                 const spoCount = spoRows.filter(row => matches(row[SPO_VENDOR_COL_IN_MASTER], cfg.spo_match)).length
                 const crCount = crRows.filter(row => matches(row[CR_SUPPLIER_COL_IN_MASTER], cfg.cr_match)).length
+                const gcDecomRows = decomRowsForGc(decomRows, cfg.gc)
 
                 return (
                   <div key={cfg.gc} className="bg-gray-900 rounded-xl border border-gray-700 p-4">
@@ -258,6 +403,8 @@ export default function ReportsPage() {
                       <span>{spoCount} SPO rows</span>
                       <span>·</span>
                       <span>{crCount} CR rows</span>
+                      <span>·</span>
+                      <span>{gcDecomRows.length} Decom rows</span>
                     </div>
                     <div className="flex flex-col gap-2">
                       <button
@@ -272,6 +419,12 @@ export default function ReportsPage() {
                         className="bg-teal-700 hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
                         📥 Download CR Tracker
                       </button>
+                      <button
+                        onClick={() => downloadGcDecomReport(gcDecomRows, `${cfg.gc}_-_Decom_Report_-_${today}.xlsx`)}
+                        disabled={gcDecomRows.length === 0}
+                        className="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
+                        📥 Download Decom Report
+                      </button>
                     </div>
                   </div>
                 )
@@ -280,7 +433,7 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {spoRows.length === 0 && crRows.length === 0 && (
+        {spoRows.length === 0 && crRows.length === 0 && decomRows.length === 0 && (
           <div className="bg-gray-900 rounded-xl border border-gray-700 p-12 text-center">
             <p className="text-gray-400 text-xl">📂 Upload your master reports above to get started</p>
           </div>

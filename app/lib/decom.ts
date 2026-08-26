@@ -1,0 +1,253 @@
+import { GC_CONFIG, matches } from './gcConfig'
+
+export interface DecomRow {
+  appPathId: string
+  hop: string
+  pathId: string
+  siteName: string
+  siteNumber: string
+  cxStart: Date | null
+  cxComplete: Date | null
+  dropOffDate: Date | null
+  comment: string
+  cm: string
+  gc: string
+  podPathwave: boolean
+  podQuickBase: boolean
+  aging: number | null
+  status: 'complete' | 'pod_gap' | 'outstanding' | 'pending'
+}
+
+export interface DecomGcSummary {
+  gc: string
+  total: number
+  complete: number
+  podGap: number
+  outstanding: number
+  pending: number
+  avgAging: number | null
+}
+
+function findColCaseInsensitive(headers: unknown[], name: string): number {
+  const target = name.trim().toLowerCase()
+  return headers.findIndex(h => String(h).trim().toLowerCase() === target)
+}
+
+function parseDate(val: unknown): Date | null {
+  if (!val) return null
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val
+  if (typeof val === 'number') {
+    const d = new Date((val - 25569) * 86400 * 1000)
+    return isNaN(d.getTime()) ? null : d
+  }
+  const d = new Date(String(val))
+  return isNaN(d.getTime()) ? null : d
+}
+
+function yearOk(d: Date | null): d is Date {
+  return !!d && d.getFullYear() >= 2020
+}
+
+function daysBetween(a: Date, b: Date): number {
+  return Math.round((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+// DECOM Drop Off cells mix a date with free-text notes in the same string
+// (e.g. "8/15/2025 - waiting on GC"). Pull the date out; whatever's left,
+// trimmed of separator punctuation, becomes the comment. Native Excel date
+// cells (no text) come through as a pure date with an empty comment.
+const DATE_PATTERNS = [
+  /\d{1,2}\/\d{1,2}\/\d{2,4}/,
+  /\d{4}-\d{1,2}-\d{1,2}/,
+]
+
+export function parseDropOff(raw: unknown): { date: Date | null; comment: string } {
+  if (raw === null || raw === undefined) return { date: null, comment: '' }
+  if (raw instanceof Date) {
+    return isNaN(raw.getTime()) ? { date: null, comment: '' } : { date: raw, comment: '' }
+  }
+  const str = String(raw).trim()
+  if (!str) return { date: null, comment: '' }
+
+  for (const pattern of DATE_PATTERNS) {
+    const match = str.match(pattern)
+    if (match) {
+      const d = new Date(match[0])
+      if (!isNaN(d.getTime())) {
+        const comment = str.replace(match[0], '').replace(/^[\s\-–—:,.]+|[\s\-–—:,.]+$/g, '').trim()
+        return { date: d, comment }
+      }
+    }
+  }
+  // No date found in the cell — treat the whole string as a comment; the
+  // row is still "outstanding" since no drop-off date was ever extracted.
+  return { date: null, comment: str }
+}
+
+function parseYesNo(val: unknown): boolean {
+  const s = String(val || '').trim().toLowerCase()
+  return s === 'yes' || s === 'y' || s === 'true'
+}
+
+// GC matching reuses the existing GC_CONFIG alias table (same one SPO/CR
+// vendor matching uses) — tries the GC column first (either a direct short
+// name like "Vikor" or a known vendor alias like "Sioux Falls Tower
+// Specialists Inc."), then falls back to the CG column the same way.
+export function resolveGc(gcRaw: string, cgRaw: string): string {
+  const tryMatch = (raw: string): string => {
+    const trimmed = (raw || '').trim()
+    if (!trimmed) return ''
+    const lower = trimmed.toLowerCase()
+    const direct = GC_CONFIG.find(cfg => cfg.gc.toLowerCase() === lower)
+    if (direct) return direct.gc
+    const viaAlias = GC_CONFIG.find(cfg => matches(raw, cfg.spo_match) || matches(raw, cfg.cr_match))
+    return viaAlias ? viaAlias.gc : ''
+  }
+  return tryMatch(gcRaw) || tryMatch(cgRaw) || gcRaw.trim() || cgRaw.trim()
+}
+
+export function fmtDecomDate(d: Date | null): string {
+  if (!d) return ''
+  return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`
+}
+
+// `allRows` is the raw chunked-and-reassembled sheet: row 0 is the header
+// row, everything after is data. Header matching is case-insensitive per
+// spec, since the source sheet's casing isn't guaranteed to match exactly.
+export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
+  if (allRows.length === 0) return []
+  const headers = allRows[0] as unknown[]
+  const col = (name: string) => findColCaseInsensitive(headers, name)
+
+  const appPathIdCol = col('App Path ID')
+  const hopCol = col('HOP')
+  const pathIdCol = col('Path ID')
+  const siteNameCol = col('Site Name')
+  const siteNumberCol = col('Site Number')
+  const cxStartCol = col('CX Start - MS15')
+  const cxCompleteCol = col('CX Complete - MS16')
+  const dropOffCol = col('DECOM Drop Off')
+  const cmCol = col('CM')
+  const gcCol = col('GC')
+  const cgCol = col('CG')
+  const podPathwaveCol = col('POD In Pathwave')
+  const podQuickBaseCol = col('POD In QuickBase')
+
+  const today = new Date()
+  const rows: DecomRow[] = []
+
+  for (let i = 1; i < allRows.length; i++) {
+    const row = allRows[i]
+    if (!row || !row.some(v => v !== null && v !== undefined && String(v).trim() !== '')) continue
+
+    const hop = String(row[hopCol] ?? '').trim()
+    if (!hop) continue
+
+    const cxStartRaw = parseDate(row[cxStartCol])
+    const cxStart = yearOk(cxStartRaw) ? cxStartRaw : null
+    const cxCompleteRaw = parseDate(row[cxCompleteCol])
+    const cxComplete = yearOk(cxCompleteRaw) ? cxCompleteRaw : null
+
+    const dropOffParsed = parseDropOff(row[dropOffCol])
+    // Same year >= 2020 sanity filter as every other date field — a stray
+    // typo'd date (e.g. 1/1/1900) shouldn't be treated as a real drop-off.
+    const dropOffDate = yearOk(dropOffParsed.date) ? dropOffParsed.date : null
+    const comment = dropOffParsed.comment
+
+    const podPathwave = parseYesNo(row[podPathwaveCol])
+    const podQuickBase = parseYesNo(row[podQuickBaseCol])
+
+    const gc = resolveGc(String(row[gcCol] ?? ''), String(row[cgCol] ?? ''))
+
+    // Aging = days from CX Complete to today; falls back to CX Start if
+    // CX Complete is blank.
+    const anchor = cxComplete || cxStart
+    const aging = anchor ? daysBetween(anchor, today) : null
+
+    let status: DecomRow['status']
+    if (dropOffDate) {
+      status = (podPathwave && podQuickBase) ? 'complete' : 'pod_gap'
+    } else if (aging === null) {
+      // No CX Complete or CX Start to measure aging from — treat
+      // conservatively as needing attention rather than silently pending.
+      status = 'outstanding'
+    } else {
+      status = aging >= 7 ? 'outstanding' : 'pending'
+    }
+
+    rows.push({
+      appPathId: String(row[appPathIdCol] ?? '').trim(),
+      hop,
+      pathId: String(row[pathIdCol] ?? '').trim(),
+      siteName: String(row[siteNameCol] ?? '').trim(),
+      siteNumber: String(row[siteNumberCol] ?? '').trim(),
+      cxStart, cxComplete,
+      dropOffDate, comment,
+      cm: String(row[cmCol] ?? '').trim(),
+      gc,
+      podPathwave, podQuickBase,
+      aging,
+      status,
+    })
+  }
+
+  return rows
+}
+
+export function decomRowsForGc(rows: DecomRow[], gc: string): DecomRow[] {
+  return rows.filter(r => r.gc?.trim().toLowerCase() === gc?.trim().toLowerCase())
+}
+
+export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[]): DecomGcSummary[] {
+  return gcNames.map(gc => {
+    const gcRows = decomRowsForGc(rows, gc)
+    const complete = gcRows.filter(r => r.status === 'complete').length
+    const podGap = gcRows.filter(r => r.status === 'pod_gap').length
+    const outstanding = gcRows.filter(r => r.status === 'outstanding').length
+    const pending = gcRows.filter(r => r.status === 'pending').length
+    const agingVals = gcRows
+      .filter(r => r.status === 'outstanding' || r.status === 'pending')
+      .map(r => r.aging)
+      .filter((a): a is number => a !== null)
+    const avgAging = agingVals.length > 0 ? Math.round(agingVals.reduce((s, a) => s + a, 0) / agingVals.length) : null
+    return { gc, total: gcRows.length, complete, podGap, outstanding, pending, avgAging }
+  })
+}
+
+export function buildDecomEmailMailto(
+  gc: string,
+  outstandingAndPending: DecomRow[],
+  emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> }
+): string {
+  const today = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  const dateStr = `${pad(today.getMonth() + 1)}/${pad(today.getDate())}/${today.getFullYear()}`
+  const subject = `Decom Outstanding — ${gc} — ${dateStr}`
+
+  const sorted = [...outstandingAndPending].sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
+
+  let body = `Dear ${gc} Team,\n\n`
+  body += `Please find below outstanding decom items requiring immediate attention.\n\n`
+  body += `★★★ OUTSTANDING DECOM ★★★\n\n`
+
+  sorted.forEach(r => {
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}\n`
+    body += `Site: ${r.siteName || '—'}\n`
+    body += `CX Complete: ${fmtDecomDate(r.cxComplete) || '—'}\n`
+    body += `Days Outstanding: ${r.aging ?? '—'} days\n`
+    body += `POD In Pathwave: ${r.podPathwave ? 'Yes' : 'No'}\n`
+    body += `POD In QuickBase: ${r.podQuickBase ? 'Yes' : 'No'}\n`
+    if (r.comment) body += `💬 Note: ${r.comment}\n`
+    body += `\n`
+  })
+
+  const maxAging = sorted.reduce((max, r) => Math.max(max, r.aging ?? 0), 0)
+  body += `${'═'.repeat(41)}\n`
+  body += `Total Outstanding: ${sorted.length} sites | Oldest: ${maxAging} days\n\n`
+  body += `Thank you,\nCJ`
+
+  const to = emailSettings.gcContactEmails[gc] || ''
+  const cc = emailSettings.ccList.join(',')
+
+  return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
