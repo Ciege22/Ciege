@@ -29,6 +29,10 @@ export interface DecomGcSummary {
   podGap: number
   outstanding: number
   pending: number
+  // Count of sites with POD In QuickBase confirmed, regardless of status —
+  // an independent progress metric, not one of the 4 mutually-exclusive
+  // status buckets above.
+  podQuickBaseCount: number
   avgAging: number | null
 }
 
@@ -226,12 +230,13 @@ export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[]): DecomGc
     const podGap = gcRows.filter(r => r.status === 'pod_gap').length
     const outstanding = gcRows.filter(r => r.status === 'outstanding').length
     const pending = gcRows.filter(r => r.status === 'pending').length
+    const podQuickBaseCount = gcRows.filter(r => r.podQuickBase).length
     const agingVals = gcRows
       .filter(r => r.status === 'outstanding' || r.status === 'pending')
       .map(r => r.aging)
       .filter((a): a is number => a !== null)
     const avgAging = agingVals.length > 0 ? Math.round(agingVals.reduce((s, a) => s + a, 0) / agingVals.length) : null
-    return { gc, total: gcRows.length, complete, podGap, outstanding, pending, avgAging }
+    return { gc, total: gcRows.length, complete, podGap, outstanding, pending, podQuickBaseCount, avgAging }
   })
 }
 

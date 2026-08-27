@@ -346,23 +346,24 @@ export default function ReportsPage() {
                   <tr className="bg-gray-800 text-gray-400">
                     <th className="text-left p-2">GC</th>
                     <th className="text-left p-2">Total Sites</th>
-                    <th className="text-left p-2">Decom Complete</th>
-                    <th className="text-left p-2">POD Gap</th>
-                    <th className="text-left p-2">Outstanding</th>
-                    <th className="text-left p-2">Pending</th>
+                    <th className="text-left p-2">Pending Decom Drop Off</th>
+                    <th className="text-left p-2">Pending POD in Pathwave</th>
+                    <th className="text-left p-2">POD in QuickBase</th>
+                    <th className="text-left p-2">Complete</th>
                     <th className="text-left p-2">Avg Aging (days)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(() => {
-                    const summary = summarizeDecomByGc(decomRows, GC_CONFIG.map(c => c.gc)).sort((a, b) => b.outstanding - a.outstanding)
+                    const summary = summarizeDecomByGc(decomRows, GC_CONFIG.map(c => c.gc)).sort((a, b) => (b.outstanding + b.pending) - (a.outstanding + a.pending))
                     const totals = summary.reduce((t, s) => ({
                       total: t.total + s.total,
                       complete: t.complete + s.complete,
                       podGap: t.podGap + s.podGap,
                       outstanding: t.outstanding + s.outstanding,
                       pending: t.pending + s.pending,
-                    }), { total: 0, complete: 0, podGap: 0, outstanding: 0, pending: 0 })
+                      podQuickBaseCount: t.podQuickBaseCount + s.podQuickBaseCount,
+                    }), { total: 0, complete: 0, podGap: 0, outstanding: 0, pending: 0, podQuickBaseCount: 0 })
                     const allAging = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending').map(r => r.aging).filter((a): a is number => a !== null)
                     const totalAvgAging = allAging.length > 0 ? Math.round(allAging.reduce((s, a) => s + a, 0) / allAging.length) : null
                     return (
@@ -371,20 +372,20 @@ export default function ReportsPage() {
                           <tr key={s.gc} className="border-t border-gray-800">
                             <td className="p-2 font-semibold text-white whitespace-nowrap">{s.gc}</td>
                             <td className="p-2 text-gray-300">{s.total}</td>
-                            <td className="p-2 text-green-400">{s.complete}</td>
+                            <td className="p-2 text-red-400 font-bold">{s.outstanding + s.pending}</td>
                             <td className="p-2 text-orange-400">{s.podGap}</td>
-                            <td className="p-2 text-red-400 font-bold">{s.outstanding}</td>
-                            <td className="p-2 text-yellow-400">{s.pending}</td>
+                            <td className="p-2 text-blue-400">{s.podQuickBaseCount}</td>
+                            <td className="p-2 text-green-400">{s.complete}</td>
                             <td className="p-2 text-gray-300">{s.avgAging ?? '—'}</td>
                           </tr>
                         ))}
                         <tr className="border-t border-gray-700 bg-gray-800 font-bold">
                           <td className="p-2 text-white">Total</td>
                           <td className="p-2 text-gray-200">{totals.total}</td>
-                          <td className="p-2 text-green-400">{totals.complete}</td>
+                          <td className="p-2 text-red-400">{totals.outstanding + totals.pending}</td>
                           <td className="p-2 text-orange-400">{totals.podGap}</td>
-                          <td className="p-2 text-red-400">{totals.outstanding}</td>
-                          <td className="p-2 text-yellow-400">{totals.pending}</td>
+                          <td className="p-2 text-blue-400">{totals.podQuickBaseCount}</td>
+                          <td className="p-2 text-green-400">{totals.complete}</td>
                           <td className="p-2 text-gray-200">{totalAvgAging ?? '—'}</td>
                         </tr>
                       </>

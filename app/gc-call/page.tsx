@@ -270,9 +270,12 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
 
   return (
     <div className="space-y-8">
-      {/* Section 1 — Outstanding & Pending */}
+      {/* Section 1 — Pending Decom Drop Off */}
       <div>
-        <h3 className="text-lg font-semibold text-white mb-3">🔴 Outstanding &amp; Pending ({outstandingPending.length})</h3>
+        <h3 className="text-lg font-semibold text-white mb-3"
+          title="DECOM Drop Off date is blank — equipment has not been returned to the warehouse yet. Most urgent.">
+          🔴 Pending Decom Drop Off ({outstandingPending.length})
+        </h3>
         {outstandingPending.length === 0
           ? <p className="text-gray-500 text-sm">No outstanding or pending decom items</p>
           : (
@@ -321,9 +324,12 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
         </button>
       </div>
 
-      {/* Section 2 — POD Gap */}
+      {/* Section 2 — Pending POD in Pathwave */}
       <div>
-        <h3 className="text-lg font-semibold text-white mb-3">⚠️ POD Gap ({podGap.length})</h3>
+        <h3 className="text-lg font-semibold text-white mb-3"
+          title="DECOM Drop Off confirmed but POD In Pathwave not yet confirmed. Equipment returned but paperwork incomplete.">
+          ⚠️ Pending POD in Pathwave ({podGap.length})
+        </h3>
         {podGap.length === 0
           ? <p className="text-gray-500 text-sm">No POD gaps</p>
           : (
@@ -364,7 +370,10 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
       {/* Section 3 — Complete (collapsed by default) */}
       <div>
         <div className="flex items-center gap-3 mb-3 cursor-pointer" onClick={() => setShowComplete(s => !s)}>
-          <h3 className="text-lg font-semibold text-white">✅ Complete ({complete.length})</h3>
+          <h3 className="text-lg font-semibold text-white"
+            title="DECOM Drop Off confirmed AND POD In Pathwave = Yes AND POD In QuickBase = Yes. Fully done.">
+            ✅ Complete ({complete.length})
+          </h3>
           <span className="text-gray-500 text-sm">{showComplete ? '▲' : '▼'}</span>
         </div>
         {showComplete && (
