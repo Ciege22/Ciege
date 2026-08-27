@@ -211,7 +211,8 @@ export default function ReportsPage() {
           headerRowIndex = 1
         } else {
           const DECOM_SHEET_NAME = 'R&R - Link Drop Off Status'
-          ws = wb.Sheets[DECOM_SHEET_NAME]
+          const matchedSheetName = wb.SheetNames.find(n => n.trim() === DECOM_SHEET_NAME)
+          ws = matchedSheetName ? wb.Sheets[matchedSheetName] : undefined
           if (!ws) {
             console.error(`[report-upload] Decom upload failed: sheet "${DECOM_SHEET_NAME}" not found. Available sheets:`, wb.SheetNames)
             alert(`Could not find the "${DECOM_SHEET_NAME}" tab in this file — check the tab name and try again.`)
