@@ -5,11 +5,14 @@ export const dynamic = 'force-dynamic'
 import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
-import { supabase } from '../lib/supabase'
+import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
 import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
-import { parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow } from '../lib/decom'
+import {
+  parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow,
+  parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, STATUS_DISPLAY_LABEL, TrackerHop,
+} from '../lib/decom'
 
 interface ReportSnapshot {
   filename: string
@@ -134,6 +137,158 @@ function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
   XLSX.writeFile(wb, filename)
 }
 
+// Decom rows don't carry Nokia PM (the decom file has no such column) — cross-reference
+// against the tracker to attribute one, Path ID first then HOP, same precedence findMissingDecom uses.
+function nokiaPmLookup(trackerHops: TrackerHop[]) {
+  const byPathId = new Map<string, string>()
+  const byHop = new Map<string, string>()
+  trackerHops.forEach(t => {
+    if (t.pathId) byPathId.set(t.pathId, t.nokiaPm)
+    if (t.hop) byHop.set(t.hop, t.nokiaPm)
+  })
+  return { byPathId, byHop }
+}
+
+function nokiaPmFor(r: DecomRow, lookup: ReturnType<typeof nokiaPmLookup>): string {
+  if (r.pathId && lookup.byPathId.has(r.pathId)) return lookup.byPathId.get(r.pathId) || ''
+  if (r.hop && lookup.byHop.has(r.hop)) return lookup.byHop.get(r.hop) || ''
+  return ''
+}
+
+function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDecomSite[], gcNames: string[], trackerHops: TrackerHop[]) {
+  const summary = summarizeDecomByGc(decomRows, gcNames, missingSites)
+  const lookup = nokiaPmLookup(trackerHops)
+  const todayStr = new Date().toLocaleDateString('en-US')
+
+  const wb = XLSX.utils.book_new()
+
+  // ---- Tab 1: Decom Summary ----
+  const sumHeaders = ['GC', 'Total Sites', 'Complete', 'Pending Drop Off', 'Pending POD Pathwave', 'Pending POD QuickBase', 'Missing', 'Avg Aging']
+  const totals = summary.reduce((t, s) => ({
+    total: t.total + s.total,
+    complete: t.complete + s.complete,
+    pendingDropOff: t.pendingDropOff + (s.outstanding + s.pending),
+    pendingPathwave: t.pendingPathwave + s.pendingPathwave,
+    pendingQuickBase: t.pendingQuickBase + s.pendingQuickBase,
+    missing: t.missing + s.missing,
+  }), { total: 0, complete: 0, pendingDropOff: 0, pendingPathwave: 0, pendingQuickBase: 0, missing: 0 })
+  const allAging = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending').map(r => r.aging).filter((a): a is number => a !== null)
+  const totalAvgAging = allAging.length > 0 ? Math.round(allAging.reduce((s, a) => s + a, 0) / allAging.length) : null
+
+  const headerRowIdx = 3
+  const sumAoA: (string | number)[][] = [
+    ['Viaero MW Program — Decom Status Dashboard'],
+    [`As of ${todayStr}`],
+    [],
+    sumHeaders,
+    ...summary.map(s => [s.gc, s.total, s.complete, s.outstanding + s.pending, s.pendingPathwave, s.pendingQuickBase, s.missing, s.avgAging ?? '']),
+    ['Total', totals.total, totals.complete, totals.pendingDropOff, totals.pendingPathwave, totals.pendingQuickBase, totals.missing, totalAvgAging ?? ''],
+  ]
+
+  const ws1 = XLSX.utils.aoa_to_sheet(sumAoA)
+  ws1['!merges'] = [
+    { s: { r: 0, c: 0 }, e: { r: 0, c: sumHeaders.length - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: sumHeaders.length - 1 } },
+  ]
+  const titleCell = ws1[XLSX.utils.encode_cell({ r: 0, c: 0 })]
+  if (titleCell) titleCell.s = { font: { bold: true, color: { rgb: NAVY }, sz: 16 } }
+  const dateCell = ws1[XLSX.utils.encode_cell({ r: 1, c: 0 })]
+  if (dateCell) dateCell.s = { font: { italic: true, color: { rgb: '555555' } } }
+
+  for (let c = 0; c < sumHeaders.length; c++) {
+    const cell = ws1[XLSX.utils.encode_cell({ r: headerRowIdx, c })]
+    if (cell) cell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: NAVY } }, alignment: { horizontal: 'center' } }
+  }
+
+  summary.forEach((s, i) => {
+    const r = headerRowIdx + 1 + i
+    const cellAt = (c: number) => ws1[XLSX.utils.encode_cell({ r, c })]
+    const completeCell = cellAt(2)
+    if (completeCell && s.complete > 0) completeCell.s = { fill: { fgColor: { rgb: 'C6EFCE' } }, font: { color: { rgb: '006100' } } }
+    const dropOffCell = cellAt(3)
+    if (dropOffCell && (s.outstanding + s.pending) > 0) dropOffCell.s = { fill: { fgColor: { rgb: 'FFEB9C' } }, font: { color: { rgb: '9C6500' } } }
+    const pathwaveCell = cellAt(4)
+    if (pathwaveCell && s.pendingPathwave > 0) pathwaveCell.s = { fill: { fgColor: { rgb: 'FFEB9C' } }, font: { color: { rgb: '9C6500' } } }
+    const qbCell = cellAt(5)
+    if (qbCell && s.pendingQuickBase > 0) qbCell.s = { fill: { fgColor: { rgb: 'FFEB9C' } }, font: { color: { rgb: '9C6500' } } }
+    const missingCell = cellAt(6)
+    if (missingCell && s.missing > 0) missingCell.s = { fill: { fgColor: { rgb: 'FFC7CE' } }, font: { color: { rgb: '9C0006' } } }
+  })
+
+  const totalsRowIdx = headerRowIdx + 1 + summary.length
+  for (let c = 0; c < sumHeaders.length; c++) {
+    const cell = ws1[XLSX.utils.encode_cell({ r: totalsRowIdx, c })]
+    if (cell) cell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: NAVY } } }
+  }
+
+  ws1['!cols'] = sumHeaders.map(h => ({ wch: Math.max(h.length + 4, 14) }))
+  XLSX.utils.book_append_sheet(wb, ws1, 'Decom Summary')
+
+  // ---- Tab 2: Site Detail ----
+  const detailHeaders = ['HOP', 'Path ID', 'Site Name', 'GC', 'CM', 'Nokia PM', 'CX Complete', 'DECOM Drop Off Date', 'DECOM Comments', 'POD Pathwave', 'POD QuickBase', 'Status', 'Aging (days)']
+  const detailRows = decomRows.map(r => ({
+    row: [
+      r.hop, r.pathId, r.siteName, r.gc, r.cm, nokiaPmFor(r, lookup),
+      fmtDate(r.cxComplete), fmtDate(r.dropOffDate), r.comment,
+      r.podPathwave ? 'Yes' : 'No', r.podQuickBase ? 'Yes' : 'No',
+      STATUS_DISPLAY_LABEL[r.status], r.aging ?? '',
+    ] as (string | number)[],
+    status: r.status,
+    aging: r.aging,
+  }))
+
+  const ws2 = XLSX.utils.aoa_to_sheet([detailHeaders, ...detailRows.map(d => d.row)])
+  for (let c = 0; c < detailHeaders.length; c++) {
+    const cell = ws2[XLSX.utils.encode_cell({ r: 0, c })]
+    if (cell) cell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: TEAL } }, alignment: { horizontal: 'center', wrapText: true } }
+  }
+  detailRows.forEach((d, i) => {
+    const r = i + 1
+    const isAgedPendingDropOff = STATUS_DISPLAY_LABEL[d.status] === 'Pending Decom Drop Off' && d.aging !== null && d.aging >= 7
+    const rowFill = isAgedPendingDropOff ? 'FFC7CE' : (i % 2 === 1 ? 'F2F2F2' : 'FFFFFF')
+    for (let c = 0; c < detailHeaders.length; c++) {
+      const cell = ws2[XLSX.utils.encode_cell({ r, c })]
+      if (cell) cell.s = { fill: { fgColor: { rgb: rowFill } } }
+    }
+  })
+  ws2['!cols'] = detailHeaders.map(h => ({ wch: Math.max(h.length + 2, 12) }))
+  XLSX.utils.book_append_sheet(wb, ws2, 'Site Detail')
+
+  // ---- Tab 3: Missing From Tracker ----
+  const missingHeaders = ['HOP', 'Path ID', 'GC', 'CM', 'Nokia PM', 'CX Complete', 'Days Since Complete']
+  const sortedMissing = [...missingSites].sort((a, b) => b.daysElapsed - a.daysElapsed)
+
+  const missingAoA: (string | number)[][] = [
+    ['Sites With No Decom Tracking Entry'],
+    [],
+    missingHeaders,
+  ]
+  if (sortedMissing.length === 0) {
+    missingAoA.push(['All completed sites are tracked in decom file ✅'])
+  } else {
+    sortedMissing.forEach(m => missingAoA.push([m.hop, m.pathId, m.gc, m.cm, m.nokiaPm, fmtDate(m.ms16a), m.daysElapsed]))
+  }
+
+  const ws3 = XLSX.utils.aoa_to_sheet(missingAoA)
+  ws3['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: missingHeaders.length - 1 } }]
+  const missingTitleCell = ws3[XLSX.utils.encode_cell({ r: 0, c: 0 })]
+  if (missingTitleCell) missingTitleCell.s = { font: { bold: true, color: { rgb: NAVY }, sz: 14 } }
+
+  for (let c = 0; c < missingHeaders.length; c++) {
+    const cell = ws3[XLSX.utils.encode_cell({ r: 2, c })]
+    if (cell) cell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: 'C00000' } }, alignment: { horizontal: 'center' } }
+  }
+  if (sortedMissing.length === 0) {
+    ws3['!merges'].push({ s: { r: 3, c: 0 }, e: { r: 3, c: missingHeaders.length - 1 } })
+    const emptyCell = ws3[XLSX.utils.encode_cell({ r: 3, c: 0 })]
+    if (emptyCell) emptyCell.s = { font: { italic: true, color: { rgb: '006100' } }, alignment: { horizontal: 'center' } }
+  }
+  ws3['!cols'] = missingHeaders.map(h => ({ wch: Math.max(h.length + 2, 14) }))
+  XLSX.utils.book_append_sheet(wb, ws3, 'Missing From Tracker')
+
+  XLSX.writeFile(wb, `Viaero_Decom_Dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`)
+}
+
 interface UploadBoxProps {
   type: 'spo' | 'cr' | 'decom'
   info: ReportSnapshot | null
@@ -170,6 +325,7 @@ export default function ReportsPage() {
   const [spoRows, setSpoRows] = useState<unknown[][]>([])
   const [crRows, setCrRows] = useState<unknown[][]>([])
   const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
+  const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
   const [spoInfo, setSpoInfo] = useState<ReportSnapshot | null>(null)
   const [crInfo, setCrInfo] = useState<ReportSnapshot | null>(null)
   const [decomInfo, setDecomInfo] = useState<ReportSnapshot | null>(null)
@@ -178,6 +334,8 @@ export default function ReportsPage() {
 
   const decomRows = parseDecomRows(decomRawRows)
   console.log('[decom-render] decomRawRows:', decomRawRows.length, 'rows (incl. header) → decomRows parsed:', decomRows.length)
+  const trackerHops = parseTrackerHopsForDecom(trackerRawRows)
+  const missingDecomSites = findMissingDecom(decomRows, trackerHops)
 
   useEffect(() => {
     const load = async () => {
@@ -190,6 +348,9 @@ export default function ReportsPage() {
       const decomReport = await loadChunkedReport('decom')
       console.log('[decom-load] loadChunkedReport("decom") returned', decomReport ? decomReport.rows.length : 0, 'rows')
       if (decomReport) { setDecomRawRows(decomReport.rows); setDecomInfo({ filename: decomReport.filename, uploaded_at: decomReport.uploaded_at, row_count: decomReport.rows.length }) }
+
+      const trackerSnap = await loadTrackerSnapshot()
+      if (trackerSnap) setTrackerRawRows(trackerSnap.data)
     }
     load()
   }, [])
@@ -346,24 +507,26 @@ export default function ReportsPage() {
                   <tr className="bg-gray-800 text-gray-400">
                     <th className="text-left p-2">GC</th>
                     <th className="text-left p-2">Total Sites</th>
-                    <th className="text-left p-2">Pending Decom Drop Off</th>
-                    <th className="text-left p-2">Pending POD in Pathwave</th>
-                    <th className="text-left p-2">Pending POD QuickBase</th>
                     <th className="text-left p-2">Complete</th>
+                    <th className="text-left p-2">Pending Decom Drop Off</th>
+                    <th className="text-left p-2">Pending POD Pathwave</th>
+                    <th className="text-left p-2">Pending POD QuickBase</th>
+                    <th className="text-left p-2">Missing</th>
                     <th className="text-left p-2">Avg Aging (days)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(() => {
-                    const summary = summarizeDecomByGc(decomRows, GC_CONFIG.map(c => c.gc)).sort((a, b) => (b.outstanding + b.pending) - (a.outstanding + a.pending))
+                    const summary = summarizeDecomByGc(decomRows, GC_CONFIG.map(c => c.gc), missingDecomSites).sort((a, b) => (b.outstanding + b.pending) - (a.outstanding + a.pending))
                     const totals = summary.reduce((t, s) => ({
                       total: t.total + s.total,
                       complete: t.complete + s.complete,
-                      podGap: t.podGap + s.podGap,
                       outstanding: t.outstanding + s.outstanding,
                       pending: t.pending + s.pending,
+                      pendingPathwave: t.pendingPathwave + s.pendingPathwave,
                       pendingQuickBase: t.pendingQuickBase + s.pendingQuickBase,
-                    }), { total: 0, complete: 0, podGap: 0, outstanding: 0, pending: 0, pendingQuickBase: 0 })
+                      missing: t.missing + s.missing,
+                    }), { total: 0, complete: 0, outstanding: 0, pending: 0, pendingPathwave: 0, pendingQuickBase: 0, missing: 0 })
                     const allAging = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending').map(r => r.aging).filter((a): a is number => a !== null)
                     const totalAvgAging = allAging.length > 0 ? Math.round(allAging.reduce((s, a) => s + a, 0) / allAging.length) : null
                     return (
@@ -372,20 +535,22 @@ export default function ReportsPage() {
                           <tr key={s.gc} className="border-t border-gray-800">
                             <td className="p-2 font-semibold text-white whitespace-nowrap">{s.gc}</td>
                             <td className="p-2 text-gray-300">{s.total}</td>
-                            <td className="p-2 text-red-400 font-bold">{s.outstanding + s.pending}</td>
-                            <td className="p-2 text-orange-400">{s.podGap}</td>
-                            <td className="p-2 text-blue-400">{s.pendingQuickBase}</td>
                             <td className="p-2 text-green-400">{s.complete}</td>
+                            <td className="p-2 text-red-400 font-bold">{s.outstanding + s.pending}</td>
+                            <td className="p-2 text-orange-400">{s.pendingPathwave}</td>
+                            <td className="p-2 text-blue-400">{s.pendingQuickBase}</td>
+                            <td className="p-2 text-red-400">{s.missing}</td>
                             <td className="p-2 text-gray-300">{s.avgAging ?? '—'}</td>
                           </tr>
                         ))}
                         <tr className="border-t border-gray-700 bg-gray-800 font-bold">
                           <td className="p-2 text-white">Total</td>
                           <td className="p-2 text-gray-200">{totals.total}</td>
-                          <td className="p-2 text-red-400">{totals.outstanding + totals.pending}</td>
-                          <td className="p-2 text-orange-400">{totals.podGap}</td>
-                          <td className="p-2 text-blue-400">{totals.pendingQuickBase}</td>
                           <td className="p-2 text-green-400">{totals.complete}</td>
+                          <td className="p-2 text-red-400">{totals.outstanding + totals.pending}</td>
+                          <td className="p-2 text-orange-400">{totals.pendingPathwave}</td>
+                          <td className="p-2 text-blue-400">{totals.pendingQuickBase}</td>
+                          <td className="p-2 text-red-400">{totals.missing}</td>
                           <td className="p-2 text-gray-200">{totalAvgAging ?? '—'}</td>
                         </tr>
                       </>
@@ -393,6 +558,47 @@ export default function ReportsPage() {
                   })()}
                 </tbody>
               </table>
+            </div>
+
+            {missingDecomSites.length > 0 && (
+              <div className="mt-6">
+                <h3 className="text-md font-bold mb-2 text-red-400">Missing From Tracker ({missingDecomSites.length})</h3>
+                <div className="overflow-x-auto bg-gray-900 rounded-xl border border-red-900">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-gray-800 text-gray-400">
+                        <th className="text-left p-2">HOP</th>
+                        <th className="text-left p-2">Path ID</th>
+                        <th className="text-left p-2">GC</th>
+                        <th className="text-left p-2">Nokia PM</th>
+                        <th className="text-left p-2">CX Complete</th>
+                        <th className="text-left p-2">Days Since Complete</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {[...missingDecomSites].sort((a, b) => b.daysElapsed - a.daysElapsed).map(m => (
+                        <tr key={`${m.pathId || m.hop}-${m.siteName}`} className="border-t border-gray-800">
+                          <td className="p-2 text-white whitespace-nowrap">{m.hop}</td>
+                          <td className="p-2 text-gray-300">{m.pathId}</td>
+                          <td className="p-2 text-gray-300">{m.gc}</td>
+                          <td className="p-2 text-gray-300">{m.nokiaPm}</td>
+                          <td className="p-2 text-gray-300">{fmtDate(m.ms16a)}</td>
+                          <td className="p-2 text-red-400 font-bold">{m.daysElapsed}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <div className="mt-6">
+              <button
+                onClick={() => downloadDecomDashboard(decomRows, missingDecomSites, GC_CONFIG.map(c => c.gc), trackerHops)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-semibold"
+              >
+                ⬇️ Download Decom Dashboard
+              </button>
             </div>
           </div>
         )}

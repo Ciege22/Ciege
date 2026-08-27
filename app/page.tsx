@@ -6,6 +6,8 @@ import * as XLSX from 'xlsx'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
 import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings } from './lib/settings'
+import { loadChunkedReport } from './lib/reportChunks'
+import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", active: false },
@@ -171,6 +173,8 @@ export default function Home() {
   const [grSortBy, setGrSortBy] = useState<GrSortOption>('trigger')
   const [grRowTypeFilter, setGrRowTypeFilter] = useState<'all' | 'base' | 'cr'>('base')
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
+  const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
+  const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -399,10 +403,21 @@ export default function Home() {
   useEffect(() => {
     const loadKPIs = async () => {
       const snap = await loadTrackerSnapshot()
-      if (snap) computeKPIs(snap.data)
+      if (snap) {
+        computeKPIs(snap.data)
+        setTrackerRawRows(snap.data)
+      }
     }
     loadKPIs()
   }, [computeKPIs])
+
+  useEffect(() => {
+    const loadDecom = async () => {
+      const decomSnap = await loadChunkedReport('decom')
+      if (decomSnap) setDecomRawRows(decomSnap.rows)
+    }
+    loadDecom()
+  }, [])
 
   useEffect(() => {
     const loadSnapshots = async () => {
@@ -813,6 +828,14 @@ export default function Home() {
     currentMonthFcComplete: filteredDetails.filter(h => h.currentMonthFc).length,
     currentMonthActComplete: filteredDetails.filter(h => h.currentMonthAct).length,
   } : null
+
+  // Missing decom cross-reference — always all Nokia PMs, deliberately does not
+  // respect pmFilter: whether a completed site got a decom tracker entry is a
+  // program-wide data-hygiene question, not a per-PM one.
+  const missingDecomSites: MissingDecomSite[] = findMissingDecom(
+    parseDecomRows(decomRawRows),
+    parseTrackerHopsForDecom(trackerRawRows)
+  ).sort((a, b) => b.daysElapsed - a.daysElapsed)
 
   const grFiltered = pmFilter === 'ALL' ? grRows : grRows.filter(r => r.nokiaPm === pmFilter)
   const grGroups = groupGrRows(grFiltered)
@@ -1261,6 +1284,76 @@ export default function Home() {
                         )}
                       </div>
                     ))}
+
+                    {/* Missing Decom Tracking — always shown; deliberately ignores pmFilter, all Nokia PMs */}
+                    <div>
+                      <div
+                        onClick={() => setExpandedFocusItem(expandedFocusItem === 'Missing Decom Tracking' ? null : 'Missing Decom Tracking')}
+                        className={`flex items-center justify-between bg-gray-900 border rounded-xl px-5 py-3 cursor-pointer transition-all ${missingDecomSites.length > 0 ? 'border-red-800 hover:border-red-600' : 'border-gray-700 hover:border-gray-600'}`}>
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">⚠️</span>
+                          <div>
+                            <span className="text-white text-sm font-semibold">Missing Decom Tracking</span>
+                            <span className="text-gray-500 text-xs ml-2">construction complete, no decom tracker entry — all PMs</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xl font-bold ${missingDecomSites.length > 0 ? 'text-red-400' : 'text-gray-500'}`}>{missingDecomSites.length}</span>
+                          <span className="text-gray-600 text-xs">sites</span>
+                          <span className="text-gray-500 text-sm">{expandedFocusItem === 'Missing Decom Tracking' ? '▲' : '▼'}</span>
+                        </div>
+                      </div>
+
+                      {expandedFocusItem === 'Missing Decom Tracking' && (
+                        <div className="bg-gray-900 border border-t-0 border-gray-700 rounded-b-xl p-4 space-y-2">
+                          {missingDecomSites.length === 0 && (
+                            <p className="text-green-400 text-sm text-center py-2">✅ All completed sites are tracked in the decom file</p>
+                          )}
+                          {missingDecomSites.map(m => {
+                            const actionType = 'missing-decom'
+                            const compositeKey = `${m.hop}-${actionType}`
+                            const isChecked = !!focusChecks[compositeKey]
+                            const history = focusHistory[compositeKey] || []
+                            return (
+                              <div key={`${m.pathId || m.hop}-${m.siteName}`} className={`bg-gray-800 rounded-lg p-3 ${isChecked ? 'opacity-50' : ''}`}>
+                                <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                  <span className={`text-sm font-semibold ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{m.hop}</span>
+                                  <span className="text-gray-400 text-xs">{m.pathId || '—'}</span>
+                                  <span className="text-gray-400 text-xs">{m.gc}</span>
+                                  <span className="text-gray-400 text-xs">{m.nokiaPm}</span>
+                                  <span className="text-gray-400 text-xs">CX: {fmtDecomDate(m.ms16a) || '—'}</span>
+                                  <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full font-bold">{m.daysElapsed}d since complete</span>
+                                </div>
+                                {history.length > 0 && (
+                                  <div className="mb-2">
+                                    <p className="text-gray-500 text-xs font-semibold mb-0.5">📋 History</p>
+                                    {history.map((entry, i) => (
+                                      <p key={i} className="text-gray-500 text-xs">{entry.date.split('/').slice(0, 2).join('/')}: {entry.text}</p>
+                                    ))}
+                                  </div>
+                                )}
+                                <div className="flex items-center gap-2 mt-1">
+                                  <input type="text" placeholder="What did you do? Add note..."
+                                    value={focusCommentInput[compositeKey] || ''}
+                                    onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [compositeKey]: e.target.value }))}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') saveComment(m.hop, actionType) }}
+                                    className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
+                                  />
+                                  <button onClick={() => saveComment(m.hop, actionType)}
+                                    className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
+                                    💾 Save
+                                  </button>
+                                  <input type="checkbox" checked={isChecked}
+                                    onChange={() => toggleFocusItem(m.hop, actionType)}
+                                    className="w-4 h-4 cursor-pointer accent-green-500" />
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+
                     {focusItems.filter(item => item.value > 0).length === 0 && (
                       <div className="bg-gray-900 border border-gray-700 rounded-xl px-5 py-4 text-center">
                         <p className="text-green-400 text-sm font-semibold">✅ Nothing urgent today — you&apos;re ahead of the program</p>

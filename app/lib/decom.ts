@@ -26,14 +26,50 @@ export interface DecomGcSummary {
   gc: string
   total: number
   complete: number
+  // Total pod_gap status count (Pathwave pending OR QuickBase pending) —
+  // pendingPathwave + pendingQuickBase always sum to this.
   podGap: number
   outstanding: number
   pending: number
-  // Sites where DECOM Drop Off has a date but POD In QuickBase is still
-  // No/blank — paperwork incomplete in QuickBase specifically. A subset of
-  // podGap (which also includes sites still pending in Pathwave).
+  // Drop Off done, Pathwave = No/blank (regardless of QuickBase).
+  pendingPathwave: number
+  // Pathwave done, QuickBase = No/blank. Mutually exclusive with
+  // pendingPathwave — together they partition podGap with no overlap.
   pendingQuickBase: number
+  // Completed HOPs from the master tracker with no matching decom entry —
+  // not part of `total` (which only counts rows that exist in the decom
+  // file). total + missing = the full decom-eligible universe for this GC.
+  missing: number
   avgAging: number | null
+}
+
+export interface TrackerHop {
+  hop: string
+  pathId: string
+  siteName: string
+  siteNumber: string
+  gc: string
+  cm: string
+  nokiaPm: string
+  ms16a: Date
+}
+
+export interface MissingDecomSite {
+  hop: string
+  pathId: string
+  siteName: string
+  gc: string
+  cm: string
+  nokiaPm: string
+  ms16a: Date
+  daysElapsed: number
+}
+
+export const STATUS_DISPLAY_LABEL: Record<DecomRow['status'], string> = {
+  complete: 'Complete',
+  pod_gap: 'Pending POD in Pathwave',
+  outstanding: 'Pending Decom Drop Off',
+  pending: 'Pending Decom Drop Off',
 }
 
 function findColCaseInsensitive(headers: unknown[], name: string): number {
@@ -223,21 +259,114 @@ export function decomRowsForGc(rows: DecomRow[], gc: string): DecomRow[] {
   return rows.filter(r => r.gc?.trim().toLowerCase() === gc?.trim().toLowerCase())
 }
 
-export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[]): DecomGcSummary[] {
+export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[], missingSites: MissingDecomSite[] = []): DecomGcSummary[] {
   return gcNames.map(gc => {
     const gcRows = decomRowsForGc(rows, gc)
     const complete = gcRows.filter(r => r.status === 'complete').length
     const podGap = gcRows.filter(r => r.status === 'pod_gap').length
     const outstanding = gcRows.filter(r => r.status === 'outstanding').length
     const pending = gcRows.filter(r => r.status === 'pending').length
-    const pendingQuickBase = gcRows.filter(r => r.dropOffDate && !r.podQuickBase).length
+    const pendingPathwave = gcRows.filter(r => r.dropOffDate && !r.podPathwave).length
+    const pendingQuickBase = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase).length
+    const missing = missingSites.filter(m => m.gc?.trim().toLowerCase() === gc?.trim().toLowerCase()).length
     const agingVals = gcRows
       .filter(r => r.status === 'outstanding' || r.status === 'pending')
       .map(r => r.aging)
       .filter((a): a is number => a !== null)
     const avgAging = agingVals.length > 0 ? Math.round(agingVals.reduce((s, a) => s + a, 0) / agingVals.length) : null
-    return { gc, total: gcRows.length, complete, podGap, outstanding, pending, pendingQuickBase, avgAging }
+    return { gc, total: gcRows.length, complete, podGap, outstanding, pending, pendingPathwave, pendingQuickBase, missing, avgAging }
   })
+}
+
+// Cross-references completed HOPs from the master tracker against the decom
+// file to find sites nobody has entered into decom tracking yet. Matches
+// Path ID first, HOP name as fallback — each match consumes one decom row so
+// a HOP with two tracker sites needs two distinct decom entries to be fully
+// covered (matching one decom row against both sites would hide a real gap).
+export function findMissingDecom(decomRows: DecomRow[], trackerHops: TrackerHop[]): MissingDecomSite[] {
+  const availableDecom = [...decomRows]
+  const missing: MissingDecomSite[] = []
+  const today = new Date()
+
+  trackerHops.forEach(t => {
+    let matchIdx = t.pathId ? availableDecom.findIndex(d => d.pathId && d.pathId === t.pathId) : -1
+    if (matchIdx === -1) {
+      matchIdx = availableDecom.findIndex(d => d.hop === t.hop)
+    }
+    if (matchIdx !== -1) {
+      availableDecom.splice(matchIdx, 1)
+    } else {
+      missing.push({
+        hop: t.hop,
+        pathId: t.pathId,
+        siteName: t.siteName,
+        gc: t.gc,
+        cm: t.cm,
+        nokiaPm: t.nokiaPm,
+        ms16a: t.ms16a,
+        daysElapsed: daysBetween(t.ms16a, today),
+      })
+    }
+  })
+
+  return missing
+}
+
+// Parses the master tracker snapshot for completed HOPs (MS16A actualized,
+// year >= 2025) across ALL Nokia PMs — deliberately not scoped to CJ like
+// every other tracker parse in this app, since decom coverage needs to be
+// checked program-wide. Each qualifying row becomes its own entry (a HOP can
+// have two site rows), matching the per-site model used everywhere else in
+// this file.
+export function parseTrackerHopsForDecom(rows: unknown[][]): TrackerHop[] {
+  let headerRow = -1
+  for (let i = 0; i < 10; i++) {
+    if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+  }
+  if (headerRow === -1) return []
+
+  const headers = rows[headerRow] as string[]
+  const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
+
+  const hopCol = col('HOP')
+  const don444Col = col('DON 444')
+  const gcCol = col('General Contractor')
+  const cmCol = col('New CM')
+  const nokiaPmCol = col('Nokia PM')
+  const ms16aCol = col('MS16 Implementation Ends A')
+  const siteNameCol = col('Site Name')
+  const siteNumberCol = col('Site Number')
+  const pathIdCol = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
+
+  const result: TrackerHop[] = []
+
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i] as unknown[]
+    if (!row) continue
+
+    const don = String(row[don444Col] || '').trim().toUpperCase()
+    if (don !== 'DON 444') continue
+
+    const hop = String(row[hopCol] || '').trim()
+    if (!hop || hop === 'undefined') continue
+
+    const ms16aRaw = parseDate(row[ms16aCol])
+    const ms16a = (ms16aRaw && ms16aRaw.getFullYear() >= 2025) ? ms16aRaw : null
+    if (!ms16a) continue
+
+    result.push({
+      hop,
+      pathId: String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
+      siteName: String(row[siteNameCol] || '').trim(),
+      siteNumber: String(row[siteNumberCol] || '').trim(),
+      gc: String(row[gcCol] || '').trim(),
+      cm: String(row[cmCol] || '').trim(),
+      nokiaPm: String(row[nokiaPmCol] || '').trim(),
+      ms16a,
+    })
+  }
+
+  return result
 }
 
 export function buildDecomEmailMailto(

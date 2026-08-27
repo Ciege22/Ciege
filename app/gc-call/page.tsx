@@ -9,7 +9,7 @@ import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import { loadChunkedReport } from '../lib/reportChunks'
-import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate } from '../lib/decom'
+import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom } from '../lib/decom'
 import {
   GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
@@ -245,11 +245,13 @@ function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) 
 interface DecomTabProps {
   selectedGC: string
   decomRawRows: unknown[][]
+  trackerRawRows: unknown[][]
   emailSettings: EmailSettings
 }
 
-function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
+function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: DecomTabProps) {
   const [showComplete, setShowComplete] = useState(false)
+  const [showMissingOverride, setShowMissingOverride] = useState<boolean | null>(null)
 
   if (decomRawRows.length === 0) {
     return <p className="text-gray-400 text-sm">Upload the Decom Tracker on the Reports page to enable this view.</p>
@@ -263,6 +265,12 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
   const complete = gcRows.filter(r => r.status === 'complete')
   const outstandingCount = gcRows.filter(r => r.status === 'outstanding').length
 
+  const gcTrackerHops = parseTrackerHopsForDecom(trackerRawRows)
+    .filter(t => t.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
+  const missingSites = findMissingDecom(gcRows, gcTrackerHops)
+    .sort((a, b) => b.daysElapsed - a.daysElapsed)
+  const showMissing = showMissingOverride !== null ? showMissingOverride : missingSites.length <= 5
+
   const generateDecomEmail = () => {
     const mailto = buildDecomEmailMailto(selectedGC, outstandingPending, podGap, emailSettings)
     window.open(mailto)
@@ -270,6 +278,47 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
 
   return (
     <div className="space-y-8">
+      {/* Section 0 — Not in Decom Tracker */}
+      {missingSites.length > 0 && (
+        <div>
+          <div className="flex items-center gap-3 mb-3 cursor-pointer" onClick={() => setShowMissingOverride(!showMissing)}>
+            <h3 className="text-lg font-semibold text-red-400"
+              title="Construction complete but no entry exists in the decom tracker file. Chase your colleague to add these sites.">
+              ⚠️ Not in Decom Tracker ({missingSites.length})
+            </h3>
+            <span className="text-gray-500 text-sm">{showMissing ? '▲' : '▼'}</span>
+          </div>
+          {showMissing && (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="bg-gray-800 text-gray-400">
+                    <th className="text-left p-2">HOP</th>
+                    <th className="text-left p-2">Path ID</th>
+                    <th className="text-left p-2">Site Name</th>
+                    <th className="text-left p-2">Nokia PM</th>
+                    <th className="text-left p-2">CX Complete</th>
+                    <th className="text-left p-2">Days Since Complete</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {missingSites.map(m => (
+                    <tr key={`${m.pathId || m.hop}-${m.siteName}`} className="border-t border-gray-800 bg-red-950">
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">{m.hop}</td>
+                      <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{m.pathId || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{m.siteName || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{m.nokiaPm || '—'}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDecomDate(m.ms16a) || '—'}</td>
+                      <td className="p-2 text-red-400 font-bold">{m.daysElapsed}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Section 1 — Pending Decom Drop Off */}
       <div>
         <h3 className="text-lg font-semibold text-white mb-3"
@@ -830,6 +879,7 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
 export default function GCCallPage() {
   const [selectedGC, setSelectedGC] = useState('')
   const [hops, setHops] = useState<HOP[]>([])
+  const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
   const [loaded, setLoaded] = useState(false)
   const [fileName, setFileName] = useState('')
   const [gcList, setGcList] = useState<string[]>([])
@@ -1373,6 +1423,7 @@ export default function GCCallPage() {
       console.log('[gc-call] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
       setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
       setFileName(snap.filename)
+      setTrackerRawRows(snap.data)
       processRows(snap.data, snap.filename)
     }
     loadFromSnapshot()
@@ -1982,6 +2033,7 @@ export default function GCCallPage() {
               <DecomTab
                 selectedGC={selectedGC}
                 decomRawRows={decomRawRows}
+                trackerRawRows={trackerRawRows}
                 emailSettings={emailSettings}
               />
             )}
