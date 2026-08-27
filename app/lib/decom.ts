@@ -253,9 +253,16 @@ export function buildDecomEmailMailto(
 
   const sorted = [...outstandingAndPending].sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
   const sortedPodGap = [...podGapRows].sort((a, b) => (b.dropOffDate?.getTime() ?? 0) - (a.dropOffDate?.getTime() ?? 0))
+  const maxAging = sorted.reduce((max, r) => Math.max(max, r.aging ?? 0), 0)
 
   let body = `Dear ${gc} Team,\n\n`
   body += `Please find below outstanding decom items requiring immediate attention.\n\n`
+
+  body += `Total Pending Decom Drop Off: ${sorted.length} sites\n`
+  body += `Total Pending POD in Pathwave / QuickBase: ${sortedPodGap.length} sites\n`
+  body += `Oldest Outstanding: ${maxAging} days since CX Complete\n\n`
+  body += `${'═'.repeat(41)}\n\n`
+
   body += `★★★ OUTSTANDING DECOM ★★★\n\n`
 
   sorted.forEach(r => {
@@ -269,7 +276,6 @@ export function buildDecomEmailMailto(
     body += `\n`
   })
 
-  const maxAging = sorted.reduce((max, r) => Math.max(max, r.aging ?? 0), 0)
   body += `${'═'.repeat(41)}\n`
   body += `Total Outstanding: ${sorted.length} sites | Oldest: ${maxAging} days\n\n`
 
@@ -287,6 +293,10 @@ export function buildDecomEmailMailto(
 
   body += `${'═'.repeat(41)}\n`
   body += `Total Pending POD: ${sortedPodGap.length} sites\n\n`
+
+  body += `${'═'.repeat(41)}\n`
+  body += `Please see the attached Excel for your full decom detail.\n\n`
+
   body += `Thank you,\nCJ`
 
   const to = emailSettings.gcContactEmails[gc] || ''

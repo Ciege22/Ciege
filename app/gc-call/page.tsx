@@ -320,7 +320,7 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
         <button onClick={generateDecomEmail}
           disabled={outstandingCount === 0 && podGap.length === 0}
           className="mt-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
-          ✉️ Generate Decom Email
+          ✉️ Generate Decom Email — {selectedGC} ({outstandingPending.length} pending drop off · {podGap.length} pending POD)
         </button>
       </div>
 
