@@ -125,11 +125,11 @@ function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
 
   const ws1 = XLSX.utils.aoa_to_sheet([DECOM_HEADERS, ...outstandingPending.map(decomRowToSheetRow)])
   styleDecomSheet(ws1)
-  XLSX.utils.book_append_sheet(wb, ws1, 'Outstanding & Pending')
+  XLSX.utils.book_append_sheet(wb, ws1, 'Pending Decom Drop Off')
 
   const ws2 = XLSX.utils.aoa_to_sheet([DECOM_HEADERS, ...podGap.map(decomRowToSheetRow)])
   styleDecomSheet(ws2)
-  XLSX.utils.book_append_sheet(wb, ws2, 'POD Gap')
+  XLSX.utils.book_append_sheet(wb, ws2, 'Pending POD in Pathwave')
 
   XLSX.writeFile(wb, filename)
 }
@@ -348,7 +348,7 @@ export default function ReportsPage() {
                     <th className="text-left p-2">Total Sites</th>
                     <th className="text-left p-2">Pending Decom Drop Off</th>
                     <th className="text-left p-2">Pending POD in Pathwave</th>
-                    <th className="text-left p-2">POD in QuickBase</th>
+                    <th className="text-left p-2">Pending POD QuickBase</th>
                     <th className="text-left p-2">Complete</th>
                     <th className="text-left p-2">Avg Aging (days)</th>
                   </tr>
@@ -362,8 +362,8 @@ export default function ReportsPage() {
                       podGap: t.podGap + s.podGap,
                       outstanding: t.outstanding + s.outstanding,
                       pending: t.pending + s.pending,
-                      podQuickBaseCount: t.podQuickBaseCount + s.podQuickBaseCount,
-                    }), { total: 0, complete: 0, podGap: 0, outstanding: 0, pending: 0, podQuickBaseCount: 0 })
+                      pendingQuickBase: t.pendingQuickBase + s.pendingQuickBase,
+                    }), { total: 0, complete: 0, podGap: 0, outstanding: 0, pending: 0, pendingQuickBase: 0 })
                     const allAging = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending').map(r => r.aging).filter((a): a is number => a !== null)
                     const totalAvgAging = allAging.length > 0 ? Math.round(allAging.reduce((s, a) => s + a, 0) / allAging.length) : null
                     return (
@@ -374,7 +374,7 @@ export default function ReportsPage() {
                             <td className="p-2 text-gray-300">{s.total}</td>
                             <td className="p-2 text-red-400 font-bold">{s.outstanding + s.pending}</td>
                             <td className="p-2 text-orange-400">{s.podGap}</td>
-                            <td className="p-2 text-blue-400">{s.podQuickBaseCount}</td>
+                            <td className="p-2 text-blue-400">{s.pendingQuickBase}</td>
                             <td className="p-2 text-green-400">{s.complete}</td>
                             <td className="p-2 text-gray-300">{s.avgAging ?? '—'}</td>
                           </tr>
@@ -384,7 +384,7 @@ export default function ReportsPage() {
                           <td className="p-2 text-gray-200">{totals.total}</td>
                           <td className="p-2 text-red-400">{totals.outstanding + totals.pending}</td>
                           <td className="p-2 text-orange-400">{totals.podGap}</td>
-                          <td className="p-2 text-blue-400">{totals.podQuickBaseCount}</td>
+                          <td className="p-2 text-blue-400">{totals.pendingQuickBase}</td>
                           <td className="p-2 text-green-400">{totals.complete}</td>
                           <td className="p-2 text-gray-200">{totalAvgAging ?? '—'}</td>
                         </tr>

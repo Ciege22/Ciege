@@ -264,7 +264,7 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
   const outstandingCount = gcRows.filter(r => r.status === 'outstanding').length
 
   const generateDecomEmail = () => {
-    const mailto = buildDecomEmailMailto(selectedGC, outstandingPending, emailSettings)
+    const mailto = buildDecomEmailMailto(selectedGC, outstandingPending, podGap, emailSettings)
     window.open(mailto)
   }
 
@@ -318,7 +318,7 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
           )
         }
         <button onClick={generateDecomEmail}
-          disabled={outstandingCount === 0}
+          disabled={outstandingCount === 0 && podGap.length === 0}
           className="mt-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
           ✉️ Generate Decom Email
         </button>

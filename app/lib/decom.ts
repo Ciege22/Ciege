@@ -29,10 +29,10 @@ export interface DecomGcSummary {
   podGap: number
   outstanding: number
   pending: number
-  // Count of sites with POD In QuickBase confirmed, regardless of status —
-  // an independent progress metric, not one of the 4 mutually-exclusive
-  // status buckets above.
-  podQuickBaseCount: number
+  // Sites where DECOM Drop Off has a date but POD In QuickBase is still
+  // No/blank — paperwork incomplete in QuickBase specifically. A subset of
+  // podGap (which also includes sites still pending in Pathwave).
+  pendingQuickBase: number
   avgAging: number | null
 }
 
@@ -230,19 +230,20 @@ export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[]): DecomGc
     const podGap = gcRows.filter(r => r.status === 'pod_gap').length
     const outstanding = gcRows.filter(r => r.status === 'outstanding').length
     const pending = gcRows.filter(r => r.status === 'pending').length
-    const podQuickBaseCount = gcRows.filter(r => r.podQuickBase).length
+    const pendingQuickBase = gcRows.filter(r => r.dropOffDate && !r.podQuickBase).length
     const agingVals = gcRows
       .filter(r => r.status === 'outstanding' || r.status === 'pending')
       .map(r => r.aging)
       .filter((a): a is number => a !== null)
     const avgAging = agingVals.length > 0 ? Math.round(agingVals.reduce((s, a) => s + a, 0) / agingVals.length) : null
-    return { gc, total: gcRows.length, complete, podGap, outstanding, pending, podQuickBaseCount, avgAging }
+    return { gc, total: gcRows.length, complete, podGap, outstanding, pending, pendingQuickBase, avgAging }
   })
 }
 
 export function buildDecomEmailMailto(
   gc: string,
   outstandingAndPending: DecomRow[],
+  podGapRows: DecomRow[],
   emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> }
 ): string {
   const today = new Date()
@@ -251,6 +252,7 @@ export function buildDecomEmailMailto(
   const subject = `Decom Outstanding — ${gc} — ${dateStr}`
 
   const sorted = [...outstandingAndPending].sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
+  const sortedPodGap = [...podGapRows].sort((a, b) => (b.dropOffDate?.getTime() ?? 0) - (a.dropOffDate?.getTime() ?? 0))
 
   let body = `Dear ${gc} Team,\n\n`
   body += `Please find below outstanding decom items requiring immediate attention.\n\n`
@@ -270,6 +272,21 @@ export function buildDecomEmailMailto(
   const maxAging = sorted.reduce((max, r) => Math.max(max, r.aging ?? 0), 0)
   body += `${'═'.repeat(41)}\n`
   body += `Total Outstanding: ${sorted.length} sites | Oldest: ${maxAging} days\n\n`
+
+  body += `★★★ PENDING POD IN PATHWAVE / QUICKBASE ★★★\n\n`
+
+  sortedPodGap.forEach(r => {
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}\n`
+    body += `Site: ${r.siteName || '—'}\n`
+    body += `DECOM Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}\n`
+    body += `POD In Pathwave: ${r.podPathwave ? 'Yes' : 'No'}\n`
+    body += `POD In QuickBase: ${r.podQuickBase ? 'Yes' : 'No'}\n`
+    if (r.comment) body += `💬 Note: ${r.comment}\n`
+    body += `\n`
+  })
+
+  body += `${'═'.repeat(41)}\n`
+  body += `Total Pending POD: ${sortedPodGap.length} sites\n\n`
   body += `Thank you,\nCJ`
 
   const to = emailSettings.gcContactEmails[gc] || ''
