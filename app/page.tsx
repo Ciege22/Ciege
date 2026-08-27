@@ -18,6 +18,7 @@ const navItems = [
   { label: "NTP Tracker", href: "/ntp-tracker", active: false },
   { label: "Change Log", href: "/change-log", active: false },
   { label: "Reports", href: "/reports", active: false },
+  { label: "📊 Tracker", href: "/tracker", active: false },
 ];
 
 const stats = [
