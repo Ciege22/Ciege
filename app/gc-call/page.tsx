@@ -252,6 +252,7 @@ interface DecomTabProps {
 function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: DecomTabProps) {
   const [showComplete, setShowComplete] = useState(false)
   const [showMissingOverride, setShowMissingOverride] = useState<boolean | null>(null)
+  const [showQuickBaseOverride, setShowQuickBaseOverride] = useState<boolean | null>(null)
 
   if (decomRawRows.length === 0) {
     return <p className="text-gray-400 text-sm">Upload the Decom Tracker on the Reports page to enable this view.</p>
@@ -262,8 +263,15 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
     .filter(r => r.status === 'outstanding' || r.status === 'pending')
     .sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
   const podGap = gcRows.filter(r => r.status === 'pod_gap')
+  // podGap splits into two mutually-exclusive buckets — same partition decom.ts's
+  // summarizeDecomByGc uses for the Reports page GC breakdown — so this tab's
+  // per-row lists line up with those counts instead of double-showing a row
+  // that's actually just pending QuickBase under the "pending Pathwave" section.
+  const pendingPathwaveRows = gcRows.filter(r => r.dropOffDate && !r.podPathwave)
+  const pendingQuickBaseRows = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase)
   const complete = gcRows.filter(r => r.status === 'complete')
   const outstandingCount = gcRows.filter(r => r.status === 'outstanding').length
+  const showQuickBase = showQuickBaseOverride !== null ? showQuickBaseOverride : pendingQuickBaseRows.length <= 5
 
   const gcTrackerHops = parseTrackerHopsForDecom(trackerRawRows)
     .filter(t => t.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
@@ -377,9 +385,9 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
       <div>
         <h3 className="text-lg font-semibold text-white mb-3"
           title="DECOM Drop Off confirmed but POD In Pathwave not yet confirmed. Equipment returned but paperwork incomplete.">
-          ⚠️ Pending POD in Pathwave ({podGap.length})
+          ⚠️ Pending POD in Pathwave ({pendingPathwaveRows.length})
         </h3>
-        {podGap.length === 0
+        {pendingPathwaveRows.length === 0
           ? <p className="text-gray-500 text-sm">No POD gaps</p>
           : (
             <div className="overflow-x-auto">
@@ -397,7 +405,7 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
                   </tr>
                 </thead>
                 <tbody>
-                  {podGap.map(r => (
+                  {pendingPathwaveRows.map(r => (
                     <tr key={r.rowKey} className="border-t border-gray-800 bg-yellow-950">
                       <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
@@ -414,6 +422,53 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
             </div>
           )
         }
+      </div>
+
+      {/* Section 2.5 — Pending POD in QuickBase */}
+      <div>
+        <div className="flex items-center gap-3 mb-3 cursor-pointer" onClick={() => setShowQuickBaseOverride(!showQuickBase)}>
+          <h3 className="text-lg font-semibold text-white"
+            title="DECOM Drop Off confirmed and POD in Pathwave confirmed, but POD in QuickBase not yet submitted.">
+            📋 Pending POD in QuickBase ({pendingQuickBaseRows.length})
+          </h3>
+          <span className="text-gray-500 text-sm">{showQuickBase ? '▲' : '▼'}</span>
+        </div>
+        {showQuickBase && (
+          pendingQuickBaseRows.length === 0
+            ? <p className="text-gray-500 text-sm">No QuickBase gaps</p>
+            : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="bg-gray-800 text-gray-400">
+                      <th className="text-left p-2">HOP</th>
+                      <th className="text-left p-2">Path ID</th>
+                      <th className="text-left p-2">Site Name</th>
+                      <th className="text-left p-2">CM</th>
+                      <th className="text-left p-2">CX Complete</th>
+                      <th className="text-left p-2">POD Pathwave</th>
+                      <th className="text-left p-2">POD QuickBase</th>
+                      <th className="text-left p-2">Comments</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pendingQuickBaseRows.map(r => (
+                      <tr key={r.rowKey} className="border-t border-gray-800 bg-orange-950">
+                        <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
+                        <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
+                        <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
+                        <td className="p-2 text-gray-300 whitespace-nowrap">{r.cm || '—'}</td>
+                        <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDecomDate(r.cxComplete) || '—'}</td>
+                        <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
+                        <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
+                        <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+        )}
       </div>
 
       {/* Section 3 — Complete (collapsed by default) */}
