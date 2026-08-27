@@ -40,3 +40,40 @@ body {
   background-color: #00A0B0;
   border-radius: 3px;
 }
+
+/* Navi — the floating fairy guide */
+@keyframes navi-float {
+  0% { transform: translateY(-6px); }
+  50% { transform: translateY(6px); }
+  100% { transform: translateY(-6px); }
+}
+@keyframes navi-wing-flutter {
+  0% { transform: scaleX(1); }
+  50% { transform: scaleX(-0.6); }
+  100% { transform: scaleX(1); }
+}
+@keyframes navi-glow-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.navi-hover-wrapper {
+  display: inline-block;
+  line-height: 0;
+  transition: transform 0.5s;
+}
+.navi-hover-wrapper:hover {
+  transform: rotate(360deg);
+}
+.navi-float-layer {
+  animation-name: navi-float;
+  animation-timing-function: ease-in-out;
+  animation-iteration-count: infinite;
+}
+.navi-wings {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: navi-wing-flutter 0.3s ease-in-out infinite;
+}
+.navi-glow {
+  animation: navi-glow-pulse 1.5s ease-in-out infinite;
+}

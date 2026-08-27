@@ -15,7 +15,7 @@ const TEAL = '#00A0B0'
 // origin already, so the browser never touches Anthropic (or any key) directly.
 const AI_ASSISTANT_ENDPOINT = 'https://ciege-production.up.railway.app/ai_assistant'
 
-const GREETING = "Hi CJ! I have access to your current tracker data, GR status, decom tracking, and CX notes. Ask me anything about your program — site status, blockers, crew pipeline, or anything else."
+const GREETING = "Hey! Listen! 🧚 I'm Navi — your Ciege guide! I have access to your full program data. Ask me about any site, blocker, GC status, or anything else. I'll help you find what you need fast!"
 
 const QUICK_ACTIONS = [
   '📊 Program summary',
@@ -201,6 +201,49 @@ function trimHistory(history: ChatMessage[]): ChatMessage[] {
   return history.length > MAX_HISTORY_MESSAGES ? history.slice(history.length - MAX_HISTORY_MESSAGES) : history
 }
 
+// Navi — the animated fairy guide. Defined at module scope like every other
+// piece of this component, for the same reason: a component defined inside
+// another component's render body gets a fresh identity every render, which
+// would restart her float/flutter/glow animations on every keystroke.
+function NaviFairy({ size = 48, bright = false }: { size?: number; bright?: boolean }) {
+  return (
+    <div className="navi-float-layer" style={{ animationDuration: bright ? '1s' : '2s', width: size, height: size }}>
+      <svg width={size} height={size} viewBox="0 0 48 48" style={{ overflow: 'visible' }}>
+        <defs>
+          <radialGradient id="navi-body-gradient" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#FFFFFF" />
+            <stop offset="60%" stopColor="#E0FBFF" />
+            <stop offset="100%" stopColor="#00A0B0" />
+          </radialGradient>
+          <filter id="navi-glow-filter" x="-150%" y="-150%" width="400%" height="400%">
+            <feGaussianBlur in="SourceGraphic" stdDeviation="5" result="blur" />
+            <feComposite in="blur" in2="SourceGraphic" operator="over" />
+          </filter>
+        </defs>
+
+        {/* outer glow aura */}
+        <circle
+          cx="24" cy="24" r="10" fill="#00A0B0" filter="url(#navi-glow-filter)"
+          className={bright ? undefined : 'navi-glow'}
+          style={bright ? { opacity: 1 } : undefined}
+        />
+
+        {/* two pairs of translucent wings */}
+        <g className="navi-wings">
+          <ellipse cx="14" cy="18" rx="7" ry="4" fill="#FFFFFF" opacity="0.35" transform="rotate(-20 14 18)" />
+          <ellipse cx="34" cy="18" rx="7" ry="4" fill="#FFFFFF" opacity="0.35" transform="rotate(20 34 18)" />
+          <ellipse cx="14" cy="28" rx="6" ry="3.5" fill="#00A0B0" opacity="0.3" transform="rotate(15 14 28)" />
+          <ellipse cx="34" cy="28" rx="6" ry="3.5" fill="#00A0B0" opacity="0.3" transform="rotate(-15 34 28)" />
+        </g>
+
+        {/* glowing body — white center fading to teal */}
+        <circle cx="24" cy="24" r="6" fill="url(#navi-body-gradient)" />
+        <circle cx="24" cy="24" r="2.5" fill="#FFFFFF" opacity="0.9" />
+      </svg>
+    </div>
+  )
+}
+
 function LoadingDots() {
   return (
     <div className="flex gap-1 items-center px-3 py-2">
@@ -293,29 +336,33 @@ export default function AiAssistant() {
 
   return (
     <>
-      <button
-        onClick={() => (isOpen ? setIsOpen(false) : openPanel())}
-        aria-label="Open Ciege AI Assistant"
-        style={{
-          position: 'fixed',
-          bottom: 24,
-          right: 24,
-          zIndex: 9999,
-          width: 56,
-          height: 56,
-          borderRadius: '50%',
-          backgroundColor: NAVY,
-          border: 'none',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.3)',
-          cursor: 'pointer',
-          display: isOpen ? 'none' : 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontSize: 26,
-        }}
-      >
-        🤖
-      </button>
+      {!isOpen && (
+        <div
+          className="group"
+          style={{ position: 'fixed', bottom: 24, right: 24, zIndex: 9999 }}
+        >
+          <div
+            className="absolute -top-9 right-0 whitespace-nowrap text-white text-xs font-semibold px-3 py-1.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none"
+            style={{ backgroundColor: NAVY }}
+          >
+            Hey! Listen! Click me 🧚
+          </div>
+          <button
+            onClick={openPanel}
+            aria-label="Open Ciege AI Assistant — Navi"
+            className="navi-hover-wrapper"
+            style={{
+              background: 'none',
+              border: 'none',
+              padding: 0,
+              cursor: 'pointer',
+              filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.35))',
+            }}
+          >
+            <NaviFairy size={48} />
+          </button>
+        </div>
+      )}
 
       {isOpen && (
         <div
@@ -337,13 +384,16 @@ export default function AiAssistant() {
           <div style={{ backgroundColor: NAVY, padding: '12px 16px', flexShrink: 0 }}>
             <div className="flex items-center justify-between">
               <span className="text-white font-bold text-sm">Ciege AI Assistant</span>
-              <button
-                onClick={() => setIsOpen(false)}
-                aria-label="Close"
-                className="text-white hover:text-gray-300 text-lg leading-none"
-              >
-                ×
-              </button>
+              <div className="flex items-center gap-2">
+                <NaviFairy size={24} bright />
+                <button
+                  onClick={() => setIsOpen(false)}
+                  aria-label="Close"
+                  className="text-white hover:text-gray-300 text-lg leading-none"
+                >
+                  ×
+                </button>
+              </div>
             </div>
             <p style={{ color: TEAL }} className="text-xs mt-0.5">Ask anything about your program data</p>
           </div>
