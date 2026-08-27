@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { parseDateAny } from '../lib/grTracker'
 import BackToDashboard from '../components/BackToDashboard'
@@ -10,6 +10,15 @@ import BackToDashboard from '../components/BackToDashboard'
 const NAVY = '#124191'
 const AMBER = '#FFF3CD'
 const ALT_ROW = '#F7F8FA'
+const SELECTED_ROW = '#DCEAFB'
+
+// Virtualization tuning — fixed row height lets us compute the visible window
+// from scrollTop with simple arithmetic instead of measuring the DOM.
+const ROW_HEIGHT = 36
+const ROW_BUFFER = 10
+const COL_BUFFER = 3
+const INITIAL_COLUMN_COUNT = 20
+const COLUMN_PAGE_SIZE = 20
 
 interface TrackerRowData {
   hop: string
@@ -165,9 +174,9 @@ function EditableCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit, 
   if (!isEditing) {
     return (
       <td
-        onClick={onStartEdit}
+        onDoubleClick={onStartEdit}
         className="px-2 py-1 text-xs whitespace-nowrap cursor-pointer border-b border-r border-gray-200 overflow-hidden text-ellipsis"
-        style={{ backgroundColor: isChanged ? AMBER : rowBg }}
+        style={{ backgroundColor: isChanged ? AMBER : rowBg, height: ROW_HEIGHT }}
         title={displayValue}
       >
         {displayValue || <span className="text-gray-300">—</span>}
@@ -206,9 +215,9 @@ function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit
   if (!isEditing) {
     return (
       <td
-        onClick={onStartEdit}
+        onDoubleClick={onStartEdit}
         className="px-2 py-1 text-xs whitespace-nowrap cursor-pointer border-b border-r border-gray-200"
-        style={{ backgroundColor: isChanged ? AMBER : rowBg }}
+        style={{ backgroundColor: isChanged ? AMBER : rowBg, height: ROW_HEIGHT }}
       >
         {displayValue || <span className="text-gray-300">—</span>}
       </td>
@@ -251,6 +260,17 @@ export default function TrackerGridPage() {
   const [editingCell, setEditingCell] = useState<{ hop: string; field: string } | null>(null)
 
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // --- Rendering-performance state (virtual scrolling, lazy columns, row
+  // selection) — none of this touches data loading, view, or copy-updates logic.
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const scrollRafRef = useRef<number | null>(null)
+  const clickDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [scrollTop, setScrollTop] = useState(0)
+  const [scrollLeft, setScrollLeft] = useState(0)
+  const [viewportSize, setViewportSize] = useState({ width: 900, height: 600 })
+  const [loadedColumnCount, setLoadedColumnCount] = useState(INITIAL_COLUMN_COUNT)
+  const [selectedHop, setSelectedHop] = useState<string | null>(null)
 
   // Load tracker snapshot — all columns, DON 444 + dedup only.
   useEffect(() => {
@@ -318,6 +338,52 @@ export default function TrackerGridPage() {
       }
     }
     load()
+  }, [])
+
+  // Measure the scroll container so the row/column virtualization windows
+  // know how many cells actually fit in view. Re-measures on window resize.
+  useEffect(() => {
+    if (!loaded) return
+    const measure = () => {
+      const el = scrollContainerRef.current
+      if (el) setViewportSize({ width: el.clientWidth, height: el.clientHeight })
+    }
+    measure()
+    window.addEventListener('resize', measure)
+    return () => window.removeEventListener('resize', measure)
+  }, [loaded])
+
+  // Scroll position drives which rows/columns are rendered — rAF-throttled so
+  // a fast scroll gesture only triggers at most one state update per frame
+  // instead of one per native scroll event.
+  const handleGridScroll = useCallback(() => {
+    if (scrollRafRef.current !== null) return
+    scrollRafRef.current = requestAnimationFrame(() => {
+      const el = scrollContainerRef.current
+      if (el) {
+        setScrollTop(el.scrollTop)
+        setScrollLeft(el.scrollLeft)
+      }
+      scrollRafRef.current = null
+    })
+  }, [])
+
+  // Reset lazy-loaded column count when switching views (a new view may have
+  // far fewer or far more visible columns than "20 loaded so far" implies).
+  // Adjusted during render (React's documented pattern for resetting state on
+  // a prop/dep change) rather than in an effect, which would cost an extra render pass.
+  const [viewKeyForColumnReset, setViewKeyForColumnReset] = useState(`${activeViewName}|${editorMode}`)
+  const currentViewKey = `${activeViewName}|${editorMode}`
+  if (currentViewKey !== viewKeyForColumnReset) {
+    setViewKeyForColumnReset(currentViewKey)
+    setLoadedColumnCount(INITIAL_COLUMN_COUNT)
+  }
+
+  // Debounced row selection (single click) — collapses rapid repeated clicks
+  // into a single state update instead of one per click.
+  const handleRowClick = useCallback((hop: string) => {
+    if (clickDebounceRef.current) clearTimeout(clickDebounceRef.current)
+    clickDebounceRef.current = setTimeout(() => setSelectedHop(hop), 150)
   }, [])
 
   const persistChanges = async (changes: TrackerChange[]) => {
@@ -412,23 +478,87 @@ export default function TrackerGridPage() {
   }
 
   const activeView = views.find(v => v.name === activeViewName) || null
-  const effectiveHidden: Set<string> = editorMode ? draftHidden : new Set(activeView?.hiddenColumns || [])
+  const effectiveHidden: Set<string> = useMemo(
+    () => (editorMode ? draftHidden : new Set(activeView?.hiddenColumns || [])),
+    [editorMode, draftHidden, activeView]
+  )
 
-  const hopColIdx = headers.findIndex(h => h === 'HOP')
-  const orderedIndexes = headers.length > 0
-    ? [hopColIdx, ...headers.map((_, i) => i).filter(i => i !== hopColIdx)]
-    : []
-  const allColumns = orderedIndexes.map(i => {
-    const name = headers[i] || `Column ${i + 1}`
-    const isHop = i === hopColIdx
-    const isDate = isDateColumn(name)
-    return { index: i, name, isHop, isDate, width: isHop ? 220 : (isDate ? 150 : 130) }
-  })
-  const visibleColumns = allColumns.filter(c => c.isHop || !effectiveHidden.has(c.name))
-  const totalWidth = visibleColumns.reduce((s, c) => s + c.width, 0)
+  // Full column list — memoized so it's only recomputed when the tracker's
+  // header row actually changes, not on every render (e.g. every keystroke
+  // while editing a cell).
+  const allColumns = useMemo(() => {
+    const hopColIdx = headers.findIndex(h => h === 'HOP')
+    const orderedIndexes = headers.length > 0
+      ? [hopColIdx, ...headers.map((_, i) => i).filter(i => i !== hopColIdx)]
+      : []
+    return orderedIndexes.map(i => {
+      const name = headers[i] || `Column ${i + 1}`
+      const isHop = i === hopColIdx
+      const isDate = isDateColumn(name)
+      return { index: i, name, isHop, isDate, width: isHop ? 220 : (isDate ? 150 : 130) }
+    })
+  }, [headers])
 
-  const changeMap = new Map<string, TrackerChange>()
-  pendingChanges.forEach(c => changeMap.set(`${c.hop}|${c.field}`, c))
+  const filteredColumns = useMemo(
+    () => allColumns.filter(c => c.isHop || !effectiveHidden.has(c.name)),
+    [allColumns, effectiveHidden]
+  )
+
+  // Lazy column loading — capped to `loadedColumnCount` outside the column
+  // editor (where every not-yet-hidden column must stay clickable to hide).
+  const loadedColumns = useMemo(
+    () => (editorMode ? filteredColumns : filteredColumns.slice(0, loadedColumnCount)),
+    [filteredColumns, editorMode, loadedColumnCount]
+  )
+
+  // Horizontal virtualization over whatever's currently loaded — cumulative
+  // left-edge offsets, then a scroll-position scan to find the visible slice.
+  const colOffsets = useMemo(() => {
+    const offsets: number[] = []
+    let acc = 0
+    loadedColumns.forEach(c => { offsets.push(acc); acc += c.width })
+    return { offsets, total: acc }
+  }, [loadedColumns])
+
+  const { renderedColumns, leftSpacerWidth, rightSpacerWidth } = useMemo(() => {
+    const { offsets, total } = colOffsets
+    let start = 0
+    while (start < loadedColumns.length && offsets[start] + loadedColumns[start].width < scrollLeft) start++
+    start = Math.max(0, start - COL_BUFFER)
+    let end = start
+    let accWidth = start > 0 ? offsets[start] : 0
+    const rightEdge = scrollLeft + viewportSize.width
+    while (end < loadedColumns.length && accWidth < rightEdge) {
+      accWidth += loadedColumns[end].width
+      end++
+    }
+    end = Math.min(loadedColumns.length, end + COL_BUFFER)
+    const rendered = loadedColumns.slice(start, end)
+    const left = start > 0 ? offsets[start] : 0
+    const right = total - (end < loadedColumns.length ? offsets[end] : total)
+    return { renderedColumns: rendered, leftSpacerWidth: left, rightSpacerWidth: right }
+  }, [loadedColumns, colOffsets, scrollLeft, viewportSize.width])
+
+  // Vertical virtualization — same idea, over the full deduped HOP row list.
+  const { visibleRows, topSpacerHeight, bottomSpacerHeight } = useMemo(() => {
+    const totalRows = trackerRows.length
+    const visibleSlots = Math.ceil(viewportSize.height / ROW_HEIGHT) + ROW_BUFFER * 2
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_BUFFER)
+    const end = Math.min(totalRows, start + visibleSlots)
+    return {
+      visibleRows: trackerRows.slice(start, end).map((row, i) => ({ row, rowIndex: start + i })),
+      topSpacerHeight: start * ROW_HEIGHT,
+      bottomSpacerHeight: (totalRows - end) * ROW_HEIGHT,
+    }
+  }, [trackerRows, scrollTop, viewportSize.height])
+
+  const changeMap = useMemo(() => {
+    const map = new Map<string, TrackerChange>()
+    pendingChanges.forEach(c => map.set(`${c.hop}|${c.field}`, c))
+    return map
+  }, [pendingChanges])
+
+  const spacerColCount = 2 + renderedColumns.length
 
   const viewBtnClass = (name: string) =>
     `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeViewName === name && !editorMode ? 'text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`
@@ -551,24 +681,38 @@ export default function TrackerGridPage() {
         </div>
       )}
 
+      {loaded && headers.length > 0 && !editorMode && loadedColumns.length < filteredColumns.length && (
+        <div className="mb-2 flex items-center gap-3">
+          <span className="text-xs text-gray-500">Showing {loadedColumns.length} of {filteredColumns.length} columns</span>
+          <button
+            onClick={() => setLoadedColumnCount(c => Math.min(c + COLUMN_PAGE_SIZE, filteredColumns.length))}
+            className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
+          >
+            Show More Columns →
+          </button>
+        </div>
+      )}
+
       {loaded && headers.length > 0 && (
-        <div className="border border-gray-300 rounded-lg bg-white" style={{ overflow: 'auto', height: 'calc(100vh - 230px)' }}>
-          <table style={{ tableLayout: 'fixed', borderCollapse: 'collapse', width: totalWidth }}>
+        <div
+          ref={scrollContainerRef}
+          onScroll={handleGridScroll}
+          className="border border-gray-300 rounded-lg bg-white"
+          style={{ overflow: 'auto', height: 'calc(100vh - 230px)' }}
+        >
+          <table style={{ tableLayout: 'fixed', borderCollapse: 'collapse', width: colOffsets.total }}>
             <colgroup>
-              {visibleColumns.map(c => <col key={c.name} style={{ width: c.width }} />)}
+              <col style={{ width: leftSpacerWidth }} />
+              {renderedColumns.map(c => <col key={c.name} style={{ width: c.width }} />)}
+              <col style={{ width: rightSpacerWidth }} />
             </colgroup>
             <thead>
               <tr>
-                {visibleColumns.map(col => (
+                <th style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY }} />
+                {renderedColumns.map(col => (
                   <th
                     key={col.name}
-                    style={{
-                      position: 'sticky',
-                      top: 0,
-                      left: col.isHop ? 0 : undefined,
-                      zIndex: col.isHop ? 30 : 20,
-                      backgroundColor: NAVY,
-                    }}
+                    style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY, height: ROW_HEIGHT }}
                     className="text-white text-xs font-bold px-2 py-2 text-left border-r border-b border-blue-900"
                   >
                     <div className="flex items-center justify-between gap-1">
@@ -585,19 +729,27 @@ export default function TrackerGridPage() {
                     </div>
                   </th>
                 ))}
+                <th style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY }} />
               </tr>
             </thead>
             <tbody>
-              {trackerRows.map((row, rowIdx) => {
-                const rowBg = rowIdx % 2 === 1 ? ALT_ROW : '#FFFFFF'
+              {topSpacerHeight > 0 && (
+                <tr style={{ height: topSpacerHeight }}>
+                  <td colSpan={spacerColCount} style={{ padding: 0, border: 'none' }} />
+                </tr>
+              )}
+              {visibleRows.map(({ row, rowIndex }) => {
+                const isSelected = row.hop === selectedHop
+                const rowBg = isSelected ? SELECTED_ROW : (rowIndex % 2 === 1 ? ALT_ROW : '#FFFFFF')
                 return (
-                  <tr key={row.hop}>
-                    {visibleColumns.map(col => {
+                  <tr key={row.hop} onClick={() => handleRowClick(row.hop)} style={{ height: ROW_HEIGHT, cursor: 'pointer' }}>
+                    <td style={{ backgroundColor: rowBg, height: ROW_HEIGHT }} />
+                    {renderedColumns.map(col => {
                       if (col.isHop) {
                         return (
                           <td
                             key={col.name}
-                            style={{ position: 'sticky', left: 0, zIndex: 10, backgroundColor: rowBg, color: NAVY }}
+                            style={{ backgroundColor: rowBg, color: NAVY, height: ROW_HEIGHT }}
                             className="px-2 py-1 text-xs font-bold whitespace-nowrap border-r border-b border-gray-200"
                           >
                             {row.hop}
@@ -622,9 +774,15 @@ export default function TrackerGridPage() {
                         ? <DatePickerCell key={col.name} {...cellProps} />
                         : <EditableCell key={col.name} {...cellProps} />
                     })}
+                    <td style={{ backgroundColor: rowBg, height: ROW_HEIGHT }} />
                   </tr>
                 )
               })}
+              {bottomSpacerHeight > 0 && (
+                <tr style={{ height: bottomSpacerHeight }}>
+                  <td colSpan={spacerColCount} style={{ padding: 0, border: 'none' }} />
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
