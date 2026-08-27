@@ -180,7 +180,11 @@ function nokiaPmFor(r: DecomRow, lookup: ReturnType<typeof nokiaPmLookup>): stri
   return ''
 }
 
-function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDecomSite[], gcNames: string[], trackerHops: TrackerHop[]) {
+function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDecomSite[], trackerHops: TrackerHop[]) {
+  // Every unique GC found in the decom file itself — not the GC_CONFIG roster —
+  // so the breakdown always sums to the funnel's Total Decom Sites Tracked,
+  // even for GCs not in the config list.
+  const gcNames = Array.from(new Set(decomRows.map(r => r.gc).filter(Boolean)))
   const summary = summarizeDecomByGc(decomRows, gcNames, missingSites)
   const lookup = nokiaPmLookup(trackerHops)
   const todayStr = new Date().toLocaleDateString('en-US')
@@ -403,6 +407,7 @@ export default function ReportsPage() {
   const [crInfo, setCrInfo] = useState<ReportSnapshot | null>(null)
   const [decomInfo, setDecomInfo] = useState<ReportSnapshot | null>(null)
   const [uploading, setUploading] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'spo-cr-decom' | 'decom-tracker'>('spo-cr-decom')
   const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
 
   const decomRows = parseDecomRows(decomRawRows)
@@ -410,6 +415,10 @@ export default function ReportsPage() {
   const trackerHops = parseTrackerHopsForDecom(trackerRawRows)
   const missingDecomSites = findMissingDecom(decomRows, trackerHops)
   const decomFunnel = computeDecomFunnel(decomRows)
+  // Every unique GC found in the decom file itself — not the GC_CONFIG roster —
+  // so the breakdown always sums to Total Decom Sites Tracked, including GCs
+  // not in the config list.
+  const decomGcNames = Array.from(new Set(decomRows.map(r => r.gc).filter(Boolean)))
 
   useEffect(() => {
     const load = async () => {
@@ -545,8 +554,14 @@ export default function ReportsPage() {
         {/* Tab Bar */}
         <div className="flex gap-2 mb-6">
           <button
-            className="px-5 py-2 rounded-lg text-sm font-semibold bg-blue-600 text-white shadow-lg">
-            SPO / CR Reports
+            onClick={() => setActiveTab('spo-cr-decom')}
+            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'spo-cr-decom' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+            SPO / CR / Decom Reports
+          </button>
+          <button
+            onClick={() => setActiveTab('decom-tracker')}
+            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'decom-tracker' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+            ♻️ Decom Tracker
           </button>
           <button
             onClick={() => router.push('/gr-tracker')}
@@ -555,22 +570,28 @@ export default function ReportsPage() {
           </button>
         </div>
 
-        {/* Upload Section */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div>
-            <p className="text-sm font-semibold text-gray-400 mb-2">SPO MASTER REPORT</p>
-            <UploadBox type="spo" info={spoInfo} label="SPO Master Report" uploading={uploading} onUpload={handleUpload} />
-          </div>
-          <div>
-            <p className="text-sm font-semibold text-gray-400 mb-2">CR CLAIMS TRACKER</p>
-            <UploadBox type="cr" info={crInfo} label="CR Claims Tracker" uploading={uploading} onUpload={handleUpload} />
-          </div>
-        </div>
-        <div className="mb-8">
-          <p className="text-sm font-semibold text-gray-400 mb-2">DECOM TRACKER</p>
-          <UploadBox type="decom" info={decomInfo} label="Decom Tracker" uploading={uploading} onUpload={handleUpload} />
-        </div>
+        {activeTab === 'spo-cr-decom' && (
+          <>
+            {/* Upload Section */}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+              <div>
+                <p className="text-sm font-semibold text-gray-400 mb-2">SPO MASTER REPORT</p>
+                <UploadBox type="spo" info={spoInfo} label="SPO Master Report" uploading={uploading} onUpload={handleUpload} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-400 mb-2">CR CLAIMS TRACKER</p>
+                <UploadBox type="cr" info={crInfo} label="CR Claims Tracker" uploading={uploading} onUpload={handleUpload} />
+              </div>
+              <div>
+                <p className="text-sm font-semibold text-gray-400 mb-2">DECOM TRACKER</p>
+                <UploadBox type="decom" info={decomInfo} label="Decom Tracker" uploading={uploading} onUpload={handleUpload} />
+              </div>
+            </div>
+          </>
+        )}
 
+        {activeTab === 'decom-tracker' && (
+          <>
         {/* Decom Funnel */}
         {decomRows.length > 0 && (
           <div className="mb-8">
@@ -628,7 +649,7 @@ export default function ReportsPage() {
                 </thead>
                 <tbody>
                   {(() => {
-                    const summary = summarizeDecomByGc(decomRows, GC_CONFIG.map(c => c.gc), missingDecomSites).sort((a, b) => (b.outstanding + b.pending) - (a.outstanding + a.pending))
+                    const summary = summarizeDecomByGc(decomRows, decomGcNames, missingDecomSites).sort((a, b) => (b.outstanding + b.pending) - (a.outstanding + a.pending))
                     const totals = summary.reduce((t, s) => ({
                       total: t.total + s.total,
                       complete: t.complete + s.complete,
@@ -705,7 +726,7 @@ export default function ReportsPage() {
 
             <div className="mt-6">
               <button
-                onClick={() => downloadDecomDashboard(decomRows, missingDecomSites, GC_CONFIG.map(c => c.gc), trackerHops)}
+                onClick={() => downloadDecomDashboard(decomRows, missingDecomSites, trackerHops)}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-semibold"
               >
                 ⬇️ Download Decom Dashboard
@@ -713,7 +734,11 @@ export default function ReportsPage() {
             </div>
           </div>
         )}
+          </>
+        )}
 
+        {activeTab === 'spo-cr-decom' && (
+          <>
         {/* GC Download Grid */}
         {(spoRows.length > 0 || crRows.length > 0 || decomRows.length > 0) && (
           <div>
@@ -765,6 +790,8 @@ export default function ReportsPage() {
           <div className="bg-gray-900 rounded-xl border border-gray-700 p-12 text-center">
             <p className="text-gray-400 text-xl">📂 Upload your master reports above to get started</p>
           </div>
+        )}
+          </>
         )}
 
       </div>
