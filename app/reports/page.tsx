@@ -53,6 +53,31 @@ function fmtDate(val: unknown): string {
   return isNaN(d.getTime()) ? String(val) : d.toLocaleDateString('en-US')
 }
 
+interface DecomFunnel {
+  totalTracked: number
+  droppedOff: number
+  podPathwave: number
+  podQuickBase: number
+  gap1: number
+  gap2: number
+  gap3: number
+}
+
+// Shared by the Reports page funnel section and Tab 1 of the Decom Dashboard Excel,
+// so the two views can never drift out of sync with each other.
+function computeDecomFunnel(decomRows: DecomRow[]): DecomFunnel {
+  const totalTracked = decomRows.length
+  const droppedOff = decomRows.filter(r => !!r.dropOffDate).length
+  const podPathwave = decomRows.filter(r => r.podPathwave).length
+  const podQuickBase = decomRows.filter(r => r.podQuickBase).length
+  return {
+    totalTracked, droppedOff, podPathwave, podQuickBase,
+    gap1: totalTracked - droppedOff,
+    gap2: droppedOff - podPathwave,
+    gap3: podPathwave - podQuickBase,
+  }
+}
+
 function downloadGCReport(rows: unknown[][], colIdx: number[], headers: string[], vendorColInMaster: number, matchList: string[], filename: string) {
   const gcRows = rows.filter(row => matches(row[vendorColInMaster], matchList))
 
@@ -162,8 +187,9 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
 
   const wb = XLSX.utils.book_new()
 
-  // ---- Tab 1: Decom Summary ----
+  // ---- Tab 1: Decom Summary (funnel + GC breakdown) ----
   const sumHeaders = ['GC', 'Total Sites', 'Complete', 'Pending Drop Off', 'Pending POD Pathwave', 'Pending POD QuickBase', 'Missing', 'Avg Aging']
+  const cols = sumHeaders.length
   const totals = summary.reduce((t, s) => ({
     total: t.total + s.total,
     complete: t.complete + s.complete,
@@ -175,10 +201,34 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
   const allAging = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending').map(r => r.aging).filter((a): a is number => a !== null)
   const totalAvgAging = allAging.length > 0 ? Math.round(allAging.reduce((s, a) => s + a, 0) / allAging.length) : null
 
-  const headerRowIdx = 3
+  // Same funnel math as the Reports page section — kept in one shared function
+  // so the on-screen view and this export can never drift out of sync.
+  const funnel = computeDecomFunnel(decomRows)
+  const boxLabels = ['Total Decom Sites Tracked', 'Total Sites Dropped Off', 'Total Sites POD in Pathwave', 'Total POD in QuickBase']
+  const boxCounts = [funnel.totalTracked, funnel.droppedOff, funnel.podPathwave, funnel.podQuickBase]
+  const boxGaps: (number | null)[] = [null, funnel.gap1, funnel.gap2, funnel.gap3]
+  const boxColStart = [0, 2, 4, 6] // 4 boxes across 8 columns, 2 cols each
+
+  const boxRow = new Array(cols).fill('')
+  const countRow = new Array(cols).fill('')
+  const gapRow = new Array(cols).fill('')
+  boxColStart.forEach((c, i) => {
+    boxRow[c] = boxLabels[i]
+    countRow[c] = boxCounts[i]
+    if (boxGaps[i] !== null) gapRow[c] = `Gap: -${boxGaps[i]}`
+  })
+
+  const missingLineRowIdx = 7
+  const headerRowIdx = 9
   const sumAoA: (string | number)[][] = [
     ['Viaero MW Program — Decom Status Dashboard'],
     [`As of ${todayStr}`],
+    [],
+    boxRow,
+    countRow,
+    gapRow,
+    [],
+    [`Missing From Tracker: ${missingSites.length} sites with no decom entry`],
     [],
     sumHeaders,
     ...summary.map(s => [s.gc, s.total, s.complete, s.outstanding + s.pending, s.pendingPathwave, s.pendingQuickBase, s.missing, s.avgAging ?? '']),
@@ -187,15 +237,37 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
 
   const ws1 = XLSX.utils.aoa_to_sheet(sumAoA)
   ws1['!merges'] = [
-    { s: { r: 0, c: 0 }, e: { r: 0, c: sumHeaders.length - 1 } },
-    { s: { r: 1, c: 0 }, e: { r: 1, c: sumHeaders.length - 1 } },
+    { s: { r: 0, c: 0 }, e: { r: 0, c: cols - 1 } },
+    { s: { r: 1, c: 0 }, e: { r: 1, c: cols - 1 } },
+    { s: { r: missingLineRowIdx, c: 0 }, e: { r: missingLineRowIdx, c: cols - 1 } },
+    ...boxColStart.flatMap(c => [
+      { s: { r: 3, c }, e: { r: 3, c: c + 1 } },
+      { s: { r: 4, c }, e: { r: 4, c: c + 1 } },
+      { s: { r: 5, c }, e: { r: 5, c: c + 1 } },
+    ]),
   ]
   const titleCell = ws1[XLSX.utils.encode_cell({ r: 0, c: 0 })]
   if (titleCell) titleCell.s = { font: { bold: true, color: { rgb: NAVY }, sz: 16 } }
   const dateCell = ws1[XLSX.utils.encode_cell({ r: 1, c: 0 })]
   if (dateCell) dateCell.s = { font: { italic: true, color: { rgb: '555555' } } }
 
-  for (let c = 0; c < sumHeaders.length; c++) {
+  boxColStart.forEach((c, i) => {
+    const boxColor = i === 0 ? NAVY : TEAL
+    const labelCell = ws1[XLSX.utils.encode_cell({ r: 3, c })]
+    if (labelCell) labelCell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: boxColor } }, alignment: { horizontal: 'center', wrapText: true } }
+    const countCell = ws1[XLSX.utils.encode_cell({ r: 4, c })]
+    if (countCell) countCell.s = { font: { bold: true, color: { rgb: 'FFFFFF' }, sz: 18 }, fill: { fgColor: { rgb: boxColor } }, alignment: { horizontal: 'center' } }
+    const gap = boxGaps[i]
+    if (gap !== null) {
+      const gapCell = ws1[XLSX.utils.encode_cell({ r: 5, c })]
+      if (gapCell) gapCell.s = { font: { bold: true, color: { rgb: gap > 0 ? 'C00000' : '006100' } }, alignment: { horizontal: 'center' } }
+    }
+  })
+
+  const missingLineCell = ws1[XLSX.utils.encode_cell({ r: missingLineRowIdx, c: 0 })]
+  if (missingLineCell) missingLineCell.s = { font: { bold: true, color: { rgb: missingSites.length > 0 ? 'C00000' : '006100' } } }
+
+  for (let c = 0; c < cols; c++) {
     const cell = ws1[XLSX.utils.encode_cell({ r: headerRowIdx, c })]
     if (cell) cell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: NAVY } }, alignment: { horizontal: 'center' } }
   }
@@ -216,11 +288,12 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
   })
 
   const totalsRowIdx = headerRowIdx + 1 + summary.length
-  for (let c = 0; c < sumHeaders.length; c++) {
+  for (let c = 0; c < cols; c++) {
     const cell = ws1[XLSX.utils.encode_cell({ r: totalsRowIdx, c })]
     if (cell) cell.s = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: NAVY } } }
   }
 
+  ws1['!rows'] = [{}, {}, {}, { hpt: 30 }, { hpt: 24 }, {}]
   ws1['!cols'] = sumHeaders.map(h => ({ wch: Math.max(h.length + 4, 14) }))
   XLSX.utils.book_append_sheet(wb, ws1, 'Decom Summary')
 
@@ -336,6 +409,7 @@ export default function ReportsPage() {
   console.log('[decom-render] decomRawRows:', decomRawRows.length, 'rows (incl. header) → decomRows parsed:', decomRows.length)
   const trackerHops = parseTrackerHopsForDecom(trackerRawRows)
   const missingDecomSites = findMissingDecom(decomRows, trackerHops)
+  const decomFunnel = computeDecomFunnel(decomRows)
 
   useEffect(() => {
     const load = async () => {
@@ -496,6 +570,43 @@ export default function ReportsPage() {
           <p className="text-sm font-semibold text-gray-400 mb-2">DECOM TRACKER</p>
           <UploadBox type="decom" info={decomInfo} label="Decom Tracker" uploading={uploading} onUpload={handleUpload} />
         </div>
+
+        {/* Decom Funnel */}
+        {decomRows.length > 0 && (
+          <div className="mb-8">
+            <h2 className="text-lg font-bold mb-4">Decom Funnel</h2>
+            <div className="flex items-stretch gap-0 overflow-x-auto pb-1">
+              {[
+                { label: 'Total Decom Sites Tracked', count: decomFunnel.totalTracked, gap: decomFunnel.gap1 },
+                { label: 'Dropped Off', count: decomFunnel.droppedOff, gap: decomFunnel.gap2 },
+                { label: 'POD Pathwave', count: decomFunnel.podPathwave, gap: decomFunnel.gap3 },
+                { label: 'POD QuickBase', count: decomFunnel.podQuickBase, gap: null as number | null },
+              ].map((box, i, arr) => (
+                <div key={box.label} className="flex items-stretch">
+                  <div className="min-w-[170px] bg-gray-900 rounded-xl border border-gray-700 overflow-hidden">
+                    <div className="px-3 py-2 text-xs font-bold text-white text-center" style={{ backgroundColor: `#${NAVY}` }}>{box.label}</div>
+                    <div className="px-3 py-3 text-center text-3xl font-bold" style={{ color: `#${TEAL}` }}>{box.count}</div>
+                    {box.gap !== null && (
+                      <div className={`px-3 pb-2 text-center text-xs font-bold ${box.gap > 0 ? 'text-red-400' : 'text-green-400'}`}>
+                        Gap: -{box.gap}
+                      </div>
+                    )}
+                  </div>
+                  {i < arr.length - 1 && <span className="text-gray-500 text-2xl px-3 self-center">→</span>}
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 space-y-1">
+              <p className="text-sm">
+                <span className="text-red-400 font-semibold">Missing From Tracker: {missingDecomSites.length} sites</span>
+                <span className="text-gray-400"> — completed HOPs with no decom entry</span>
+              </p>
+              <p className="text-xs text-gray-500 italic">
+                Partial Returns Note: Sites with partial drop-offs may not be included in drop count
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Decom Summary */}
         {decomRows.length > 0 && (
