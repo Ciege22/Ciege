@@ -9,7 +9,7 @@ import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import { loadChunkedReport } from '../lib/reportChunks'
-import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom } from '../lib/decom'
+import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, DecomRow } from '../lib/decom'
 import {
   GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
@@ -64,6 +64,53 @@ function downloadGcFilteredReport(rows: unknown[][], colIdx: number[], headers: 
   })
 
   XLSX.utils.book_append_sheet(wb, ws, headers[0].includes('SPO') || filename.includes('SPO') ? 'SPO Report' : 'CR Tracker')
+  XLSX.writeFile(wb, filename)
+}
+
+function styleDecomHeaderRow(ws: XLSX.WorkSheet, headers: string[], sheetData: (string | number)[][]) {
+  const range = XLSX.utils.decode_range(ws['!ref'] || 'A1')
+  for (let c = range.s.c; c <= range.e.c; c++) {
+    const cell = ws[XLSX.utils.encode_cell({ r: 0, c })]
+    if (cell) {
+      cell.s = {
+        font: { bold: true, color: { rgb: 'FFFFFF' } },
+        fill: { fgColor: { rgb: REPORT_NAVY } },
+        alignment: { horizontal: 'center', wrapText: true }
+      }
+    }
+  }
+  ws['!cols'] = headers.map((h, i) => {
+    const maxLen = Math.max(h.length, ...sheetData.slice(1).map(r => String(r[i] ?? '').length))
+    return { wch: Math.min(Math.max(maxLen + 2, 10), 40) }
+  })
+}
+
+function decomRowToShortSheetRow(r: DecomRow, includeAging: boolean): (string | number)[] {
+  const row: (string | number)[] = [r.hop, r.pathId, r.siteName, r.cm, fmtDecomDate(r.cxComplete)]
+  if (includeAging) row.push(r.aging ?? '')
+  row.push(r.podPathwave ? 'Yes' : 'No', r.podQuickBase ? 'Yes' : 'No', r.comment || '')
+  return row
+}
+
+function downloadGcDecomExcel(gcRows: DecomRow[], filename: string) {
+  const pendingDropOff = gcRows.filter(r => !r.dropOffDate)
+  const pendingPathwave = gcRows.filter(r => r.dropOffDate && !r.podPathwave)
+
+  const dropOffHeaders = ['HOP', 'Path ID', 'Site Name', 'CM', 'CX Complete', 'Aging (days)', 'POD Pathwave', 'POD QuickBase', 'Comments']
+  const pathwaveHeaders = ['HOP', 'Path ID', 'Site Name', 'CM', 'CX Complete', 'POD Pathwave', 'POD QuickBase', 'Comments']
+
+  const wb = XLSX.utils.book_new()
+
+  const sheet1Data = [dropOffHeaders, ...pendingDropOff.map(r => decomRowToShortSheetRow(r, true))]
+  const ws1 = XLSX.utils.aoa_to_sheet(sheet1Data)
+  styleDecomHeaderRow(ws1, dropOffHeaders, sheet1Data)
+  XLSX.utils.book_append_sheet(wb, ws1, 'Pending Decom Drop Off')
+
+  const sheet2Data = [pathwaveHeaders, ...pendingPathwave.map(r => decomRowToShortSheetRow(r, false))]
+  const ws2 = XLSX.utils.aoa_to_sheet(sheet2Data)
+  styleDecomHeaderRow(ws2, pathwaveHeaders, sheet2Data)
+  XLSX.utils.book_append_sheet(wb, ws2, 'Pending POD in Pathwave')
+
   XLSX.writeFile(wb, filename)
 }
 
@@ -202,9 +249,10 @@ interface GcReportsTabProps {
   selectedGC: string
   spoRawRows: unknown[][]
   crRawRows: unknown[][]
+  decomRawRows: unknown[][]
 }
 
-function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) {
+function GcReportsTab({ selectedGC, spoRawRows, crRawRows, decomRawRows }: GcReportsTabProps) {
   const cfg = GC_CONFIG.find(c => c.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
   const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
 
@@ -212,6 +260,7 @@ function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) 
 
   const spoCount = spoRawRows.filter(row => matches(row[SPO_VENDOR_COL_IN_MASTER], cfg.spo_match)).length
   const crCount = crRawRows.filter(row => matches(row[CR_SUPPLIER_COL_IN_MASTER], cfg.cr_match)).length
+  const gcDecomRows = decomRowsForGc(parseDecomRows(decomRawRows), selectedGC)
 
   return (
     <div className="bg-gray-800 rounded-xl border border-gray-700 p-5 max-w-md">
@@ -220,6 +269,8 @@ function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) 
         <span>{spoCount} SPO rows</span>
         <span>·</span>
         <span>{crCount} CR rows</span>
+        <span>·</span>
+        <span>{gcDecomRows.length} Decom rows</span>
       </div>
       <div className="flex flex-col gap-2">
         <button
@@ -234,9 +285,16 @@ function GcReportsTab({ selectedGC, spoRawRows, crRawRows }: GcReportsTabProps) 
           className="bg-teal-700 hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
           📥 Download CR Tracker
         </button>
+        <button
+          onClick={() => downloadGcDecomExcel(gcDecomRows, `${cfg.gc}_-_Decom_Report_-_${today}.xlsx`)}
+          disabled={decomRawRows.length === 0}
+          title={decomRawRows.length === 0 ? 'Upload Decom Tracker on Reports page first' : undefined}
+          className="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
+          ⬇️ {selectedGC} Decom Report
+        </button>
       </div>
-      {spoRawRows.length === 0 && crRawRows.length === 0 && (
-        <p className="text-gray-500 text-xs mt-3">Upload SPO/CR master reports on the Reports page to enable downloads here.</p>
+      {spoRawRows.length === 0 && crRawRows.length === 0 && decomRawRows.length === 0 && (
+        <p className="text-gray-500 text-xs mt-3">Upload SPO/CR/Decom master reports on the Reports page to enable downloads here.</p>
       )}
     </div>
   )
@@ -2116,6 +2174,7 @@ export default function GCCallPage() {
                 selectedGC={selectedGC}
                 spoRawRows={spoRawRows}
                 crRawRows={crRawRows}
+                decomRawRows={decomRawRows}
               />
             )}
 
