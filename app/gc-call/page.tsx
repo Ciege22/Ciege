@@ -1924,6 +1924,7 @@ export default function GCCallPage() {
                           <thead>
                             <tr className="bg-gray-800 text-gray-400">
                               <th className="text-left p-2">HOP</th>
+                              <th className="text-left p-2">Crew</th>
                               <th className="text-left p-2">Path ID</th>
                               <th className="text-left p-2">Started</th>
                               <th className="text-left p-2">FC End</th>
@@ -1941,7 +1942,24 @@ export default function GCCallPage() {
                           <tbody>
                             {active.map((h) => (
                               <tr key={h.hop} className={`border-t border-gray-800 ${(h.daysElapsed ?? 0) > thresholds.durationAlertDays ? 'bg-red-950' : 'bg-gray-900'}`}>
-                                <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                                <td className="p-2 font-semibold text-white whitespace-nowrap">
+                                  {h.hop}
+                                  {showCrewBadge && crewAssignments[h.hop] && (
+                                    <span className={`ml-2 text-xs font-bold px-1.5 py-0.5 rounded ${CREW_BADGE_COLORS[(parseInt(crewAssignments[h.hop].replace('Crew ', ''), 10) - 1) % CREW_BADGE_COLORS.length] || 'bg-gray-700 text-gray-300'}`}>
+                                      C{crewAssignments[h.hop].replace('Crew ', '')}
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="p-2">
+                                  <select value={crewAssignments[h.hop] || ''}
+                                    onChange={(e) => setCrewForHop(h.hop, e.target.value)}
+                                    className="bg-gray-800 text-gray-300 text-xs rounded px-1 py-1 border border-gray-600 focus:outline-none focus:border-blue-500">
+                                    <option value="">--</option>
+                                    {Array.from({ length: maxCrews }, (_, i) => `Crew ${i + 1}`).map(c => (
+                                      <option key={c} value={c}>{c}</option>
+                                    ))}
+                                  </select>
+                                </td>
                                 <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms15a || '—'}</td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
