@@ -144,6 +144,7 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
   const rows: DecomRow[] = []
   let blankRowSkipped = 0
   let blankHopSkipped = 0
+  let noCxCompleteSkipped = 0
 
   for (let i = 1; i < allRows.length; i++) {
     const row = allRows[i]
@@ -157,6 +158,10 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     const cxCompleteRaw = parseDate(row[cxCompleteCol])
     const cxComplete = yearOk(cxCompleteRaw) ? cxCompleteRaw : null
 
+    // Sites without a construction complete date aren't ready for decom yet
+    // — excluded entirely, not just left with unknown aging.
+    if (!cxComplete) { noCxCompleteSkipped++; continue }
+
     const dropOffParsed = parseDropOff(row[dropOffCol])
     // Same year >= 2020 sanity filter as every other date field — a stray
     // typo'd date (e.g. 1/1/1900) shouldn't be treated as a real drop-off.
@@ -168,21 +173,13 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
 
     const gc = resolveGc(String(row[gcCol] ?? ''), String(row[cgCol] ?? ''))
 
-    // Aging = days from CX Complete to today; falls back to CX Start if
-    // CX Complete is blank.
-    const anchor = cxComplete || cxStart
-    const aging = anchor ? daysBetween(anchor, today) : null
+    // Aging = days from CX Complete to today. No fallback to CX Start —
+    // rows without CX Complete are excluded above before this runs.
+    const aging = daysBetween(cxComplete, today)
 
-    let status: DecomRow['status']
-    if (dropOffDate) {
-      status = (podPathwave && podQuickBase) ? 'complete' : 'pod_gap'
-    } else if (aging === null) {
-      // No CX Complete or CX Start to measure aging from — treat
-      // conservatively as needing attention rather than silently pending.
-      status = 'outstanding'
-    } else {
-      status = aging >= 7 ? 'outstanding' : 'pending'
-    }
+    const status: DecomRow['status'] = dropOffDate
+      ? ((podPathwave && podQuickBase) ? 'complete' : 'pod_gap')
+      : (aging >= 7 ? 'outstanding' : 'pending')
 
     rows.push({
       appPathId: String(row[appPathIdCol] ?? '').trim(),
@@ -200,7 +197,7 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     })
   }
 
-  console.log(`[decom-parse] ${allRows.length - 1} data rows in → ${rows.length} parsed out (${blankRowSkipped} fully blank, ${blankHopSkipped} blank HOP)`)
+  console.log(`[decom-parse] ${allRows.length - 1} data rows in → ${rows.length} parsed out (${blankRowSkipped} fully blank, ${blankHopSkipped} blank HOP, ${noCxCompleteSkipped} no CX Complete)`)
 
   return rows
 }
