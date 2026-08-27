@@ -20,6 +20,13 @@ const COL_BUFFER = 3
 const INITIAL_COLUMN_COUNT = 20
 const COLUMN_PAGE_SIZE = 20
 
+// First three columns are pinned in place while the rest scroll horizontally.
+// Matched against normalized header names (see normHeader).
+const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID']
+// Subtle right-edge shadow that separates the frozen columns from the
+// scrolling ones underneath them.
+const FROZEN_SHADOW = '2px 0 4px -1px rgba(0,0,0,0.18)'
+
 interface TrackerRowData {
   hop: string
   cells: unknown[]
@@ -37,6 +44,23 @@ interface TrackerChange {
 interface TrackerView {
   name: string
   hiddenColumns: string[]
+}
+
+// Per-column ("Excel style") filter state. `sort` drives the whole grid's row
+// order (only one column may hold a sort at a time). `selectedValues === null`
+// means "all values pass" — i.e. no value filtering on this column.
+type ColSort = 'asc' | 'desc' | null
+interface ColumnFilterState {
+  sort: ColSort
+  selectedValues: string[] | null
+}
+
+interface GridColumn {
+  index: number
+  name: string
+  isHop: boolean
+  isDate: boolean
+  width: number
 }
 
 // Three starter views, auto-created on first load if no saved views exist yet.
@@ -155,12 +179,25 @@ interface CellProps {
   isChanged: boolean
   isEditing: boolean
   rowBg: string
+  // When set, the cell is one of the frozen columns — pin it with the same
+  // sticky offset used by its header so body and header stay aligned.
+  stickyLeft?: number
   onStartEdit: () => void
   onCommit: (newValue: string) => void
   onCancel: () => void
 }
 
-function EditableCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit, onCommit, onCancel }: CellProps) {
+function frozenTdStyle(stickyLeft: number | undefined, editing: boolean): React.CSSProperties {
+  if (stickyLeft === undefined) return {}
+  return {
+    position: 'sticky',
+    left: stickyLeft,
+    zIndex: editing ? 40 : 10,
+    boxShadow: FROZEN_SHADOW,
+  }
+}
+
+function EditableCell({ displayValue, isChanged, isEditing, rowBg, stickyLeft, onStartEdit, onCommit, onCancel }: CellProps) {
   const [draft, setDraft] = useState(displayValue)
   // Reset the edit buffer exactly when entering edit mode — adjusted during
   // render (React's documented pattern for resetting state on a prop change)
@@ -176,7 +213,7 @@ function EditableCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit, 
       <td
         onDoubleClick={onStartEdit}
         className="px-2 py-1 text-xs whitespace-nowrap cursor-pointer border-b border-r border-gray-200 overflow-hidden text-ellipsis"
-        style={{ backgroundColor: isChanged ? AMBER : rowBg, height: ROW_HEIGHT }}
+        style={{ backgroundColor: isChanged ? AMBER : rowBg, height: ROW_HEIGHT, ...frozenTdStyle(stickyLeft, false) }}
         title={displayValue}
       >
         {displayValue || <span className="text-gray-300">—</span>}
@@ -185,7 +222,7 @@ function EditableCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit, 
   }
 
   return (
-    <td className="px-1 py-0.5 border-b border-r border-gray-200 bg-white relative" style={{ zIndex: 40 }}>
+    <td className="px-1 py-0.5 border-b border-r border-gray-200 bg-white relative" style={{ zIndex: 40, ...frozenTdStyle(stickyLeft, true), backgroundColor: '#fff' }}>
       <input
         autoFocus
         type="text"
@@ -204,7 +241,7 @@ function EditableCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit, 
   )
 }
 
-function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit, onCommit, onCancel }: CellProps) {
+function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, stickyLeft, onStartEdit, onCommit, onCancel }: CellProps) {
   const [draft, setDraft] = useState(displayValue)
   const [wasEditing, setWasEditing] = useState(isEditing)
   if (isEditing !== wasEditing) {
@@ -217,7 +254,7 @@ function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit
       <td
         onDoubleClick={onStartEdit}
         className="px-2 py-1 text-xs whitespace-nowrap cursor-pointer border-b border-r border-gray-200"
-        style={{ backgroundColor: isChanged ? AMBER : rowBg, height: ROW_HEIGHT }}
+        style={{ backgroundColor: isChanged ? AMBER : rowBg, height: ROW_HEIGHT, ...frozenTdStyle(stickyLeft, false) }}
       >
         {displayValue || <span className="text-gray-300">—</span>}
       </td>
@@ -225,7 +262,7 @@ function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit
   }
 
   return (
-    <td className="px-1 py-0.5 border-b border-r border-gray-200 bg-white relative" style={{ zIndex: 40 }}>
+    <td className="px-1 py-0.5 border-b border-r border-gray-200 bg-white relative" style={{ zIndex: 40, ...frozenTdStyle(stickyLeft, true), backgroundColor: '#fff' }}>
       <input
         autoFocus
         type="date"
@@ -242,6 +279,102 @@ function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, onStartEdit
   )
 }
 
+// Excel-style per-column filter dropdown. Module scope so it isn't remounted on
+// every parent render. Holds its own working state; nothing is applied to the
+// grid until "Apply" is pressed.
+interface ColumnFilterPanelProps {
+  panelRef: React.RefObject<HTMLDivElement | null>
+  columnName: string
+  isDateCol: boolean
+  values: string[]
+  current: ColumnFilterState | undefined
+  pos: { top: number; left: number }
+  onApply: (state: ColumnFilterState) => void
+  onClose: () => void
+}
+
+const FILTER_CHECKLIST_LIMIT = 50
+
+function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, pos, onApply, onClose }: ColumnFilterPanelProps) {
+  const [sort, setSort] = useState<ColSort>(current?.sort ?? null)
+  const [search, setSearch] = useState('')
+  const [checked, setChecked] = useState<Set<string>>(
+    () => (current?.selectedValues ? new Set(current.selectedValues) : new Set(values))
+  )
+
+  const q = search.trim().toLowerCase()
+  const shown = (q ? values.filter(v => v.toLowerCase().includes(q)) : values).slice(0, FILTER_CHECKLIST_LIMIT)
+  const label = (v: string) => (v === '' ? '(blank)' : v)
+
+  const toggle = (v: string) => setChecked(prev => {
+    const n = new Set(prev)
+    if (n.has(v)) n.delete(v)
+    else n.add(v)
+    return n
+  })
+
+  const apply = () => {
+    const allSelected = checked.size === values.length && values.every(v => checked.has(v))
+    onApply({ sort, selectedValues: allSelected ? null : Array.from(checked) })
+  }
+
+  return (
+    <div
+      ref={panelRef}
+      data-col-filter
+      style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 60, width: 264 }}
+      className="bg-white border border-gray-300 rounded-lg shadow-2xl p-3 text-xs text-gray-800"
+    >
+      <div className="font-bold text-gray-700 mb-2 truncate">{columnName}</div>
+
+      <div className="flex flex-col gap-1 mb-2">
+        <button
+          onClick={() => setSort(sort === 'asc' ? null : 'asc')}
+          className={`text-left px-2 py-1 rounded ${sort === 'asc' ? 'bg-blue-100 text-blue-800 font-semibold' : 'hover:bg-gray-100'}`}
+        >
+          ↑ {isDateCol ? 'Oldest to Newest' : 'A → Z'}
+        </button>
+        <button
+          onClick={() => setSort(sort === 'desc' ? null : 'desc')}
+          className={`text-left px-2 py-1 rounded ${sort === 'desc' ? 'bg-blue-100 text-blue-800 font-semibold' : 'hover:bg-gray-100'}`}
+        >
+          ↓ {isDateCol ? 'Newest to Oldest' : 'Z → A'}
+        </button>
+      </div>
+
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder={`Search ${columnName}...`}
+        className="w-full px-2 py-1 border border-gray-300 rounded mb-2 focus:outline-none focus:border-blue-500"
+      />
+
+      <div className="flex items-center gap-3 mb-1">
+        <button onClick={() => setChecked(new Set(values))} className="text-blue-700 hover:underline font-semibold">Select All</button>
+        <button onClick={() => setChecked(new Set())} className="text-blue-700 hover:underline font-semibold">Clear All</button>
+      </div>
+
+      <div className="border border-gray-200 rounded max-h-48 overflow-y-auto mb-2">
+        {shown.map(v => (
+          <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
+            <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
+            <span className="truncate">{label(v)}</span>
+          </label>
+        ))}
+        {shown.length === 0 && <div className="px-2 py-2 text-gray-400">No matching values</div>}
+        {!q && values.length > FILTER_CHECKLIST_LIMIT && (
+          <div className="px-2 py-1 text-gray-400 italic">Showing first {FILTER_CHECKLIST_LIMIT} of {values.length}</div>
+        )}
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
+        <button onClick={onClose} className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 font-semibold">Cancel</button>
+        <button onClick={apply} className="px-3 py-1 rounded text-white font-semibold" style={{ backgroundColor: NAVY }}>Apply</button>
+      </div>
+    </div>
+  )
+}
+
 export default function TrackerGridPage() {
   const [headers, setHeaders] = useState<string[]>([])
   const [trackerRows, setTrackerRows] = useState<TrackerRowData[]>([])
@@ -255,11 +388,29 @@ export default function TrackerGridPage() {
   const [draftHidden, setDraftHidden] = useState<Set<string>>(new Set())
   const [savePromptOpen, setSavePromptOpen] = useState(false)
   const [viewNameDraft, setViewNameDraft] = useState('')
+  // When set, the column editor is editing an existing saved view (rather than
+  // creating a new one) — saving overwrites it, renaming drops the old row.
+  const [editingViewName, setEditingViewName] = useState<string | null>(null)
 
   const [pendingChanges, setPendingChanges] = useState<TrackerChange[]>([])
   const [editingCell, setEditingCell] = useState<{ hop: string; field: string } | null>(null)
 
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // --- Smart search bar. `searchInput` is the raw box value; `searchQuery` is
+  // the debounced value that actually drives filtering (300ms) so we don't
+  // re-filter on every keystroke.
+  const [searchInput, setSearchInput] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // --- Per-column ("Excel style") filters. Map of columnName -> filter state.
+  // Only entries that actually constrain something are kept.
+  const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilterState>>({})
+  // Which column's filter dropdown is open, and where to anchor it (viewport
+  // coords — the panel is position:fixed, outside the table flow). Only one at
+  // a time.
+  const [filterPanel, setFilterPanel] = useState<{ col: string; top: number; left: number } | null>(null)
+  const filterPanelRef = useRef<HTMLDivElement>(null)
 
   // --- Rendering-performance state (virtual scrolling, lazy columns, row
   // selection) — none of this touches data loading, view, or copy-updates logic.
@@ -339,6 +490,29 @@ export default function TrackerGridPage() {
     }
     load()
   }, [])
+
+  // Debounce the search box — 300ms after the last keystroke the query commits
+  // and the memoized row filter recomputes.
+  useEffect(() => {
+    const t = setTimeout(() => setSearchQuery(searchInput), 300)
+    return () => clearTimeout(t)
+  }, [searchInput])
+
+  // Close the column-filter dropdown on any click outside of it (and outside
+  // the ▼ buttons, which toggle it themselves). Listener only mounted while a
+  // panel is open; cleaned up on unmount / close.
+  useEffect(() => {
+    if (!filterPanel) return
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as HTMLElement | null
+      if (!t) return
+      if (filterPanelRef.current?.contains(t)) return
+      if (t.closest('[data-col-filter-btn]')) return
+      setFilterPanel(null)
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [filterPanel])
 
   // Measure the scroll container so the row/column virtualization windows
   // know how many cells actually fit in view. Re-measures on window resize.
@@ -423,10 +597,35 @@ export default function TrackerGridPage() {
     persistChanges([])
   }
 
+  // Switching views resets the search box and every column filter, but a
+  // half-typed search survives ordinary re-renders (it lives in state).
+  const selectView = (name: string) => {
+    setActiveViewName(name)
+    setEditorMode(false)
+    setEditingViewName(null)
+    setSearchInput('')
+    setSearchQuery('')
+    setColumnFilters({})
+    setFilterPanel(null)
+  }
+
   const enterEditorMode = () => {
+    setEditingViewName(null)
     setDraftHidden(new Set())
     setSavePromptOpen(false)
     setViewNameDraft('')
+    setFilterPanel(null)
+    setEditorMode(true)
+  }
+
+  // Enter the column editor pre-populated with an existing view's hidden
+  // columns — same UI as Create View, but Save overwrites the view.
+  const editView = (v: TrackerView) => {
+    setEditingViewName(v.name)
+    setDraftHidden(new Set(v.hiddenColumns))
+    setSavePromptOpen(false)
+    setViewNameDraft(v.name)
+    setFilterPanel(null)
     setEditorMode(true)
   }
 
@@ -434,6 +633,7 @@ export default function TrackerGridPage() {
     setEditorMode(false)
     setSavePromptOpen(false)
     setViewNameDraft('')
+    setEditingViewName(null)
     setDraftHidden(new Set())
   }
 
@@ -458,8 +658,15 @@ export default function TrackerGridPage() {
       updates: JSON.stringify(view),
       updated_at: new Date().toISOString(),
     })
-    setViews(prev => [...prev.filter(v => v.name !== name), view])
+    // Editing an existing view under a new name — drop the old row so we don't
+    // leave a stale duplicate behind.
+    if (editingViewName && editingViewName !== name) {
+      await supabase.from('pm_updates_cache').delete().eq('id', `tracker-view-${editingViewName}`)
+    }
+    setViews(prev => [...prev.filter(v => v.name !== name && v.name !== editingViewName), view])
     setActiveViewName(name)
+    setColumnFilters({})
+    setFilterPanel(null)
     cancelEditorMode()
   }
 
@@ -467,7 +674,13 @@ export default function TrackerGridPage() {
     if (!confirm(`Delete view "${name}"?`)) return
     await supabase.from('pm_updates_cache').delete().eq('id', `tracker-view-${name}`)
     setViews(prev => prev.filter(v => v.name !== name))
-    if (activeViewName === name) setActiveViewName('Default')
+    if (activeViewName === name) {
+      setActiveViewName('Default')
+      setColumnFilters({})
+      setFilterPanel(null)
+      setSearchInput('')
+      setSearchQuery('')
+    }
   }
 
   const handleTouchStart = (name: string) => {
@@ -486,7 +699,7 @@ export default function TrackerGridPage() {
   // Full column list — memoized so it's only recomputed when the tracker's
   // header row actually changes, not on every render (e.g. every keystroke
   // while editing a cell).
-  const allColumns = useMemo(() => {
+  const allColumns = useMemo<GridColumn[]>(() => {
     const hopColIdx = headers.findIndex(h => h === 'HOP')
     const orderedIndexes = headers.length > 0
       ? [hopColIdx, ...headers.map((_, i) => i).filter(i => i !== hopColIdx)]
@@ -504,11 +717,40 @@ export default function TrackerGridPage() {
     [allColumns, effectiveHidden]
   )
 
+  // The first three columns (HOP, Site Name, Path ID) are pinned. They're
+  // pulled out of horizontal virtualization entirely and always rendered as
+  // position:sticky cells with incrementing left offsets so they stack.
+  const frozenColumns = useMemo<GridColumn[]>(() => {
+    const out: GridColumn[] = []
+    for (const name of FROZEN_COL_NAMES) {
+      const c = filteredColumns.find(col => col.name === name)
+      if (c) out.push(c)
+    }
+    return out
+  }, [filteredColumns])
+
+  const { frozenLeft, frozenTotalWidth } = useMemo(() => {
+    const left: number[] = []
+    let acc = 0
+    for (const c of frozenColumns) { left.push(acc); acc += c.width }
+    return { frozenLeft: left, frozenTotalWidth: acc }
+  }, [frozenColumns])
+
+  // Everything that isn't frozen — this is what gets lazy-loaded + horizontally
+  // virtualized.
+  const scrollableColumns = useMemo(() => {
+    const fset = new Set(frozenColumns.map(c => c.name))
+    return filteredColumns.filter(c => !fset.has(c.name))
+  }, [filteredColumns, frozenColumns])
+
+  // name -> column, for filter lookups (covers frozen + scrollable).
+  const colMap = useMemo(() => new Map(filteredColumns.map(c => [c.name, c])), [filteredColumns])
+
   // Lazy column loading — capped to `loadedColumnCount` outside the column
   // editor (where every not-yet-hidden column must stay clickable to hide).
   const loadedColumns = useMemo(
-    () => (editorMode ? filteredColumns : filteredColumns.slice(0, loadedColumnCount)),
-    [filteredColumns, editorMode, loadedColumnCount]
+    () => (editorMode ? scrollableColumns : scrollableColumns.slice(0, loadedColumnCount)),
+    [scrollableColumns, editorMode, loadedColumnCount]
   )
 
   // Horizontal virtualization over whatever's currently loaded — cumulative
@@ -520,15 +762,21 @@ export default function TrackerGridPage() {
     return { offsets, total: acc }
   }, [loadedColumns])
 
+  // Horizontal virtualization window, in the scrollable columns' own offset
+  // space (0 = first scrollable column). The frozen block is sticky and always
+  // covers the leftmost `frozenTotalWidth` px of the viewport, so the visible
+  // slice of scrolling columns runs from `scrollLeft` to
+  // `scrollLeft + (viewportWidth - frozenTotalWidth)`.
   const { renderedColumns, leftSpacerWidth, rightSpacerWidth } = useMemo(() => {
     const { offsets, total } = colOffsets
+    const windowLeft = scrollLeft
+    const windowRight = scrollLeft + Math.max(0, viewportSize.width - frozenTotalWidth)
     let start = 0
-    while (start < loadedColumns.length && offsets[start] + loadedColumns[start].width < scrollLeft) start++
+    while (start < loadedColumns.length && offsets[start] + loadedColumns[start].width < windowLeft) start++
     start = Math.max(0, start - COL_BUFFER)
     let end = start
     let accWidth = start > 0 ? offsets[start] : 0
-    const rightEdge = scrollLeft + viewportSize.width
-    while (end < loadedColumns.length && accWidth < rightEdge) {
+    while (end < loadedColumns.length && accWidth < windowRight) {
       accWidth += loadedColumns[end].width
       end++
     }
@@ -537,20 +785,7 @@ export default function TrackerGridPage() {
     const left = start > 0 ? offsets[start] : 0
     const right = total - (end < loadedColumns.length ? offsets[end] : total)
     return { renderedColumns: rendered, leftSpacerWidth: left, rightSpacerWidth: right }
-  }, [loadedColumns, colOffsets, scrollLeft, viewportSize.width])
-
-  // Vertical virtualization — same idea, over the full deduped HOP row list.
-  const { visibleRows, topSpacerHeight, bottomSpacerHeight } = useMemo(() => {
-    const totalRows = trackerRows.length
-    const visibleSlots = Math.ceil(viewportSize.height / ROW_HEIGHT) + ROW_BUFFER * 2
-    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_BUFFER)
-    const end = Math.min(totalRows, start + visibleSlots)
-    return {
-      visibleRows: trackerRows.slice(start, end).map((row, i) => ({ row, rowIndex: start + i })),
-      topSpacerHeight: start * ROW_HEIGHT,
-      bottomSpacerHeight: (totalRows - end) * ROW_HEIGHT,
-    }
-  }, [trackerRows, scrollTop, viewportSize.height])
+  }, [loadedColumns, colOffsets, scrollLeft, viewportSize.width, frozenTotalWidth])
 
   const changeMap = useMemo(() => {
     const map = new Map<string, TrackerChange>()
@@ -558,39 +793,195 @@ export default function TrackerGridPage() {
     return map
   }, [pendingChanges])
 
-  const spacerColCount = 2 + renderedColumns.length
+  // Display text for a cell, honoring an in-flight edit override. Shared by
+  // search, the per-column checklists, and the column-filter pass so all three
+  // agree on what a cell "contains".
+  const cellText = useCallback((row: TrackerRowData, col: GridColumn): string => {
+    const change = changeMap.get(`${row.hop}|${col.name}`)
+    if (change) return change.newValue ?? ''
+    if (col.isHop) return row.hop
+    return cellDisplayValue(row.cells[col.index], col.isDate).text
+  }, [changeMap])
+
+  // --- Search filter. Recomputes only when the debounced query, the row set,
+  // or the visible column set changes — never on unrelated re-renders.
+  const searchedRows = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return trackerRows
+    return trackerRows.filter(row =>
+      filteredColumns.some(col => cellText(row, col).toLowerCase().includes(q))
+    )
+  }, [trackerRows, searchQuery, filteredColumns, cellText])
+
+  // Unique values per column for the filter checklists — derived from the
+  // currently displayed (search-filtered) rows.
+  const uniqueColumnValues = useMemo(() => {
+    const map = new Map<string, string[]>()
+    for (const col of filteredColumns) {
+      const set = new Set<string>()
+      for (const row of searchedRows) set.add(cellText(row, col))
+      const arr = Array.from(set)
+      if (col.isDate) {
+        arr.sort((a, b) => (parseDateAny(a)?.getTime() ?? -Infinity) - (parseDateAny(b)?.getTime() ?? -Infinity))
+      } else {
+        arr.sort((a, b) => a.localeCompare(b))
+      }
+      map.set(col.name, arr)
+    }
+    return map
+  }, [filteredColumns, searchedRows, cellText])
+
+  // --- Column filters applied on top of the search filter. Single pass across
+  // every active column filter simultaneously (never a sequential loop), then
+  // one optional sort by whichever column currently holds a sort.
+  const displayRows = useMemo(() => {
+    const valueSpecs = Object.entries(columnFilters)
+      .filter(([, f]) => f.selectedValues !== null)
+      .map(([name, f]) => ({ col: colMap.get(name), allowed: new Set(f.selectedValues as string[]) }))
+      .filter((s): s is { col: GridColumn; allowed: Set<string> } => !!s.col)
+
+    let rows = searchedRows
+    if (valueSpecs.length > 0) {
+      rows = rows.filter(row => valueSpecs.every(s => s.allowed.has(cellText(row, s.col))))
+    }
+
+    const sortEntry = Object.entries(columnFilters).find(([, f]) => f.sort)
+    if (sortEntry) {
+      const col = colMap.get(sortEntry[0])
+      const dir = sortEntry[1].sort
+      if (col) {
+        rows = [...rows].sort((a, b) => {
+          const ta = cellText(a, col)
+          const tb = cellText(b, col)
+          let cmp: number
+          if (col.isDate) {
+            cmp = (parseDateAny(ta)?.getTime() ?? -Infinity) - (parseDateAny(tb)?.getTime() ?? -Infinity)
+          } else {
+            cmp = ta.localeCompare(tb)
+          }
+          return dir === 'asc' ? cmp : -cmp
+        })
+      }
+    }
+    return rows
+  }, [searchedRows, columnFilters, colMap, cellText])
+
+  // Vertical virtualization — same idea, over the filtered/sorted HOP row list.
+  const { visibleRows, topSpacerHeight, bottomSpacerHeight } = useMemo(() => {
+    const totalRows = displayRows.length
+    const visibleSlots = Math.ceil(viewportSize.height / ROW_HEIGHT) + ROW_BUFFER * 2
+    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_BUFFER)
+    const end = Math.min(totalRows, start + visibleSlots)
+    return {
+      visibleRows: displayRows.slice(start, end).map((row, i) => ({ row, rowIndex: start + i })),
+      topSpacerHeight: start * ROW_HEIGHT,
+      bottomSpacerHeight: (totalRows - end) * ROW_HEIGHT,
+    }
+  }, [displayRows, scrollTop, viewportSize.height])
+
+  const spacerColCount = frozenColumns.length + 2 + renderedColumns.length
+  const tableWidth = frozenTotalWidth + colOffsets.total
+
+  const isColFilterActive = (name: string) => !!columnFilters[name]
+
+  const openColumnFilter = (name: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (filterPanel?.col === name) { setFilterPanel(null); return }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    setFilterPanel({
+      col: name,
+      top: Math.min(r.bottom + 4, window.innerHeight - 380),
+      left: Math.max(8, Math.min(r.left, window.innerWidth - 272)),
+    })
+  }
+
+  // Header contents (label + editor ✕ + filter ▼) — shared by frozen and
+  // scrolling header cells so both render identically.
+  const headerContent = (col: GridColumn) => (
+    <div className="flex items-center justify-between gap-1">
+      <span className="truncate">{col.name}</span>
+      <div className="flex items-center gap-1 flex-shrink-0">
+        {editorMode && !col.isHop && (
+          <button
+            onClick={() => toggleDraftHidden(col.name)}
+            className="text-red-300 hover:text-red-100 font-bold text-xs"
+            title="Hide column"
+          >
+            ✕
+          </button>
+        )}
+        <button
+          data-col-filter-btn
+          onClick={(e) => openColumnFilter(col.name, e)}
+          title="Filter / sort column"
+          className="leading-none"
+          // Headers are navy, so an active filter reads as a bright filled
+          // marker rather than "navy on navy".
+          style={{ fontSize: 10, color: isColFilterActive(col.name) ? '#FFD166' : 'rgba(255,255,255,0.5)' }}
+        >
+          ▼
+        </button>
+      </div>
+    </div>
+  )
 
   const viewBtnClass = (name: string) =>
     `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeViewName === name && !editorMode ? 'text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`
 
+  const activeFilterCol = filterPanel ? colMap.get(filterPanel.col) : undefined
+
   return (
     <div className="min-h-screen bg-gray-100 text-gray-900 p-4">
       <BackToDashboard />
+
+      <style>{`
+        .tracker-scroll::-webkit-scrollbar { width: 12px; height: 12px; }
+        .tracker-scroll::-webkit-scrollbar-track { background: #f1f2f4; border-radius: 6px; }
+        .tracker-scroll::-webkit-scrollbar-thumb { background: #b8bcc4; border-radius: 6px; border: 3px solid #f1f2f4; }
+        .tracker-scroll::-webkit-scrollbar-thumb:hover { background: #8b9099; }
+        .tracker-scroll::-webkit-scrollbar-corner { background: #f1f2f4; }
+        .tracker-scroll { scrollbar-width: thin; scrollbar-color: #b8bcc4 #f1f2f4; }
+      `}</style>
 
       <div className="flex items-center justify-between mb-3 flex-wrap gap-3">
         <h1 className="text-xl font-bold">📊 Tracker Grid</h1>
 
         <div className="flex items-center gap-2 flex-wrap">
           <button
-            onClick={() => { setActiveViewName('Default'); setEditorMode(false) }}
+            onClick={() => selectView('Default')}
             style={activeViewName === 'Default' && !editorMode ? { backgroundColor: NAVY } : undefined}
             className={viewBtnClass('Default')}
           >
             Default
           </button>
           {views.map(v => (
-            <button
-              key={v.name}
-              onClick={() => { setActiveViewName(v.name); setEditorMode(false) }}
-              onContextMenu={(e) => { e.preventDefault(); deleteView(v.name) }}
-              onTouchStart={() => handleTouchStart(v.name)}
-              onTouchEnd={handleTouchEnd}
-              style={activeViewName === v.name && !editorMode ? { backgroundColor: NAVY } : undefined}
-              className={viewBtnClass(v.name)}
-              title="Right-click or long-press to delete"
-            >
-              {v.name}
-            </button>
+            <span key={v.name} className="inline-flex items-center gap-0.5">
+              <button
+                onClick={() => selectView(v.name)}
+                onContextMenu={(e) => { e.preventDefault(); deleteView(v.name) }}
+                onTouchStart={() => handleTouchStart(v.name)}
+                onTouchEnd={handleTouchEnd}
+                style={activeViewName === v.name && !editorMode ? { backgroundColor: NAVY } : undefined}
+                className={viewBtnClass(v.name)}
+                title="Right-click or long-press to delete"
+              >
+                {v.name}
+              </button>
+              <button
+                onClick={() => editView(v)}
+                className="px-1 text-xs text-gray-500 hover:text-gray-900"
+                title={`Edit "${v.name}"`}
+              >
+                ✏️
+              </button>
+              <button
+                onClick={() => deleteView(v.name)}
+                className="px-1 text-xs text-gray-500 hover:text-red-600"
+                title={`Delete "${v.name}"`}
+              >
+                🗑️
+              </button>
+            </span>
           ))}
           <button
             onClick={enterEditorMode}
@@ -621,7 +1012,11 @@ export default function TrackerGridPage() {
       {editorMode && (
         <div className="mb-3 bg-blue-50 border border-blue-300 rounded-lg p-3">
           <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
-            <p className="text-sm text-blue-900 font-semibold">Column Editor Mode — click ✕ on any column to hide it from this view</p>
+            <p className="text-sm text-blue-900 font-semibold">
+              {editingViewName
+                ? `Editing view "${editingViewName}" — click ✕ on any column to hide it`
+                : 'Column Editor Mode — click ✕ on any column to hide it from this view'}
+            </p>
             <div className="flex items-center gap-2">
               {!savePromptOpen ? (
                 <>
@@ -681,11 +1076,37 @@ export default function TrackerGridPage() {
         </div>
       )}
 
-      {loaded && headers.length > 0 && !editorMode && loadedColumns.length < filteredColumns.length && (
+      {loaded && headers.length > 0 && (
+        <div className="mb-3 flex items-center gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[280px] max-w-2xl">
+            <input
+              type="text"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Search all columns — HOP, GC, Path ID, PO number..."
+              className="w-full pl-3 pr-8 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-blue-500"
+            />
+            {searchInput && (
+              <button
+                onClick={() => setSearchInput('')}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-700 text-lg leading-none"
+                title="Clear search"
+              >
+                ×
+              </button>
+            )}
+          </div>
+          <span className="text-xs font-semibold text-gray-600">
+            Showing {displayRows.length} of {trackerRows.length} HOPs
+          </span>
+        </div>
+      )}
+
+      {loaded && headers.length > 0 && !editorMode && loadedColumns.length < scrollableColumns.length && (
         <div className="mb-2 flex items-center gap-3">
-          <span className="text-xs text-gray-500">Showing {loadedColumns.length} of {filteredColumns.length} columns</span>
+          <span className="text-xs text-gray-500">Showing {loadedColumns.length} of {scrollableColumns.length} scrolling columns</span>
           <button
-            onClick={() => setLoadedColumnCount(c => Math.min(c + COLUMN_PAGE_SIZE, filteredColumns.length))}
+            onClick={() => setLoadedColumnCount(c => Math.min(c + COLUMN_PAGE_SIZE, scrollableColumns.length))}
             className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
           >
             Show More Columns →
@@ -697,17 +1118,36 @@ export default function TrackerGridPage() {
         <div
           ref={scrollContainerRef}
           onScroll={handleGridScroll}
-          className="border border-gray-300 rounded-lg bg-white"
-          style={{ overflow: 'auto', height: 'calc(100vh - 230px)' }}
+          className="border border-gray-300 rounded-lg bg-white tracker-scroll"
+          style={{ overflowX: 'scroll', overflowY: 'auto', height: 'calc(100vh - 300px)' }}
         >
-          <table style={{ tableLayout: 'fixed', borderCollapse: 'collapse', width: colOffsets.total }}>
+          <table style={{ tableLayout: 'fixed', borderCollapse: 'collapse', width: tableWidth }}>
             <colgroup>
+              {frozenColumns.map(c => <col key={c.name} style={{ width: c.width }} />)}
               <col style={{ width: leftSpacerWidth }} />
               {renderedColumns.map(c => <col key={c.name} style={{ width: c.width }} />)}
               <col style={{ width: rightSpacerWidth }} />
             </colgroup>
             <thead>
               <tr>
+                {frozenColumns.map((col, i) => (
+                  <th
+                    key={col.name}
+                    style={{
+                      position: 'sticky',
+                      top: 0,
+                      left: frozenLeft[i],
+                      // Above the scrolling headers (z 20) so the corner stays clean.
+                      zIndex: 30,
+                      backgroundColor: NAVY,
+                      height: ROW_HEIGHT,
+                      boxShadow: FROZEN_SHADOW,
+                    }}
+                    className="text-white text-xs font-bold px-2 py-2 text-left border-r border-b border-blue-900"
+                  >
+                    {headerContent(col)}
+                  </th>
+                ))}
                 <th style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY }} />
                 {renderedColumns.map(col => (
                   <th
@@ -715,18 +1155,7 @@ export default function TrackerGridPage() {
                     style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY, height: ROW_HEIGHT }}
                     className="text-white text-xs font-bold px-2 py-2 text-left border-r border-b border-blue-900"
                   >
-                    <div className="flex items-center justify-between gap-1">
-                      <span className="truncate">{col.name}</span>
-                      {editorMode && !col.isHop && (
-                        <button
-                          onClick={() => toggleDraftHidden(col.name)}
-                          className="text-red-300 hover:text-red-100 font-bold text-xs flex-shrink-0"
-                          title="Hide column"
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
+                    {headerContent(col)}
                   </th>
                 ))}
                 <th style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY }} />
@@ -741,8 +1170,50 @@ export default function TrackerGridPage() {
               {visibleRows.map(({ row, rowIndex }) => {
                 const isSelected = row.hop === selectedHop
                 const rowBg = isSelected ? SELECTED_ROW : (rowIndex % 2 === 1 ? ALT_ROW : '#FFFFFF')
+                // Frozen columns carry a solid (white / selected) background so
+                // scrolling cells never show through underneath them.
+                const frozenBg = isSelected ? SELECTED_ROW : '#FFFFFF'
                 return (
                   <tr key={row.hop} onClick={() => handleRowClick(row.hop)} style={{ height: ROW_HEIGHT, cursor: 'pointer' }}>
+                    {frozenColumns.map((col, i) => {
+                      if (col.isHop) {
+                        return (
+                          <td
+                            key={col.name}
+                            style={{
+                              position: 'sticky',
+                              left: frozenLeft[i],
+                              zIndex: 10,
+                              backgroundColor: frozenBg,
+                              color: NAVY,
+                              height: ROW_HEIGHT,
+                              boxShadow: FROZEN_SHADOW,
+                            }}
+                            className="px-2 py-1 text-xs font-bold whitespace-nowrap border-r border-b border-gray-200"
+                          >
+                            {row.hop}
+                          </td>
+                        )
+                      }
+                      const raw = row.cells[col.index]
+                      const { text: displayValue, treatAsDate } = cellDisplayValue(raw, col.isDate)
+                      const change = changeMap.get(`${row.hop}|${col.name}`)
+                      const shown = change ? change.newValue : displayValue
+                      const isEditing = editingCell?.hop === row.hop && editingCell?.field === col.name
+                      const cellProps: CellProps = {
+                        displayValue: shown,
+                        isChanged: !!change,
+                        isEditing,
+                        rowBg: frozenBg,
+                        stickyLeft: frozenLeft[i],
+                        onStartEdit: () => setEditingCell({ hop: row.hop, field: col.name }),
+                        onCommit: (newValue: string) => saveEdit(row.hop, col.name, displayValue, newValue),
+                        onCancel: () => setEditingCell(null),
+                      }
+                      return treatAsDate
+                        ? <DatePickerCell key={col.name} {...cellProps} />
+                        : <EditableCell key={col.name} {...cellProps} />
+                    })}
                     <td style={{ backgroundColor: rowBg, height: ROW_HEIGHT }} />
                     {renderedColumns.map(col => {
                       if (col.isHop) {
@@ -786,6 +1257,42 @@ export default function TrackerGridPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {filterPanel && activeFilterCol && (
+        <ColumnFilterPanel
+          key={filterPanel.col}
+          panelRef={filterPanelRef}
+          columnName={activeFilterCol.name}
+          isDateCol={activeFilterCol.isDate}
+          values={uniqueColumnValues.get(activeFilterCol.name) || []}
+          current={columnFilters[activeFilterCol.name]}
+          pos={{ top: filterPanel.top, left: filterPanel.left }}
+          onClose={() => setFilterPanel(null)}
+          onApply={(state) => {
+            const name = activeFilterCol.name
+            setColumnFilters(prev => {
+              const next = { ...prev }
+              // Only one column may hold a sort at a time — clear the others.
+              if (state.sort) {
+                for (const k of Object.keys(next)) {
+                  if (next[k]?.sort) next[k] = { ...next[k], sort: null }
+                }
+              }
+              if (!state.sort && state.selectedValues === null) {
+                delete next[name]
+              } else {
+                next[name] = state
+              }
+              // Drop any entry that ended up fully inert.
+              for (const k of Object.keys(next)) {
+                if (!next[k].sort && next[k].selectedValues === null) delete next[k]
+              }
+              return next
+            })
+            setFilterPanel(null)
+          }}
+        />
       )}
     </div>
   )
