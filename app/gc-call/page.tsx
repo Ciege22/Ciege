@@ -293,7 +293,7 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
                 </thead>
                 <tbody>
                   {outstandingPending.map(r => (
-                    <tr key={r.hop} className={`border-t border-gray-800 ${(r.aging ?? 0) >= 7 ? 'bg-red-950' : 'bg-yellow-950'}`}>
+                    <tr key={r.rowKey} className={`border-t border-gray-800 ${(r.aging ?? 0) >= 7 ? 'bg-red-950' : 'bg-yellow-950'}`}>
                       <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
@@ -343,7 +343,7 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
                 </thead>
                 <tbody>
                   {podGap.map(r => (
-                    <tr key={r.hop} className="border-t border-gray-800 bg-yellow-950">
+                    <tr key={r.rowKey} className="border-t border-gray-800 bg-yellow-950">
                       <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
@@ -387,7 +387,7 @@ function DecomTab({ selectedGC, decomRawRows, emailSettings }: DecomTabProps) {
                   </thead>
                   <tbody>
                     {complete.map(r => (
-                      <tr key={r.hop} className="border-t border-gray-800 bg-green-950">
+                      <tr key={r.rowKey} className="border-t border-gray-800 bg-green-950">
                         <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
                         <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{r.pathId || '—'}</td>
                         <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>

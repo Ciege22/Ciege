@@ -1,6 +1,10 @@
 import { GC_CONFIG, matches } from './gcConfig'
 
 export interface DecomRow {
+  // Unique per site row — Path ID (falling back to Site Name + Site Number
+  // when Path ID is blank). HOP is NOT unique per row (a HOP can cover
+  // multiple sites), so it must never be used as a key or dedup identifier.
+  rowKey: string
   appPathId: string
   hop: string
   pathId: string
@@ -181,12 +185,21 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
       ? ((podPathwave && podQuickBase) ? 'complete' : 'pod_gap')
       : (aging >= 7 ? 'outstanding' : 'pending')
 
+    const pathId = String(row[pathIdCol] ?? '').trim()
+    const siteName = String(row[siteNameCol] ?? '').trim()
+    const siteNumber = String(row[siteNumberCol] ?? '').trim()
+    // Path ID is the real per-row identifier — a HOP can span multiple
+    // sites, so it can't disambiguate rows on its own. Fall back to
+    // Site Name + Site Number only when Path ID itself is blank.
+    const rowKey = pathId || (siteName || siteNumber ? `${siteName}|${siteNumber}` : `row-${i}`)
+
     rows.push({
+      rowKey,
       appPathId: String(row[appPathIdCol] ?? '').trim(),
       hop,
-      pathId: String(row[pathIdCol] ?? '').trim(),
-      siteName: String(row[siteNameCol] ?? '').trim(),
-      siteNumber: String(row[siteNumberCol] ?? '').trim(),
+      pathId,
+      siteName,
+      siteNumber,
       cxStart, cxComplete,
       dropOffDate, comment,
       cm: String(row[cmCol] ?? '').trim(),
