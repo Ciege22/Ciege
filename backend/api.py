@@ -9,6 +9,7 @@ import tempfile
 import traceback
 from datetime import datetime
 
+import requests
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -25,6 +26,19 @@ CORS(app)
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
+ANTHROPIC_MODEL = 'claude-sonnet-5'
+AI_ASSISTANT_SYSTEM_PROMPT = (
+	"You are Ciege AI, an intelligent program management assistant embedded in the Ciege platform "
+	"for CJ, a Nokia Program Manager on the Viaero Wireless MW Construction Program (DON 444). "
+	"You have access to real-time program data provided below. Answer questions concisely and "
+	"accurately based on this data. When listing sites, format them clearly. When asked about "
+	"blockers, check NTP status, material status, and vendor conflicts. When asked about a specific "
+	"site, pull all available data for that HOP. Keep answers brief and actionable — CJ is often "
+	"on a live call. Never make up data not in the context. If you don't have the data to answer, "
+	"say so clearly."
+)
 
 
 def _save_uploaded_file(uploaded, dest_dir, field_name):
@@ -155,6 +169,54 @@ def gr_data_endpoint():
 		gc_filter = body.get('gc') or None
 		groups = gr_tracker.load_gr_data(supabase_client, gc_filter=gc_filter)
 		return jsonify(groups)
+	except Exception as e:
+		tb = traceback.format_exc()
+		return jsonify({'error': str(e), 'traceback': tb}), 500
+
+
+@app.route('/ai_assistant', methods=['POST'])
+def ai_assistant_endpoint():
+	try:
+		if not ANTHROPIC_API_KEY:
+			return jsonify({'error': 'ANTHROPIC_API_KEY not configured on server'}), 500
+
+		body = request.get_json(silent=True) or {}
+		messages = body.get('messages') or []
+		context = body.get('context') or ''
+
+		if not messages:
+			return jsonify({'error': 'No messages provided'}), 400
+
+		system_prompt = f"{AI_ASSISTANT_SYSTEM_PROMPT}\n\n{context}"
+
+		anthropic_resp = requests.post(
+			'https://api.anthropic.com/v1/messages',
+			headers={
+				'x-api-key': ANTHROPIC_API_KEY,
+				'anthropic-version': '2023-06-01',
+				'content-type': 'application/json',
+			},
+			json={
+				'model': ANTHROPIC_MODEL,
+				'max_tokens': 1000,
+				'system': system_prompt,
+				'messages': messages,
+			},
+			timeout=60,
+		)
+
+		if anthropic_resp.status_code != 200:
+			return jsonify({
+				'error': f'Anthropic API error: {anthropic_resp.status_code}',
+				'detail': anthropic_resp.text[:500],
+			}), 502
+
+		data = anthropic_resp.json()
+		answer = ''.join(
+			block.get('text', '') for block in data.get('content', []) if block.get('type') == 'text'
+		).strip()
+
+		return jsonify({'response': answer})
 	except Exception as e:
 		tb = traceback.format_exc()
 		return jsonify({'error': str(e), 'traceback': tb}), 500
