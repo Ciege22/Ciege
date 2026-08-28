@@ -119,6 +119,80 @@ function WeatherWidget() {
   )
 }
 
+// Inline microwave-dish icon — two parabolic dishes facing each other with a
+// lightning bolt between them, matching the Nebraska widget's compact 40x20 spec.
+function MicrowaveDishIcon() {
+  return (
+    <svg width="40" height="20" viewBox="0 0 40 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+      {/* Left dish — concave arc opening right, on a small stand */}
+      <path d="M5 2 Q15 10 5 18" stroke="#124191" strokeWidth="1.75" fill="none" strokeLinecap="round" />
+      <line x1="5" y1="18" x2="7" y2="20" stroke="#124191" strokeWidth="1.5" strokeLinecap="round" />
+      {/* Right dish — mirrored, concave arc opening left, on a small stand */}
+      <path d="M35 2 Q25 10 35 18" stroke="#124191" strokeWidth="1.75" fill="none" strokeLinecap="round" />
+      <line x1="35" y1="18" x2="33" y2="20" stroke="#124191" strokeWidth="1.5" strokeLinecap="round" />
+      {/* Lightning bolt between the dishes */}
+      <path d="M21 2 L17 10 L20 10 L18.5 18 L23.5 9 L20.5 9 Z" fill="#00A0B0" />
+    </svg>
+  )
+}
+
+const NEBRASKA_DEADLINE = new Date(2026, 10, 30) // November 30, 2026
+
+function daysUntilNebraskaDeadline(): number {
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const target = new Date(NEBRASKA_DEADLINE)
+  target.setHours(0, 0, 0, 0)
+  return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+}
+
+function nebraskaDeadlineColor(daysRemaining: number): string {
+  if (daysRemaining > 60) return '#27AE60'
+  if (daysRemaining >= 30) return '#E67E22'
+  return '#C0392B'
+}
+
+// MS16 Implementation Ends A is stored as a formatted "M/D/YYYY" string (or
+// '') on hopDetails — same "blank or year < 2025" validity check used
+// elsewhere in this file for NTP dates, applied here to MS16A.
+function hasValidMs16a(ms16a: string): boolean {
+  if (!ms16a) return false
+  const d = new Date(ms16a)
+  return !isNaN(d.getTime()) && d.getFullYear() >= 2025
+}
+
+// Deliberately takes only the two fields it needs (not the full hopDetails
+// row shape, which is declared inline inside the Home component below) —
+// hopDetails structurally satisfies this narrower shape.
+function NebraskaWidget({ hopDetails }: { hopDetails: { hop: string; ms16a: string }[] }) {
+  const neHops = hopDetails.filter(h => h.hop.toUpperCase().includes('NE-'))
+  const total = neHops.length
+  const remaining = neHops.filter(h => !hasValidMs16a(h.ms16a)).length
+  const complete = total - remaining
+  const progress = total > 0 ? Math.round((complete / total) * 100) : 0
+  const daysRemaining = daysUntilNebraskaDeadline()
+  const color = nebraskaDeadlineColor(daysRemaining)
+  const filledBars = Math.round(progress / 10)
+
+  return (
+    <div
+      title="Nebraska program deadline: Nov 30, 2026"
+      className="flex items-center gap-2 rounded-xl border px-3 py-2 bg-black/20 backdrop-blur-sm flex-shrink-0"
+      style={{ borderColor: color }}
+    >
+      <MicrowaveDishIcon />
+      <div className="leading-tight">
+        <p className="text-[10px] font-bold uppercase tracking-wider" style={{ color }}>Nebraska Deadline</p>
+        <p className="text-[10px] text-zinc-400">Nov 30, 2026</p>
+        <p className="text-[10px] font-mono tracking-tighter" style={{ color }}>
+          {'█'.repeat(filledBars)}{'░'.repeat(10 - filledBars)} {progress}%
+        </p>
+        <p className="text-[10px] text-zinc-300">{remaining} HOPs left · {daysRemaining} days</p>
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const router = useRouter()
   const [snapshotInfo, setSnapshotInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
@@ -1082,14 +1156,17 @@ export default function Home() {
                   </div>
                 </div>
 
-                <img
-                  src="/hylian-crest.png"
-                  alt="Hylian Crest"
-                  className="w-64 h-auto"
-                  style={{
-                    filter: 'invert(72%) sepia(98%) saturate(346%) hue-rotate(106deg) brightness(95%) contrast(88%)'
-                  }}
-                />
+                <div className="flex flex-col items-end gap-3">
+                  <NebraskaWidget hopDetails={hopDetails} />
+                  <img
+                    src="/hylian-crest.png"
+                    alt="Hylian Crest"
+                    className="w-64 h-auto"
+                    style={{
+                      filter: 'invert(72%) sepia(98%) saturate(346%) hue-rotate(106deg) brightness(95%) contrast(88%)'
+                    }}
+                  />
+                </div>
               </div>
             </section>
 
