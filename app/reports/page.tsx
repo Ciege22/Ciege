@@ -13,7 +13,7 @@ import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
 import {
   parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow,
   parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, STATUS_DISPLAY_LABEL, TrackerHop,
-  countDroppedOffWithoutCxComplete,
+  countDroppedOffWithoutCxComplete, uniqueDecomGcNames,
 } from '../lib/decom'
 
 interface ReportSnapshot {
@@ -209,7 +209,7 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
   // Every unique GC found in the decom file itself — not the GC_CONFIG roster —
   // so the breakdown always sums to the funnel's Total Decom Sites Tracked,
   // even for GCs not in the config list.
-  const gcNames = Array.from(new Set(decomRows.map(r => r.gc).filter(Boolean)))
+  const gcNames = uniqueDecomGcNames(decomRows)
   const summary = summarizeDecomByGc(decomRows, gcNames, missingSites)
   const lookup = nokiaPmLookup(trackerHops)
   const todayStr = new Date().toLocaleDateString('en-US')
@@ -416,7 +416,7 @@ async function downloadDecomSlides(decomRows: DecomRow[], missingDecom: MissingD
   const decomFunnel = computeDecomFunnel(decomRows, extraDroppedOff)
   // Same all-GC derivation as the on-page breakdown and the Excel dashboard —
   // every unique GC in the decom file itself, not the GC_CONFIG roster.
-  const gcNames = Array.from(new Set(decomRows.map(r => r.gc).filter(Boolean)))
+  const gcNames = uniqueDecomGcNames(decomRows)
   const gcSummary = summarizeDecomByGc(decomRows, gcNames, missingDecom)
     .sort((a, b) => (b.outstanding + b.pending) - (a.outstanding + a.pending))
   const todayStr = new Date().toLocaleDateString('en-US')
@@ -662,7 +662,7 @@ export default function ReportsPage() {
   // Every unique GC found in the decom file itself — not the GC_CONFIG roster —
   // so the breakdown always sums to Total Decom Sites Tracked, including GCs
   // not in the config list.
-  const decomGcNames = Array.from(new Set(decomRows.map(r => r.gc).filter(Boolean)))
+  const decomGcNames = uniqueDecomGcNames(decomRows)
 
   useEffect(() => {
     const load = async () => {

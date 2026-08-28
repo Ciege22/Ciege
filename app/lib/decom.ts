@@ -293,6 +293,24 @@ export function decomRowsForGc(rows: DecomRow[], gc: string): DecomRow[] {
   return rows.filter(r => r.gc?.trim().toLowerCase() === gc?.trim().toLowerCase())
 }
 
+// Case/whitespace-insensitive GC dedup — decomRowsForGc matches this same
+// way, so the GC name list driving summarizeDecomByGc must dedupe the same
+// way too. A plain `Set` on raw r.gc values doesn't: any GC not in
+// GC_CONFIG's known aliases falls through resolveGc() to its raw, un-
+// normalized cell text, so two rows spelled "Vantage" and "VANTAGE" produce
+// two "different" entries — decomRowsForGc then matches the same rows under
+// both, double-counting that GC's sites when the table is summed.
+export function uniqueDecomGcNames(rows: DecomRow[]): string[] {
+  const seen = new Map<string, string>() // normalized key -> first-seen display spelling
+  rows.forEach(r => {
+    const gc = r.gc?.trim()
+    if (!gc) return
+    const key = gc.toLowerCase()
+    if (!seen.has(key)) seen.set(key, gc)
+  })
+  return Array.from(seen.values())
+}
+
 export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[], missingSites: MissingDecomSite[] = []): DecomGcSummary[] {
   return gcNames.map(gc => {
     const gcRows = decomRowsForGc(rows, gc)
