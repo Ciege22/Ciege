@@ -580,24 +580,31 @@ export default function Home() {
     const today = new Date().toISOString()
     const changes: unknown[] = []
 
-    const getHeaders = (rows: unknown[][]) => {
+    // Returns both the header row itself and its index — buildHopMap needs the
+    // index to know where data actually starts. A hardcoded "data starts at
+    // row 1" assumption breaks on any snapshot with a leading description row
+    // (the header isn't always at row 0), same class of bug as the upload
+    // handler's header detection.
+    const getHeaders = (rows: unknown[][]): { headers: string[]; index: number } => {
       for (let i = 0; i < 10; i++) {
-        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) return rows[i] as string[]
+        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) return { headers: rows[i] as string[], index: i }
       }
-      return []
+      return { headers: [], index: -1 }
     }
 
-    const newHeaders = getHeaders(newRows)
-    const oldHeaders = getHeaders(oldRows)
-    if (newHeaders.length === 0 || oldHeaders.length === 0) return changes
+    const newHeaderInfo = getHeaders(newRows)
+    const oldHeaderInfo = getHeaders(oldRows)
+    if (newHeaderInfo.headers.length === 0 || oldHeaderInfo.headers.length === 0) return changes
+    const newHeaders = newHeaderInfo.headers
+    const oldHeaders = oldHeaderInfo.headers
 
     const col = (headers: string[], name: string) => headers.findIndex(h => String(h).trim() === name)
 
-    const buildHopMap = (rows: unknown[][], headers: string[]) => {
+    const buildHopMap = (rows: unknown[][], headers: string[], headerIndex: number) => {
       const hopCol = col(headers, 'HOP')
       const don444Col = col(headers, 'DON 444')
       const map = new Map<string, unknown[]>()
-      for (let i = 1; i < rows.length; i++) {
+      for (let i = headerIndex + 1; i < rows.length; i++) {
         const row = rows[i] as unknown[]
         const don = String(row[don444Col] || '').trim().toUpperCase()
         if (don !== 'DON 444') continue
@@ -608,8 +615,8 @@ export default function Home() {
       return map
     }
 
-    const newMap = buildHopMap(newRows, newHeaders)
-    const oldMap = buildHopMap(oldRows, oldHeaders)
+    const newMap = buildHopMap(newRows, newHeaderInfo.headers, newHeaderInfo.index)
+    const oldMap = buildHopMap(oldRows, oldHeaderInfo.headers, oldHeaderInfo.index)
 
     const fmtVal = (val: unknown) => {
       if (!val) return ''
