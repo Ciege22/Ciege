@@ -220,6 +220,8 @@ export default function Home() {
 
     const hopCol      = col('HOP')
     const don444Col   = col('DON 444')
+    const gcCol       = col('General Contractor')
+    const cmCol       = col('New CM')
     const nokiaPmCol  = col('Nokia PM')
     const ntpWaitCol  = col('NTP is waiting on')
     const ms15fCol    = col('MS15 Implementation Start F')
@@ -284,6 +286,17 @@ export default function Home() {
     }
     console.log('[kpi] rows surviving DON 444 filter:', don444Rows.length)
     console.log('[kpi] rows surviving Nokia PM=CJ filter:', cjRows.length)
+    const multiRowHops = Array.from(hopRows.values()).filter(rows2 => rows2.length > 1).length
+    console.log('[kpi] HOPs with more than one row (duplicate site rows):', multiRowHops, 'of', hopRows.size)
+
+    // A HOP can have two site rows in the raw tracker, and one of them may be
+    // a blank/partial duplicate — same rule every other page in this app uses
+    // (gc-call, cm-view, tracker grid, the AI assistant context builder) to
+    // avoid picking the empty row and losing real field values like NTP A.
+    // computeKPIs previously just took rows2[0], the first row encountered,
+    // regardless of which one actually had data.
+    const pickHopRow = (rows2: unknown[][]) =>
+      rows2.find(r => String((r as unknown[])[gcCol] || '').trim() && String((r as unknown[])[cmCol] || '').trim()) || rows2[0]
 
     let totalHops = 0, ntpComplete = 0, materialsReceived = 0
     let startsToDate = 0, completesToDate = 0, activeNow = 0, over18d = 0
@@ -299,7 +312,7 @@ export default function Home() {
     const pmList = ['ALL', ...Array.from(pmSet).sort()]
 
     hopRows.forEach((rows2) => {
-      const row = rows2[0]
+      const row = pickHopRow(rows2) as unknown[]
       totalHops++
 
       const ntpDate = parseD(row[ntpCol] ?? null)
@@ -372,7 +385,7 @@ export default function Home() {
       currentMonthFc: boolean, currentMonthAct: boolean,
     }[] = []
     hopRows.forEach((rows2) => {
-      const row = rows2[0]
+      const row = pickHopRow(rows2) as unknown[]
       const ntpDate = parseD(row[ntpCol] ?? null)
       const matDate = parseD(row[matCol])
       const ms15f   = parseD(row[ms15fCol])
