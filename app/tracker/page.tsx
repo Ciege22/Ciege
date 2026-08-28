@@ -315,13 +315,21 @@ function TriCheckbox({ state, onChange }: { state: 'all' | 'none' | 'some'; onCh
 // "3/15/2026") that fall in that year+month.
 type DateTree = Map<string, Map<string, string[]>>
 
-function buildDateTree(values: string[]): { tree: DateTree; blanks: string[] } {
+// `blanks` is genuinely-empty cells only — always at most one entry, since
+// `values` is a deduped set. `otherText` is anything non-empty that still
+// failed to parse as a date (a "date"-detected column can still hold real
+// text — e.g. NTP Action Owner / NTP is waiting on both match the date regex
+// but hold names/comments) — those keep their own real label instead of all
+// being mislabeled "(blank)" together, which is what made the checklist show
+// several rows that all *looked* identical.
+function buildDateTree(values: string[]): { tree: DateTree; blanks: string[]; otherText: string[] } {
   const tree: DateTree = new Map()
   const blanks: string[] = []
+  const otherText: string[] = []
   for (const v of values) {
     if (v === '') { blanks.push(v); continue }
     const d = parseDateAny(v)
-    if (!d) { blanks.push(v); continue }
+    if (!d) { otherText.push(v); continue }
     const year = String(d.getFullYear())
     const month = MONTH_NAMES[d.getMonth()]
     if (!tree.has(year)) tree.set(year, new Map())
@@ -329,7 +337,8 @@ function buildDateTree(values: string[]): { tree: DateTree; blanks: string[] } {
     if (!months.has(month)) months.set(month, [])
     months.get(month)!.push(v)
   }
-  return { tree, blanks }
+  otherText.sort((a, b) => a.localeCompare(b))
+  return { tree, blanks, otherText }
 }
 
 function groupState(vals: string[], checked: Set<string>): 'all' | 'none' | 'some' {
@@ -346,8 +355,8 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
     () => (current?.selectedValues ? new Set(current.selectedValues) : new Set(values))
   )
 
-  const { tree: dateTree, blanks: dateBlanks } = useMemo(
-    () => (isDateCol ? buildDateTree(values) : { tree: new Map<string, Map<string, string[]>>(), blanks: [] }),
+  const { tree: dateTree, blanks: dateBlanks, otherText: dateOtherText } = useMemo(
+    () => (isDateCol ? buildDateTree(values) : { tree: new Map<string, Map<string, string[]>>(), blanks: [], otherText: [] }),
     [isDateCol, values]
   )
   // Years start expanded (there are usually only a handful) — months start
@@ -391,6 +400,7 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
     return { year, monthEntries, yearVals }
   }).filter(y => !q || y.monthEntries.length > 0)
   const shownBlanks = q ? dateBlanks.filter(v => label(v).toLowerCase().includes(q)) : dateBlanks
+  const shownOtherText = q ? dateOtherText.filter(v => v.toLowerCase().includes(q)) : dateOtherText
 
   return (
     <div
@@ -451,6 +461,12 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
               <span className="truncate">(blank)</span>
             </label>
           ))}
+          {shownOtherText.map(v => (
+            <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
+              <span className="truncate">{v}</span>
+            </label>
+          ))}
           {yearEntries.map(({ year, monthEntries, yearVals }) => {
             const yearOpen = q ? true : expandedYears.has(year)
             return (
@@ -507,7 +523,7 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
               </div>
             )
           })}
-          {yearEntries.length === 0 && shownBlanks.length === 0 && <div className="px-2 py-2 text-gray-400">No matching values</div>}
+          {yearEntries.length === 0 && shownBlanks.length === 0 && shownOtherText.length === 0 && <div className="px-2 py-2 text-gray-400">No matching values</div>}
         </div>
       )}
 
