@@ -294,6 +294,50 @@ interface ColumnFilterPanelProps {
 }
 
 const FILTER_CHECKLIST_LIMIT = 50
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
+
+// Tri-state checkbox (checked / unchecked / indeterminate) — React has no
+// JSX prop for `indeterminate`, it's only settable as a DOM property, so this
+// sets it imperatively via a ref callback on mount/update.
+function TriCheckbox({ state, onChange }: { state: 'all' | 'none' | 'some'; onChange: () => void }) {
+  return (
+    <input
+      type="checkbox"
+      checked={state === 'all'}
+      ref={(el) => { if (el) el.indeterminate = state === 'some' }}
+      onChange={onChange}
+    />
+  )
+}
+
+// year -> month name -> ordered list of underlying date values (the exact
+// display strings used everywhere else for filtering/checked-state, e.g.
+// "3/15/2026") that fall in that year+month.
+type DateTree = Map<string, Map<string, string[]>>
+
+function buildDateTree(values: string[]): { tree: DateTree; blanks: string[] } {
+  const tree: DateTree = new Map()
+  const blanks: string[] = []
+  for (const v of values) {
+    if (v === '') { blanks.push(v); continue }
+    const d = parseDateAny(v)
+    if (!d) { blanks.push(v); continue }
+    const year = String(d.getFullYear())
+    const month = MONTH_NAMES[d.getMonth()]
+    if (!tree.has(year)) tree.set(year, new Map())
+    const months = tree.get(year)!
+    if (!months.has(month)) months.set(month, [])
+    months.get(month)!.push(v)
+  }
+  return { tree, blanks }
+}
+
+function groupState(vals: string[], checked: Set<string>): 'all' | 'none' | 'some' {
+  const n = vals.filter(v => checked.has(v)).length
+  if (n === 0) return 'none'
+  if (n === vals.length) return 'all'
+  return 'some'
+}
 
 function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, pos, onApply, onClose }: ColumnFilterPanelProps) {
   const [sort, setSort] = useState<ColSort>(current?.sort ?? null)
@@ -302,8 +346,17 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
     () => (current?.selectedValues ? new Set(current.selectedValues) : new Set(values))
   )
 
+  const { tree: dateTree, blanks: dateBlanks } = useMemo(
+    () => (isDateCol ? buildDateTree(values) : { tree: new Map<string, Map<string, string[]>>(), blanks: [] }),
+    [isDateCol, values]
+  )
+  // Years start expanded (there are usually only a handful) — months start
+  // collapsed, so the default view is a compact Year > Month list instead of
+  // every individual day at once. Matches Excel's grouped date filter tree.
+  const [expandedYears, setExpandedYears] = useState<Set<string>>(() => new Set(dateTree.keys()))
+  const [expandedMonths, setExpandedMonths] = useState<Set<string>>(new Set())
+
   const q = search.trim().toLowerCase()
-  const shown = (q ? values.filter(v => v.toLowerCase().includes(q)) : values).slice(0, FILTER_CHECKLIST_LIMIT)
   const label = (v: string) => (v === '' ? '(blank)' : v)
 
   const toggle = (v: string) => setChecked(prev => {
@@ -312,17 +365,38 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
     else n.add(v)
     return n
   })
+  const toggleGroup = (vals: string[]) => setChecked(prev => {
+    const n = new Set(prev)
+    const allOn = vals.every(v => n.has(v))
+    vals.forEach(v => (allOn ? n.delete(v) : n.add(v)))
+    return n
+  })
 
   const apply = () => {
     const allSelected = checked.size === values.length && values.every(v => checked.has(v))
     onApply({ sort, selectedValues: allSelected ? null : Array.from(checked) })
   }
 
+  // Flat (non-date) checklist — unchanged behavior, capped at 50 shown.
+  const shownFlat = (q ? values.filter(v => v.toLowerCase().includes(q)) : values).slice(0, FILTER_CHECKLIST_LIMIT)
+
+  // Grouped date checklist — while searching, only show groups containing a
+  // match, force-expanded so the match is visible without extra clicks.
+  const yearEntries = Array.from(dateTree.entries()).map(([year, months]) => {
+    const monthEntries = Array.from(months.entries()).map(([month, vals]) => {
+      const filteredVals = q ? vals.filter(v => v.toLowerCase().includes(q)) : vals
+      return { month, vals, filteredVals }
+    }).filter(m => !q || m.filteredVals.length > 0)
+    const yearVals = Array.from(months.values()).flat()
+    return { year, monthEntries, yearVals }
+  }).filter(y => !q || y.monthEntries.length > 0)
+  const shownBlanks = q ? dateBlanks.filter(v => label(v).toLowerCase().includes(q)) : dateBlanks
+
   return (
     <div
       ref={panelRef}
       data-col-filter
-      style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 60, width: 264 }}
+      style={{ position: 'fixed', top: pos.top, left: pos.left, zIndex: 60, width: 280 }}
       className="bg-white border border-gray-300 rounded-lg shadow-2xl p-3 text-xs text-gray-800"
     >
       <div className="font-bold text-gray-700 mb-2 truncate">{columnName}</div>
@@ -354,18 +428,88 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
         <button onClick={() => setChecked(new Set())} className="text-blue-700 hover:underline font-semibold">Clear All</button>
       </div>
 
-      <div className="border border-gray-200 rounded max-h-48 overflow-y-auto mb-2">
-        {shown.map(v => (
-          <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
-            <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
-            <span className="truncate">{label(v)}</span>
-          </label>
-        ))}
-        {shown.length === 0 && <div className="px-2 py-2 text-gray-400">No matching values</div>}
-        {!q && values.length > FILTER_CHECKLIST_LIMIT && (
-          <div className="px-2 py-1 text-gray-400 italic">Showing first {FILTER_CHECKLIST_LIMIT} of {values.length}</div>
-        )}
-      </div>
+      {!isDateCol && (
+        <div className="border border-gray-200 rounded max-h-48 overflow-y-auto mb-2">
+          {shownFlat.map(v => (
+            <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
+              <span className="truncate">{label(v)}</span>
+            </label>
+          ))}
+          {shownFlat.length === 0 && <div className="px-2 py-2 text-gray-400">No matching values</div>}
+          {!q && values.length > FILTER_CHECKLIST_LIMIT && (
+            <div className="px-2 py-1 text-gray-400 italic">Showing first {FILTER_CHECKLIST_LIMIT} of {values.length}</div>
+          )}
+        </div>
+      )}
+
+      {isDateCol && (
+        <div className="border border-gray-200 rounded max-h-56 overflow-y-auto mb-2">
+          {shownBlanks.map(v => (
+            <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
+              <span className="truncate">(blank)</span>
+            </label>
+          ))}
+          {yearEntries.map(({ year, monthEntries, yearVals }) => {
+            const yearOpen = q ? true : expandedYears.has(year)
+            return (
+              <div key={year}>
+                <div className="flex items-center gap-1 px-2 py-1 hover:bg-gray-50">
+                  <button
+                    onClick={() => setExpandedYears(prev => {
+                      const n = new Set(prev)
+                      if (n.has(year)) n.delete(year); else n.add(year)
+                      return n
+                    })}
+                    className="w-3 text-gray-500"
+                  >
+                    {yearOpen ? '▾' : '▸'}
+                  </button>
+                  <label className="flex items-center gap-2 cursor-pointer flex-1">
+                    <TriCheckbox state={groupState(yearVals, checked)} onChange={() => toggleGroup(yearVals)} />
+                    <span className="font-semibold">{year}</span>
+                  </label>
+                </div>
+                {yearOpen && monthEntries.map(({ month, vals, filteredVals }) => {
+                  const monthKey = `${year}|${month}`
+                  const monthOpen = q ? true : expandedMonths.has(monthKey)
+                  return (
+                    <div key={month}>
+                      <div className="flex items-center gap-1 pl-5 pr-2 py-1 hover:bg-gray-50">
+                        <button
+                          onClick={() => setExpandedMonths(prev => {
+                            const n = new Set(prev)
+                            if (n.has(monthKey)) n.delete(monthKey); else n.add(monthKey)
+                            return n
+                          })}
+                          className="w-3 text-gray-500"
+                        >
+                          {monthOpen ? '▾' : '▸'}
+                        </button>
+                        <label className="flex items-center gap-2 cursor-pointer flex-1">
+                          <TriCheckbox state={groupState(vals, checked)} onChange={() => toggleGroup(vals)} />
+                          <span>{month}</span>
+                        </label>
+                      </div>
+                      {monthOpen && filteredVals.map(v => {
+                        const d = parseDateAny(v)
+                        return (
+                          <label key={v} className="flex items-center gap-2 pl-9 pr-2 py-1 hover:bg-gray-50 cursor-pointer">
+                            <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
+                            <span className="truncate">{d ? d.getDate() : v}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+                  )
+                })}
+              </div>
+            )
+          })}
+          {yearEntries.length === 0 && shownBlanks.length === 0 && <div className="px-2 py-2 text-gray-400">No matching values</div>}
+        </div>
+      )}
 
       <div className="flex items-center justify-end gap-2">
         <button onClick={onClose} className="px-3 py-1 rounded bg-gray-200 hover:bg-gray-300 font-semibold">Cancel</button>
