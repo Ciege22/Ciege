@@ -286,7 +286,7 @@ export default function Home() {
       const row = rows2[0]
       totalHops++
 
-      const ntpDate = parseD(row[ntpCol])
+      const ntpDate = parseD(row[ntpCol] ?? null)
       const matDate = parseD(row[matCol])
       const ms15f   = parseD(row[ms15fCol])
       const ms15a   = parseD(row[ms15aCol])
@@ -337,9 +337,11 @@ export default function Home() {
     console.log('[kpi] NTP complete count:', ntpComplete)
     const sampleNtp = []
     for (let i = headerRow + 1; i < Math.min(headerRow + 6, rows.length); i++) {
-      sampleNtp.push((rows[i] as unknown[])[ntpCol])
+      sampleNtp.push((rows[i] as unknown[])[ntpCol] ?? null)
     }
     console.log('[kpi] sample NTP values (first 5 rows):', sampleNtp)
+    console.log('[kpi] row 2 full length:', (rows[2] as unknown[])?.length, 'row 2 col 52:', (rows[2] as unknown[])?.[52], 'row 2 col 51:', (rows[2] as unknown[])?.[51], 'row 2 col 53:', (rows[2] as unknown[])?.[53])
+    console.log('[kpi] header row NTP col name:', (rows[0] as unknown[])?.[52])
 
     const details: {
       hop: string, gc: string, nokiaPm: string,
@@ -355,7 +357,7 @@ export default function Home() {
     }[] = []
     hopRows.forEach((rows2) => {
       const row = rows2[0]
-      const ntpDate = parseD(row[ntpCol])
+      const ntpDate = parseD(row[ntpCol] ?? null)
       const matDate = parseD(row[matCol])
       const ms15f   = parseD(row[ms15fCol])
       const ms15a   = parseD(row[ms15aCol])
