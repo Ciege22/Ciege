@@ -1017,12 +1017,11 @@ export default function CMViewPage() {
     const fullWorkload = workloadMode === 'full'
     const sourceHops = fullWorkload ? hops : cjHops
     const cmNames = Array.from(new Set(sourceHops.map(h => h.cm).filter(Boolean))).sort()
-    const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+    const pad = (n: number) => String(n).padStart(2, '0')
+    const dateSlash = `${pad(today.getMonth() + 1)}/${pad(today.getDate())}/${today.getFullYear()}`
     const div     = '─'.repeat(60)
     const starDiv = '═'.repeat(60)
-    const subj = fullWorkload
-      ? `Viaero/Nokia MW Program — Full CM Workload Summary | ${date}`
-      : `Viaero/Nokia MW Program — CM Call Follow-Up | ${date}`
+    const subj = `Viaero/Nokia MW Program — CM Pipeline Report | ${dateSlash}`
 
     let body = `Hap, Steve, Benny,\n\n`
     body += `Please find below and attached your weekly updates to include Cx Pipeline, active sites, and action items.\n`

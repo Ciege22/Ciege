@@ -123,7 +123,7 @@ function WeatherWidget() {
 // lightning bolt between them, matching the Nebraska widget's compact 40x20 spec.
 function MicrowaveDishIcon() {
   return (
-    <svg width="60" height="30" viewBox="0 0 40 20" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <svg width="84" height="42" viewBox="0 0 40 20" fill="none" xmlns="http://www.w3.org/2000/svg">
       {/* Left dish — concave arc opening right, on a small stand */}
       <path d="M5 2 Q15 10 5 18" stroke="#124191" strokeWidth="1.75" fill="none" strokeLinecap="round" />
       <line x1="5" y1="18" x2="7" y2="20" stroke="#124191" strokeWidth="1.5" strokeLinecap="round" />
@@ -177,17 +177,17 @@ function NebraskaWidget({ hopDetails }: { hopDetails: { hop: string; ms16a: stri
   return (
     <div
       title="Nebraska program deadline: Nov 30, 2026"
-      className="flex items-center gap-3 rounded-xl border px-4 py-3 bg-black/20 backdrop-blur-sm flex-shrink-0"
+      className="flex items-center gap-4 rounded-xl border px-6 py-4 bg-black/20 backdrop-blur-sm flex-shrink-0"
       style={{ borderColor: color }}
     >
       <MicrowaveDishIcon />
       <div className="leading-tight">
-        <p className="text-xs font-bold uppercase tracking-wider" style={{ color }}>Nebraska Deadline</p>
-        <p className="text-xs text-zinc-400">Nov 30, 2026</p>
-        <p className="text-sm font-mono tracking-tighter" style={{ color }}>
+        <p className="text-sm font-bold uppercase tracking-wider" style={{ color }}>Nebraska Deadline</p>
+        <p className="text-sm text-zinc-400">Nov 30, 2026</p>
+        <p className="text-base font-mono tracking-tighter" style={{ color }}>
           {'█'.repeat(filledBars)}{'░'.repeat(10 - filledBars)} {progress}%
         </p>
-        <p className="text-xs text-zinc-300">{remaining} HOPs left · {daysRemaining} days</p>
+        <p className="text-sm text-zinc-300">{remaining} HOPs left · {daysRemaining} days</p>
       </div>
     </div>
   )
