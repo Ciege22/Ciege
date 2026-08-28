@@ -772,11 +772,26 @@ export default function Home() {
         while (lastDataRow >= 0 && !(rawRows[lastDataRow] || []).some(c => c !== null && c !== undefined && String(c).trim() !== '')) {
           lastDataRow--
         }
-        const rows = rawRows.slice(0, lastDataRow + 1)
-        const firstNonBlankIdx = rows.findIndex(r => (r || []).some(c => c !== null && c !== undefined && String(c).trim() !== ''))
-        console.log(`[dashboard] sheet_to_json returned ${rawRows.length} raw rows, trimmed to ${rows.length} after removing trailing blank rows`)
-        console.log(`[dashboard] first non-blank row (index ${firstNonBlankIdx}):`, rows[firstNonBlankIdx])
-        console.log(`[dashboard] last non-blank row (index ${rows.length - 1}):`, rows[rows.length - 1])
+        const trailingTrimmedRows = rawRows.slice(0, lastDataRow + 1)
+        const firstNonBlankIdx = trailingTrimmedRows.findIndex(r => (r || []).some(c => c !== null && c !== undefined && String(c).trim() !== ''))
+        console.log(`[dashboard] sheet_to_json returned ${rawRows.length} raw rows, trimmed to ${trailingTrimmedRows.length} after removing trailing blank rows`)
+        console.log(`[dashboard] first non-blank row (index ${firstNonBlankIdx}):`, trailingTrimmedRows[firstNonBlankIdx])
+        console.log(`[dashboard] last non-blank row (index ${trailingTrimmedRows.length - 1}):`, trailingTrimmedRows[trailingTrimmedRows.length - 1])
+
+        // The first non-blank row isn't always the real header — some tracker exports
+        // have a description/comment row above it. The real header is whichever row
+        // actually contains the 'DON 444' column label, so scan for that instead of
+        // trusting row 0, and discard everything above it before this ever reaches
+        // Supabase (every downstream consumer then finds the header at row 0).
+        let headerRowIdx = trailingTrimmedRows.findIndex(r => (r || []).some(c => String(c).trim() === 'DON 444'))
+        if (headerRowIdx === -1) {
+          console.warn('[dashboard] could not find a row containing "DON 444" — falling back to row 0 as header')
+          headerRowIdx = 0
+        } else {
+          console.log(`[dashboard] real header found at row index ${headerRowIdx}`)
+        }
+        const rows = trailingTrimmedRows.slice(headerRowIdx)
+
         const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
         const newSnap = await saveTrackerSnapshot(file.name, hopCount, rows)
         if (newSnap) {
