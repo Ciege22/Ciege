@@ -28,11 +28,16 @@ const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID', 'New CM', 'General Cont
 const FROZEN_SHADOW = '2px 0 4px -1px rgba(0,0,0,0.18)'
 
 interface TrackerRowData {
+  // Unique per physical site row — a HOP can span two site rows, so HOP alone
+  // can't identify one (same convention as app/lib/decom.ts's DecomRow.rowKey:
+  // Path ID first, falling back to Site Name + Site Number, then a row index).
+  rowKey: string
   hop: string
   cells: unknown[]
 }
 
 interface TrackerChange {
+  rowKey: string
   hop: string
   field: string
   oldValue: string
@@ -95,10 +100,11 @@ function isDateColumn(name: string): boolean {
 }
 
 // Parses the full tracker snapshot with NO column subsetting — every column
-// survives. Same DON 444 filter + dedup-by-HOP rule as every other page
-// (prefer the row where GC and New CM are both populated, since a HOP's other
-// row may be a blank/partial duplicate) — deliberately does NOT filter by
-// Nokia PM, since this grid is a program-wide utility, not scoped to one PM.
+// survives — and NO dedup-by-HOP either: a HOP can span two physical site
+// rows with two different Site Names, and this grid shows both rather than
+// silently picking one (unlike most other pages, which collapse to a single
+// representative row per HOP). Deliberately does NOT filter by Nokia PM,
+// since this grid is a program-wide utility, not scoped to one PM.
 function parseAllTrackerRows(rows: unknown[][]): { headers: string[]; trackerRows: TrackerRowData[] } {
   let headerRowIdx = -1
   for (let i = 0; i < 10; i++) {
@@ -110,10 +116,12 @@ function parseAllTrackerRows(rows: unknown[][]): { headers: string[]; trackerRow
   const headers = (rows[headerRowIdx] as unknown[]).map(normHeader)
   const hopCol = headers.findIndex(h => h === 'HOP')
   const don444Col = headers.findIndex(h => h === 'DON 444')
-  const gcCol = headers.findIndex(h => h === 'General Contractor')
-  const cmCol = headers.findIndex(h => h === 'New CM')
+  const pathIdCol = headers.findIndex(h => h === 'Path ID')
+  const siteNameCol = headers.findIndex(h => h === 'Site Name')
+  const siteNumberCol = headers.findIndex(h => h === 'Site Number')
 
-  const hopMap = new Map<string, unknown[][]>()
+  const trackerRows: TrackerRowData[] = []
+  let rowCounter = 0
   for (let i = headerRowIdx + 1; i < rows.length; i++) {
     const row = rows[i] as unknown[]
     if (!row) continue
@@ -121,16 +129,16 @@ function parseAllTrackerRows(rows: unknown[][]): { headers: string[]; trackerRow
     if (don !== 'DON 444') continue
     const hop = normHeader(row[hopCol])
     if (!hop || hop === 'undefined') continue
-    if (!hopMap.has(hop)) hopMap.set(hop, [])
-    hopMap.get(hop)!.push(row)
-  }
 
-  const trackerRows: TrackerRowData[] = []
-  hopMap.forEach((candidateRows, hop) => {
-    const chosen = candidateRows.find(r => normHeader(r[gcCol]) && normHeader(r[cmCol])) || candidateRows[0]
-    trackerRows.push({ hop, cells: chosen })
-  })
-  trackerRows.sort((a, b) => a.hop.localeCompare(b.hop))
+    const pathId = pathIdCol >= 0 ? normHeader(row[pathIdCol]) : ''
+    const siteName = siteNameCol >= 0 ? normHeader(row[siteNameCol]) : ''
+    const siteNumber = siteNumberCol >= 0 ? normHeader(row[siteNumberCol]) : ''
+    const rowKey = pathId || (siteName || siteNumber ? `${siteName}|${siteNumber}` : `${hop}-row-${rowCounter}`)
+    rowCounter++
+
+    trackerRows.push({ rowKey, hop, cells: row })
+  }
+  trackerRows.sort((a, b) => a.hop.localeCompare(b.hop) || a.rowKey.localeCompare(b.rowKey))
 
   return { headers, trackerRows }
 }
@@ -560,7 +568,7 @@ export default function TrackerGridPage() {
   const [showPendingPanel, setShowPendingPanel] = useState(false)
   const [pendingSearch, setPendingSearch] = useState('')
   const [pendingSortField, setPendingSortField] = useState<'hop' | 'field'>('hop')
-  const [editingCell, setEditingCell] = useState<{ hop: string; field: string } | null>(null)
+  const [editingCell, setEditingCell] = useState<{ rowKey: string; field: string } | null>(null)
 
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -588,9 +596,13 @@ export default function TrackerGridPage() {
   const [scrollLeft, setScrollLeft] = useState(0)
   const [viewportSize, setViewportSize] = useState({ width: 900, height: 600 })
   const [loadedColumnCount, setLoadedColumnCount] = useState(INITIAL_COLUMN_COUNT)
-  const [selectedHop, setSelectedHop] = useState<string | null>(null)
+  const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
+  // User-resized column widths, keyed by column name — overrides the default
+  // width heuristic once a column's been dragged. Session-only (not persisted).
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
+  const colResizeRef = useRef<{ name: string; startX: number; startWidth: number } | null>(null)
 
-  // Load tracker snapshot — all columns, DON 444 + dedup only.
+  // Load tracker snapshot — all columns, no dedup (see parseAllTrackerRows).
   useEffect(() => {
     const load = async () => {
       const snap = await loadTrackerSnapshot()
@@ -722,9 +734,31 @@ export default function TrackerGridPage() {
 
   // Debounced row selection (single click) — collapses rapid repeated clicks
   // into a single state update instead of one per click.
-  const handleRowClick = useCallback((hop: string) => {
+  const handleRowClick = useCallback((rowKey: string) => {
     if (clickDebounceRef.current) clearTimeout(clickDebounceRef.current)
-    clickDebounceRef.current = setTimeout(() => setSelectedHop(hop), 150)
+    clickDebounceRef.current = setTimeout(() => setSelectedRowKey(rowKey), 150)
+  }, [])
+
+  // Drag-to-resize a column header's right edge. Global mousemove/mouseup
+  // listeners (not React handlers) so the drag keeps tracking even if the
+  // cursor leaves the narrow handle itself mid-drag.
+  const startColumnResize = useCallback((name: string, startWidth: number, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    colResizeRef.current = { name, startX: e.clientX, startWidth }
+    const handleMouseMove = (ev: MouseEvent) => {
+      const state = colResizeRef.current
+      if (!state) return
+      const newWidth = Math.max(60, state.startWidth + (ev.clientX - state.startX))
+      setColumnWidths(prev => ({ ...prev, [state.name]: newWidth }))
+    }
+    const handleMouseUp = () => {
+      colResizeRef.current = null
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
   }, [])
 
   const persistChanges = async (changes: TrackerChange[]) => {
@@ -736,15 +770,15 @@ export default function TrackerGridPage() {
     })
   }
 
-  const saveEdit = (hop: string, field: string, originalValue: string, newValue: string) => {
+  const saveEdit = (rowKey: string, hop: string, field: string, originalValue: string, newValue: string) => {
     setEditingCell(null)
     if (newValue === originalValue) return
     const change: TrackerChange = {
-      hop, field, oldValue: originalValue, newValue,
+      rowKey, hop, field, oldValue: originalValue, newValue,
       timestamp: new Date().toISOString(), user: 'CJ',
     }
     setPendingChanges(prev => {
-      const next = [...prev.filter(c => !(c.hop === hop && c.field === field)), change]
+      const next = [...prev.filter(c => !(c.rowKey === rowKey && c.field === field)), change]
       persistChanges(next)
       return next
     })
@@ -765,9 +799,9 @@ export default function TrackerGridPage() {
     setShowPendingPanel(false)
   }
 
-  const toggleChangeCompleted = (hop: string, field: string, timestamp: string) => {
+  const toggleChangeCompleted = (rowKey: string, field: string, timestamp: string) => {
     setPendingChanges(prev => {
-      const next = prev.map(c => (c.hop === hop && c.field === field && c.timestamp === timestamp ? { ...c, completed: !c.completed } : c))
+      const next = prev.map(c => (c.rowKey === rowKey && c.field === field && c.timestamp === timestamp ? { ...c, completed: !c.completed } : c))
       persistChanges(next)
       return next
     })
@@ -893,9 +927,10 @@ export default function TrackerGridPage() {
       const name = headers[i] || `Column ${i + 1}`
       const isHop = i === hopColIdx
       const isDate = isDateColumn(name)
-      return { index: i, name, isHop, isDate, width: isHop ? 220 : (isDate ? 150 : 130) }
+      const defaultWidth = isHop ? 220 : (isDate ? 150 : 130)
+      return { index: i, name, isHop, isDate, width: columnWidths[name] ?? defaultWidth }
     })
-  }, [headers])
+  }, [headers, columnWidths])
 
   const filteredColumns = useMemo(
     () => allColumns.filter(c => c.isHop || !effectiveHidden.has(c.name)),
@@ -975,7 +1010,7 @@ export default function TrackerGridPage() {
 
   const changeMap = useMemo(() => {
     const map = new Map<string, TrackerChange>()
-    pendingChanges.forEach(c => map.set(`${c.hop}|${c.field}`, c))
+    pendingChanges.forEach(c => map.set(`${c.rowKey}|${c.field}`, c))
     return map
   }, [pendingChanges])
 
@@ -983,7 +1018,7 @@ export default function TrackerGridPage() {
   // search, the per-column checklists, and the column-filter pass so all three
   // agree on what a cell "contains".
   const cellText = useCallback((row: TrackerRowData, col: GridColumn): string => {
-    const change = changeMap.get(`${row.hop}|${col.name}`)
+    const change = changeMap.get(`${row.rowKey}|${col.name}`)
     if (change) return change.newValue ?? ''
     if (col.isHop) return row.hop
     return cellDisplayValue(row.cells[col.index], col.isDate).text
@@ -1081,34 +1116,46 @@ export default function TrackerGridPage() {
     })
   }
 
-  // Header contents (label + editor ✕ + filter ▼) — shared by frozen and
-  // scrolling header cells so both render identically.
+  // Header contents (label + editor ✕ + filter ▼ + resize handle) — shared by
+  // frozen and scrolling header cells so both render identically. The resize
+  // handle is a thin absolutely-positioned strip on the right edge — the
+  // parent <th> is position:sticky, which (like position:relative) is a valid
+  // containing block for it.
   const headerContent = (col: GridColumn) => (
-    <div className="flex items-center justify-between gap-1">
-      <span className="truncate">{col.name}</span>
-      <div className="flex items-center gap-1 flex-shrink-0">
-        {editorMode && !col.isHop && (
+    <>
+      <div className="flex items-center justify-between gap-1">
+        <span className="truncate">{col.name}</span>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {editorMode && !col.isHop && (
+            <button
+              onClick={() => toggleDraftHidden(col.name)}
+              className="text-red-300 hover:text-red-100 font-bold text-xs"
+              title="Hide column"
+            >
+              ✕
+            </button>
+          )}
           <button
-            onClick={() => toggleDraftHidden(col.name)}
-            className="text-red-300 hover:text-red-100 font-bold text-xs"
-            title="Hide column"
+            data-col-filter-btn
+            onClick={(e) => openColumnFilter(col.name, e)}
+            title="Filter / sort column"
+            className="leading-none"
+            // Headers are navy, so an active filter reads as a bright filled
+            // marker rather than "navy on navy".
+            style={{ fontSize: 10, color: isColFilterActive(col.name) ? '#FFD166' : 'rgba(255,255,255,0.5)' }}
           >
-            ✕
+            ▼
           </button>
-        )}
-        <button
-          data-col-filter-btn
-          onClick={(e) => openColumnFilter(col.name, e)}
-          title="Filter / sort column"
-          className="leading-none"
-          // Headers are navy, so an active filter reads as a bright filled
-          // marker rather than "navy on navy".
-          style={{ fontSize: 10, color: isColFilterActive(col.name) ? '#FFD166' : 'rgba(255,255,255,0.5)' }}
-        >
-          ▼
-        </button>
+        </div>
       </div>
-    </div>
+      <div
+        onMouseDown={(e) => startColumnResize(col.name, col.width, e)}
+        onClick={(e) => e.stopPropagation()}
+        title="Drag to resize column"
+        style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 6, cursor: 'col-resize', zIndex: 5 }}
+        className="hover:bg-blue-300/60"
+      />
+    </>
   )
 
   const viewBtnClass = (name: string) =>
@@ -1247,12 +1294,12 @@ export default function TrackerGridPage() {
                   })
                   .sort((a, b) => pendingSortField === 'field' ? a.field.localeCompare(b.field) : a.hop.localeCompare(b.hop))
                   .map(c => (
-                    <tr key={`${c.hop}-${c.field}-${c.timestamp}`} className={`border-t border-amber-200 ${c.completed ? 'opacity-40' : ''}`}>
+                    <tr key={`${c.rowKey}-${c.field}-${c.timestamp}`} className={`border-t border-amber-200 ${c.completed ? 'opacity-40' : ''}`}>
                       <td className="p-2">
                         <input
                           type="checkbox"
                           checked={c.completed || false}
-                          onChange={() => toggleChangeCompleted(c.hop, c.field, c.timestamp)}
+                          onChange={() => toggleChangeCompleted(c.rowKey, c.field, c.timestamp)}
                           className="w-4 h-4 cursor-pointer accent-green-600"
                         />
                       </td>
@@ -1436,13 +1483,13 @@ export default function TrackerGridPage() {
                 </tr>
               )}
               {visibleRows.map(({ row, rowIndex }) => {
-                const isSelected = row.hop === selectedHop
+                const isSelected = row.rowKey === selectedRowKey
                 const rowBg = isSelected ? SELECTED_ROW : (rowIndex % 2 === 1 ? ALT_ROW : '#FFFFFF')
                 // Frozen columns carry a solid (white / selected) background so
                 // scrolling cells never show through underneath them.
                 const frozenBg = isSelected ? SELECTED_ROW : '#FFFFFF'
                 return (
-                  <tr key={row.hop} onClick={() => handleRowClick(row.hop)} style={{ height: ROW_HEIGHT, cursor: 'pointer' }}>
+                  <tr key={row.rowKey} onClick={() => handleRowClick(row.rowKey)} style={{ height: ROW_HEIGHT, cursor: 'pointer' }}>
                     {frozenColumns.map((col, i) => {
                       if (col.isHop) {
                         return (
@@ -1465,17 +1512,17 @@ export default function TrackerGridPage() {
                       }
                       const raw = row.cells[col.index]
                       const { text: displayValue, treatAsDate } = cellDisplayValue(raw, col.isDate)
-                      const change = changeMap.get(`${row.hop}|${col.name}`)
+                      const change = changeMap.get(`${row.rowKey}|${col.name}`)
                       const shown = change ? change.newValue : displayValue
-                      const isEditing = editingCell?.hop === row.hop && editingCell?.field === col.name
+                      const isEditing = editingCell?.rowKey === row.rowKey && editingCell?.field === col.name
                       const cellProps: CellProps = {
                         displayValue: shown,
                         isChanged: !!change,
                         isEditing,
                         rowBg: frozenBg,
                         stickyLeft: frozenLeft[i],
-                        onStartEdit: () => setEditingCell({ hop: row.hop, field: col.name }),
-                        onCommit: (newValue: string) => saveEdit(row.hop, col.name, displayValue, newValue),
+                        onStartEdit: () => setEditingCell({ rowKey: row.rowKey, field: col.name }),
+                        onCommit: (newValue: string) => saveEdit(row.rowKey, row.hop, col.name, displayValue, newValue),
                         onCancel: () => setEditingCell(null),
                       }
                       return treatAsDate
@@ -1497,16 +1544,16 @@ export default function TrackerGridPage() {
                       }
                       const raw = row.cells[col.index]
                       const { text: displayValue, treatAsDate } = cellDisplayValue(raw, col.isDate)
-                      const change = changeMap.get(`${row.hop}|${col.name}`)
+                      const change = changeMap.get(`${row.rowKey}|${col.name}`)
                       const shown = change ? change.newValue : displayValue
-                      const isEditing = editingCell?.hop === row.hop && editingCell?.field === col.name
+                      const isEditing = editingCell?.rowKey === row.rowKey && editingCell?.field === col.name
                       const cellProps: CellProps = {
                         displayValue: shown,
                         isChanged: !!change,
                         isEditing,
                         rowBg,
-                        onStartEdit: () => setEditingCell({ hop: row.hop, field: col.name }),
-                        onCommit: (newValue: string) => saveEdit(row.hop, col.name, displayValue, newValue),
+                        onStartEdit: () => setEditingCell({ rowKey: row.rowKey, field: col.name }),
+                        onCommit: (newValue: string) => saveEdit(row.rowKey, row.hop, col.name, displayValue, newValue),
                         onCancel: () => setEditingCell(null),
                       }
                       return treatAsDate
