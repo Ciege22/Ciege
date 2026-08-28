@@ -39,6 +39,7 @@ interface TrackerChange {
   newValue: string
   timestamp: string
   user: string
+  completed?: boolean
 }
 
 interface TrackerView {
@@ -553,6 +554,12 @@ export default function TrackerGridPage() {
   const [editingViewName, setEditingViewName] = useState<string | null>(null)
 
   const [pendingChanges, setPendingChanges] = useState<TrackerChange[]>([])
+  // Visible "PM Updates"-style panel — same pattern as GC Call View / CM View
+  // (a toggleable table of every pending edit with a Done checkbox per row,
+  // instead of edits only being visible as a badge count on Copy Updates).
+  const [showPendingPanel, setShowPendingPanel] = useState(false)
+  const [pendingSearch, setPendingSearch] = useState('')
+  const [pendingSortField, setPendingSortField] = useState<'hop' | 'field'>('hop')
   const [editingCell, setEditingCell] = useState<{ hop: string; field: string } | null>(null)
 
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -755,6 +762,24 @@ export default function TrackerGridPage() {
   const clearChanges = () => {
     setPendingChanges([])
     persistChanges([])
+    setShowPendingPanel(false)
+  }
+
+  const toggleChangeCompleted = (hop: string, field: string, timestamp: string) => {
+    setPendingChanges(prev => {
+      const next = prev.map(c => (c.hop === hop && c.field === field && c.timestamp === timestamp ? { ...c, completed: !c.completed } : c))
+      persistChanges(next)
+      return next
+    })
+  }
+
+  const clearCompletedChanges = () => {
+    setPendingChanges(prev => {
+      const next = prev.filter(c => !c.completed)
+      persistChanges(next)
+      if (next.length === 0) setShowPendingPanel(false)
+      return next
+    })
   }
 
   // Switching views resets the search box and every column filter, but a
@@ -1153,6 +1178,14 @@ export default function TrackerGridPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          {pendingChanges.length > 0 && (
+            <button
+              onClick={() => setShowPendingPanel(s => !s)}
+              className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold"
+            >
+              📋 Pending Updates ({pendingChanges.length})
+            </button>
+          )}
           <button
             onClick={copyUpdates}
             disabled={pendingChanges.length === 0}
@@ -1169,6 +1202,80 @@ export default function TrackerGridPage() {
           </button>
         </div>
       </div>
+
+      {/* Pending Updates panel — same shape as GC/CM view's PM Updates panel:
+          a searchable, sortable table with a Done checkbox per row, persisted
+          to Supabase on every change (via toggleChangeCompleted/persistChanges). */}
+      {showPendingPanel && pendingChanges.length > 0 && (
+        <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+            <h2 className="text-amber-900 font-bold text-base">📋 Pending Updates — Update These in Your Tracker</h2>
+            <div className="flex gap-2 items-center flex-wrap">
+              <input
+                type="text"
+                placeholder="Search HOP or field..."
+                value={pendingSearch}
+                onChange={(e) => setPendingSearch(e.target.value)}
+                className="bg-white border border-amber-300 text-amber-900 text-xs rounded px-2 py-1 w-44 focus:outline-none focus:border-amber-500"
+              />
+              <button
+                onClick={() => setPendingSortField(prev => prev === 'field' ? 'hop' : 'field')}
+                className="bg-amber-200 hover:bg-amber-300 text-amber-900 text-xs px-3 py-1 rounded font-semibold"
+              >
+                Sort by {pendingSortField === 'field' ? 'Field ↑' : 'HOP ↑'}
+              </button>
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-amber-700 text-xs">
+                  <th className="text-left p-2">Done</th>
+                  <th className="text-left p-2">HOP</th>
+                  <th className="text-left p-2">Field</th>
+                  <th className="text-left p-2">Old Value</th>
+                  <th className="text-left p-2">New Value</th>
+                  <th className="text-left p-2">Logged At</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...pendingChanges]
+                  .filter(c => {
+                    if (!pendingSearch) return true
+                    const q = pendingSearch.toLowerCase()
+                    return c.hop.toLowerCase().includes(q) || c.field.toLowerCase().includes(q)
+                  })
+                  .sort((a, b) => pendingSortField === 'field' ? a.field.localeCompare(b.field) : a.hop.localeCompare(b.hop))
+                  .map(c => (
+                    <tr key={`${c.hop}-${c.field}-${c.timestamp}`} className={`border-t border-amber-200 ${c.completed ? 'opacity-40' : ''}`}>
+                      <td className="p-2">
+                        <input
+                          type="checkbox"
+                          checked={c.completed || false}
+                          onChange={() => toggleChangeCompleted(c.hop, c.field, c.timestamp)}
+                          className="w-4 h-4 cursor-pointer accent-green-600"
+                        />
+                      </td>
+                      <td className={`p-2 font-semibold ${c.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}>{c.hop}</td>
+                      <td className={`p-2 ${c.completed ? 'line-through text-gray-500' : 'text-amber-800'}`}>{c.field}</td>
+                      <td className="p-2 text-gray-500">{c.oldValue || '—'}</td>
+                      <td className={`p-2 font-bold ${c.completed ? 'text-gray-500' : 'text-green-700'}`}>{c.newValue}</td>
+                      <td className="p-2 text-gray-500">{new Date(c.timestamp).toLocaleString()}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="mt-4 flex gap-3">
+            <button onClick={clearCompletedChanges} className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold">
+              ✅ Clear Completed
+            </button>
+            <button onClick={clearChanges} className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded text-sm">
+              🗑 Clear All
+            </button>
+          </div>
+        </div>
+      )}
 
       {editorMode && (
         <div className="mb-3 bg-blue-50 border border-blue-300 rounded-lg p-3">
