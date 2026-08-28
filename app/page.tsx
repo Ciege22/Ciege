@@ -196,6 +196,7 @@ export default function Home() {
   }, [])
 
   const computeKPIs = useCallback((rows: unknown[][]) => {
+    console.log('[kpi] computeKPIs called with', rows.length, 'rows')
     const today = new Date()
     // Zero out the time-of-day so daysOut is a clean whole-day count — otherwise
     // a HOP whose MS15F is literally today computes a negative fractional diff
@@ -818,6 +819,7 @@ export default function Home() {
           try { localStorage.setItem('lastUploadTime', Date.now().toString()) } catch {}
         }
         setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
+        console.log('[kpi] about to call computeKPIs with', rows.length, 'rows')
         computeKPIs(rows)
 
         // Compare against previous snapshot and save changes
