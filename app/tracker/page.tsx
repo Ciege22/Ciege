@@ -1140,6 +1140,15 @@ export default function TrackerGridPage() {
     return `${idx + 1}${sortOrder[idx].dir === 'asc' ? '↑' : '↓'}`
   }
 
+  // Master "clear everything" — every value filter and every level of the
+  // stacked sort, same as Excel's Data > Clear (search stays untouched, same
+  // as Excel not treating its separate Find box as part of the filter state).
+  const clearAllSortsAndFilters = () => {
+    setColumnFilters({})
+    setSortOrder([])
+    setFilterPanel(null)
+  }
+
   const openColumnFilter = (name: string, e: React.MouseEvent) => {
     e.stopPropagation()
     if (filterPanel?.col === name) { setFilterPanel(null); return }
@@ -1461,6 +1470,15 @@ export default function TrackerGridPage() {
           <span className="text-xs font-semibold text-gray-600">
             Showing {displayRows.length} of {trackerRows.length} HOPs
           </span>
+          {(Object.keys(columnFilters).length > 0 || sortOrder.length > 0) && (
+            <button
+              onClick={clearAllSortsAndFilters}
+              className="text-xs font-semibold text-red-600 hover:text-red-800 underline"
+              title="Remove every column filter and every level of the sort"
+            >
+              ✕ Clear All Filters & Sorts
+            </button>
+          )}
         </div>
       )}
 
