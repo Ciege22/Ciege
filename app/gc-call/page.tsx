@@ -95,9 +95,12 @@ function decomRowToShortSheetRow(r: DecomRow, includeAging: boolean): (string | 
 function downloadGcDecomExcel(gcRows: DecomRow[], filename: string) {
   const pendingDropOff = gcRows.filter(r => !r.dropOffDate)
   const pendingPathwave = gcRows.filter(r => r.dropOffDate && !r.podPathwave)
+  // Pending POD in QuickBase = Pathwave confirmed, QuickBase isn't yet.
+  const pendingQuickBase = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase)
 
   const dropOffHeaders = ['HOP', 'Path ID', 'Site Name', 'CM', 'CX Complete', 'Aging (days)', 'POD Pathwave', 'POD QuickBase', 'Comments']
   const pathwaveHeaders = ['HOP', 'Path ID', 'Site Name', 'CM', 'CX Complete', 'POD Pathwave', 'POD QuickBase', 'Comments']
+  const quickBaseHeaders = ['HOP', 'Path ID', 'Site Name', 'CM', 'CX Complete', 'POD Pathwave', 'POD QuickBase', 'Comments']
 
   const wb = XLSX.utils.book_new()
 
@@ -110,6 +113,11 @@ function downloadGcDecomExcel(gcRows: DecomRow[], filename: string) {
   const ws2 = XLSX.utils.aoa_to_sheet(sheet2Data)
   styleDecomHeaderRow(ws2, pathwaveHeaders, sheet2Data)
   XLSX.utils.book_append_sheet(wb, ws2, 'Pending POD in Pathwave')
+
+  const sheet3Data = [quickBaseHeaders, ...pendingQuickBase.map(r => decomRowToShortSheetRow(r, false))]
+  const ws3 = XLSX.utils.aoa_to_sheet(sheet3Data)
+  styleDecomHeaderRow(ws3, quickBaseHeaders, sheet3Data)
+  XLSX.utils.book_append_sheet(wb, ws3, 'Pending POD in QuickBase')
 
   XLSX.writeFile(wb, filename)
 }

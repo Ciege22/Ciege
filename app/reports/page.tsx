@@ -169,10 +169,18 @@ function styleDecomSheet(ws: XLSX.WorkSheet) {
 }
 
 function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
+  // Decom Drop Off pending = no Drop Off date yet (every row here already has
+  // CX Complete confirmed, since that's required just to exist in gcRows).
   const outstandingPending = gcRows
     .filter(r => r.status === 'outstanding' || r.status === 'pending')
     .sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
-  const podGap = gcRows.filter(r => r.status === 'pod_gap')
+  // Pending POD in Pathwave = dropped off, but Pathwave itself isn't confirmed
+  // yet — deliberately narrower than the old `status === 'pod_gap'` filter,
+  // which also swept in rows where Pathwave = Yes and only QuickBase was
+  // pending, so those showed up here with a misleading "Yes" in this column.
+  const pendingPathwave = gcRows.filter(r => r.dropOffDate && !r.podPathwave)
+  // Pending POD in QuickBase = Pathwave confirmed, QuickBase isn't yet.
+  const pendingQuickBase = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase)
 
   const wb = XLSX.utils.book_new()
 
@@ -180,9 +188,13 @@ function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
   styleDecomSheet(ws1)
   XLSX.utils.book_append_sheet(wb, ws1, 'Pending Decom Drop Off')
 
-  const ws2 = XLSX.utils.aoa_to_sheet([DECOM_HEADERS, ...podGap.map(decomRowToSheetRow)])
+  const ws2 = XLSX.utils.aoa_to_sheet([DECOM_HEADERS, ...pendingPathwave.map(decomRowToSheetRow)])
   styleDecomSheet(ws2)
   XLSX.utils.book_append_sheet(wb, ws2, 'Pending POD in Pathwave')
+
+  const ws3 = XLSX.utils.aoa_to_sheet([DECOM_HEADERS, ...pendingQuickBase.map(decomRowToSheetRow)])
+  styleDecomSheet(ws3)
+  XLSX.utils.book_append_sheet(wb, ws3, 'Pending POD in QuickBase')
 
   XLSX.writeFile(wb, filename)
 }
