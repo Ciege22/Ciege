@@ -1017,7 +1017,7 @@ export default function ReportsPage() {
                 title={decomRows.length === 0 ? 'Upload Decom Tracker first' : undefined}
                 className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold"
               >
-                ✉️ Email All CMs — Decom Status
+                ✉️ Viaero Decom Analysis Email
               </button>
             </div>
           </div>

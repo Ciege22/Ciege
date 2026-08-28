@@ -499,7 +499,7 @@ export function buildDecomCmEmailMailto(
   const today = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   const dateStr = `${pad(today.getMonth() + 1)}/${pad(today.getDate())}/${today.getFullYear()}`
-  const subject = `Decom Action Required — ${dateStr}`
+  const subject = `Viaero Decom Analysis — ${dateStr}`
   const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
   const byAgingDesc = (a: DecomRow, b: DecomRow) => (b.aging ?? -1) - (a.aging ?? -1)
 
