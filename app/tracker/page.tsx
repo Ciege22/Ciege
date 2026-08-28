@@ -579,8 +579,15 @@ export default function TrackerGridPage() {
   const [searchQuery, setSearchQuery] = useState('')
 
   // --- Per-column ("Excel style") filters. Map of columnName -> filter state.
-  // Only entries that actually constrain something are kept.
+  // Only entries that actually constrain something are kept. Sort is tracked
+  // separately (see sortOrder below) — this only ever holds value filters now.
   const [columnFilters, setColumnFilters] = useState<Record<string, ColumnFilterState>>({})
+  // Excel-style stacked multi-column sort. Index 0 is the primary key; each
+  // later entry is a tiebreaker applied only when everything before it is
+  // equal. Sorting a *new* column appends it (lowest priority) without
+  // disturbing columns already sorted; re-sorting an already-sorted column
+  // just flips its direction in place.
+  const [sortOrder, setSortOrder] = useState<{ name: string; dir: ColSort }[]>([])
   // Which column's filter dropdown is open, and where to anchor it (viewport
   // coords — the panel is position:fixed, outside the table flow). Only one at
   // a time.
@@ -825,6 +832,7 @@ export default function TrackerGridPage() {
     setSearchInput('')
     setSearchQuery('')
     setColumnFilters({})
+    setSortOrder([])
     setFilterPanel(null)
   }
 
@@ -885,6 +893,7 @@ export default function TrackerGridPage() {
     setViews(prev => [...prev.filter(v => v.name !== name && v.name !== editingViewName), view])
     setActiveViewName(name)
     setColumnFilters({})
+    setSortOrder([])
     setFilterPanel(null)
     cancelEditorMode()
   }
@@ -896,6 +905,7 @@ export default function TrackerGridPage() {
     if (activeViewName === name) {
       setActiveViewName('Default')
       setColumnFilters({})
+      setSortOrder([])
       setFilterPanel(null)
       setSearchInput('')
       setSearchQuery('')
@@ -1055,6 +1065,28 @@ export default function TrackerGridPage() {
   // --- Column filters applied on top of the search filter. Single pass across
   // every active column filter simultaneously (never a sequential loop), then
   // one optional sort by whichever column currently holds a sort.
+  // Date sort compares the raw cell value's parsed epoch directly, not the
+  // already-formatted display string re-parsed a second time — going
+  // Date -> "3/15/2026" -> Date again is lossy (a fresh Date parsed from a
+  // locale string picks it up at local midnight, which can land on a
+  // different calendar day than the original UTC value depending on the
+  // viewer's timezone) and was corrupting sort order for populated dates.
+  const dateSortValue = useCallback((row: TrackerRowData, col: GridColumn): number | null => {
+    const change = changeMap.get(`${row.rowKey}|${col.name}`)
+    const raw = change ? change.newValue : row.cells[col.index]
+    const d = parseDateAny(raw)
+    return d ? d.getTime() : null
+  }, [changeMap])
+
+  const compareRowsOnColumn = useCallback((a: TrackerRowData, b: TrackerRowData, col: GridColumn): number => {
+    if (col.isDate) {
+      const da = dateSortValue(a, col)
+      const db = dateSortValue(b, col)
+      return (da ?? -Infinity) - (db ?? -Infinity)
+    }
+    return cellText(a, col).localeCompare(cellText(b, col))
+  }, [dateSortValue, cellText])
+
   const displayRows = useMemo(() => {
     const valueSpecs = Object.entries(columnFilters)
       .filter(([, f]) => f.selectedValues !== null)
@@ -1066,26 +1098,22 @@ export default function TrackerGridPage() {
       rows = rows.filter(row => valueSpecs.every(s => s.allowed.has(cellText(row, s.col))))
     }
 
-    const sortEntry = Object.entries(columnFilters).find(([, f]) => f.sort)
-    if (sortEntry) {
-      const col = colMap.get(sortEntry[0])
-      const dir = sortEntry[1].sort
-      if (col) {
-        rows = [...rows].sort((a, b) => {
-          const ta = cellText(a, col)
-          const tb = cellText(b, col)
-          let cmp: number
-          if (col.isDate) {
-            cmp = (parseDateAny(ta)?.getTime() ?? -Infinity) - (parseDateAny(tb)?.getTime() ?? -Infinity)
-          } else {
-            cmp = ta.localeCompare(tb)
-          }
-          return dir === 'asc' ? cmp : -cmp
-        })
-      }
+    // Excel-style stacked sort — sortOrder[0] is the primary key, each
+    // subsequent entry only breaks ties left by the ones before it.
+    const levels = sortOrder
+      .map(s => ({ col: colMap.get(s.name), dir: s.dir }))
+      .filter((l): l is { col: GridColumn; dir: ColSort } => !!l.col)
+    if (levels.length > 0) {
+      rows = [...rows].sort((a, b) => {
+        for (const { col, dir } of levels) {
+          const cmp = compareRowsOnColumn(a, b, col)
+          if (cmp !== 0) return dir === 'asc' ? cmp : -cmp
+        }
+        return 0
+      })
     }
     return rows
-  }, [searchedRows, columnFilters, colMap, cellText])
+  }, [searchedRows, columnFilters, sortOrder, colMap, cellText, compareRowsOnColumn])
 
   // Vertical virtualization — same idea, over the filtered/sorted HOP row list.
   const { visibleRows, topSpacerHeight, bottomSpacerHeight } = useMemo(() => {
@@ -1103,7 +1131,14 @@ export default function TrackerGridPage() {
   const spacerColCount = frozenColumns.length + 2 + renderedColumns.length
   const tableWidth = frozenTotalWidth + colOffsets.total
 
-  const isColFilterActive = (name: string) => !!columnFilters[name]
+  const isColFilterActive = (name: string) => !!columnFilters[name] || sortOrder.some(s => s.name === name)
+  // 1-based priority + direction arrow for a column currently part of the
+  // stacked sort — e.g. "1↑" for the primary key, "2↓" for the next tiebreaker.
+  const sortBadge = (name: string): string | null => {
+    const idx = sortOrder.findIndex(s => s.name === name)
+    if (idx === -1) return null
+    return `${idx + 1}${sortOrder[idx].dir === 'asc' ? '↑' : '↓'}`
+  }
 
   const openColumnFilter = (name: string, e: React.MouseEvent) => {
     e.stopPropagation()
@@ -1121,11 +1156,22 @@ export default function TrackerGridPage() {
   // handle is a thin absolutely-positioned strip on the right edge — the
   // parent <th> is position:sticky, which (like position:relative) is a valid
   // containing block for it.
-  const headerContent = (col: GridColumn) => (
+  const headerContent = (col: GridColumn) => {
+    const badge = sortBadge(col.name)
+    return (
     <>
       <div className="flex items-center justify-between gap-1">
         <span className="truncate">{col.name}</span>
         <div className="flex items-center gap-1 flex-shrink-0">
+          {badge && (
+            <span
+              title="Sort priority — click the ▼ menu to change or clear it"
+              className="text-xs font-bold px-1 rounded"
+              style={{ backgroundColor: '#FFD166', color: NAVY }}
+            >
+              {badge}
+            </span>
+          )}
           {editorMode && !col.isHop && (
             <button
               onClick={() => toggleDraftHidden(col.name)}
@@ -1156,7 +1202,8 @@ export default function TrackerGridPage() {
         className="hover:bg-blue-300/60"
       />
     </>
-  )
+    )
+  }
 
   const viewBtnClass = (name: string) =>
     `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeViewName === name && !editorMode ? 'text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`
@@ -1581,28 +1628,32 @@ export default function TrackerGridPage() {
           columnName={activeFilterCol.name}
           isDateCol={activeFilterCol.isDate}
           values={uniqueColumnValues.get(activeFilterCol.name) || []}
-          current={columnFilters[activeFilterCol.name]}
+          current={{
+            sort: sortOrder.find(s => s.name === activeFilterCol.name)?.dir ?? null,
+            selectedValues: columnFilters[activeFilterCol.name]?.selectedValues ?? null,
+          }}
           pos={{ top: filterPanel.top, left: filterPanel.left }}
           onClose={() => setFilterPanel(null)}
           onApply={(state) => {
             const name = activeFilterCol.name
+
+            // Sort is tracked separately from value filters (see sortOrder) —
+            // Excel-style stacking: sorting a column that isn't already part
+            // of the active sort appends it as the lowest-priority tiebreaker
+            // without disturbing columns sorted earlier; re-sorting a column
+            // that's already active just flips its direction in place;
+            // clearing a column's sort removes only that column's level.
+            setSortOrder(prev => {
+              const idx = prev.findIndex(s => s.name === name)
+              if (!state.sort) return prev.filter(s => s.name !== name)
+              if (idx === -1) return [...prev, { name, dir: state.sort }]
+              return prev.map(s => (s.name === name ? { ...s, dir: state.sort } : s))
+            })
+
             setColumnFilters(prev => {
               const next = { ...prev }
-              // Only one column may hold a sort at a time — clear the others.
-              if (state.sort) {
-                for (const k of Object.keys(next)) {
-                  if (next[k]?.sort) next[k] = { ...next[k], sort: null }
-                }
-              }
-              if (!state.sort && state.selectedValues === null) {
-                delete next[name]
-              } else {
-                next[name] = state
-              }
-              // Drop any entry that ended up fully inert.
-              for (const k of Object.keys(next)) {
-                if (!next[k].sort && next[k].selectedValues === null) delete next[k]
-              }
+              if (state.selectedValues === null) delete next[name]
+              else next[name] = { sort: null, selectedValues: state.selectedValues }
               return next
             })
             setFilterPanel(null)
