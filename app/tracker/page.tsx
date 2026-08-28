@@ -20,9 +20,9 @@ const COL_BUFFER = 3
 const INITIAL_COLUMN_COUNT = 20
 const COLUMN_PAGE_SIZE = 20
 
-// First three columns are pinned in place while the rest scroll horizontally.
+// First five columns are pinned in place while the rest scroll horizontally.
 // Matched against normalized header names (see normHeader).
-const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID']
+const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID', 'New CM', 'General Contractor']
 // Subtle right-edge shadow that separates the frozen columns from the
 // scrolling ones underneath them.
 const FROZEN_SHADOW = '2px 0 4px -1px rgba(0,0,0,0.18)'
@@ -717,9 +717,10 @@ export default function TrackerGridPage() {
     [allColumns, effectiveHidden]
   )
 
-  // The first three columns (HOP, Site Name, Path ID) are pinned. They're
-  // pulled out of horizontal virtualization entirely and always rendered as
-  // position:sticky cells with incrementing left offsets so they stack.
+  // The first five columns (HOP, Site Name, Path ID, New CM, General
+  // Contractor) are pinned. They're pulled out of horizontal virtualization
+  // entirely and always rendered as position:sticky cells with incrementing
+  // left offsets so they stack.
   const frozenColumns = useMemo<GridColumn[]>(() => {
     const out: GridColumn[] = []
     for (const name of FROZEN_COL_NAMES) {
