@@ -13,8 +13,9 @@ import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
 import {
   parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow,
   parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, STATUS_DISPLAY_LABEL, TrackerHop,
-  countDroppedOffWithoutCxComplete, uniqueDecomGcNames,
+  countDroppedOffWithoutCxComplete, uniqueDecomGcNames, buildDecomCmDigestMailto,
 } from '../lib/decom'
+import { EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
 
 interface ReportSnapshot {
   filename: string
@@ -660,6 +661,7 @@ export default function ReportsPage() {
   const [uploading, setUploading] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'spo-cr-decom' | 'decom-tracker'>('spo-cr-decom')
   const [generatingSlides, setGeneratingSlides] = useState(false)
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
   const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
 
   const decomRows = parseDecomRows(decomRawRows)
@@ -675,6 +677,10 @@ export default function ReportsPage() {
   // so the breakdown always sums to Total Decom Sites Tracked, including GCs
   // not in the config list.
   const decomGcNames = uniqueDecomGcNames(decomRows)
+
+  useEffect(() => {
+    loadEmailSettings().then(setEmailSettings)
+  }, [])
 
   useEffect(() => {
     const load = async () => {
@@ -1001,6 +1007,17 @@ export default function ReportsPage() {
                 className="px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold"
               >
                 {generatingSlides ? '⏳ Generating...' : '⬇️ Download Decom Slides'}
+              </button>
+            </div>
+
+            <div className="mt-3">
+              <button
+                onClick={() => window.open(buildDecomCmDigestMailto(decomRows, emailSettings))}
+                disabled={decomRows.length === 0}
+                title={decomRows.length === 0 ? 'Upload Decom Tracker first' : undefined}
+                className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold"
+              >
+                ✉️ Email All CMs — Decom Action Required
               </button>
             </div>
           </div>

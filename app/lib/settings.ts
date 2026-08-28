@@ -32,6 +32,9 @@ export interface EmailSettings {
   ccList: string[]
   financeEmails: string[]
   gcContactEmails: Record<string, string>
+  // Keyed by CM name (not GC) — used to CC the right people on the decom
+  // per-CM digest email.
+  cmContactEmails: Record<string, string>
 }
 
 export interface DisplaySettings {
@@ -103,6 +106,7 @@ export const DEFAULT_EMAIL: EmailSettings = {
     'paul.1.barlow.ext@nokia.com',
   ],
   gcContactEmails: {},
+  cmContactEmails: {},
 }
 
 export const DEFAULT_DISPLAY: DisplaySettings = {

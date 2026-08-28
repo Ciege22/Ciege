@@ -56,6 +56,7 @@ export default function SettingsPage() {
   const [ccText, setCcText] = useState('')
   const [financeText, setFinanceText] = useState('')
   const [gcContactRows, setGcContactRows] = useState<{ gc: string; email: string }[]>([])
+  const [cmContactRows, setCmContactRows] = useState<{ cm: string; email: string }[]>([])
   const [emailSaved, setEmailSaved] = useState(false)
 
   const [display, setDisplay] = useState<DisplaySettings>(DEFAULT_DISPLAY)
@@ -78,6 +79,7 @@ export default function SettingsPage() {
       setCcText(e.ccList.join('\n'))
       setFinanceText(e.financeEmails.join('\n'))
       setGcContactRows(Object.entries(e.gcContactEmails).map(([gc, email]) => ({ gc, email })))
+      setCmContactRows(Object.entries(e.cmContactEmails || {}).map(([cm, email]) => ({ cm, email })))
       setDisplay(d)
 
       const snap = await loadTrackerSnapshot()
@@ -116,6 +118,9 @@ export default function SettingsPage() {
       gcContactEmails: Object.fromEntries(
         gcContactRows.filter(r => r.gc.trim() && r.email.trim()).map(r => [r.gc.trim(), r.email.trim()])
       ),
+      cmContactEmails: Object.fromEntries(
+        cmContactRows.filter(r => r.cm.trim() && r.email.trim()).map(r => [r.cm.trim(), r.email.trim()])
+      ),
     }
     await saveEmailSettings(parsed)
     flash(setEmailSaved)
@@ -144,6 +149,12 @@ export default function SettingsPage() {
   const updateGcContact = (i: number, field: 'gc' | 'email', val: string) =>
     setGcContactRows(r => r.map((row, idx) => idx === i ? { ...row, [field]: val } : row))
   const removeGcContact = (i: number) => setGcContactRows(r => r.filter((_, idx) => idx !== i))
+
+  // Email Settings — CM contact rows
+  const addCmContact = () => setCmContactRows(r => [...r, { cm: '', email: '' }])
+  const updateCmContact = (i: number, field: 'cm' | 'email', val: string) =>
+    setCmContactRows(r => r.map((row, idx) => idx === i ? { ...row, [field]: val } : row))
+  const removeCmContact = (i: number) => setCmContactRows(r => r.filter((_, idx) => idx !== i))
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
@@ -303,6 +314,26 @@ export default function SettingsPage() {
                   ))}
                   <button onClick={addGcContact}
                     className="self-start text-blue-400 hover:text-blue-300 text-xs font-semibold mt-1">+ Add GC Contact</button>
+                </div>
+              </div>
+
+              <div className="mt-6">
+                <p className="text-sm font-semibold text-gray-300 mb-2">CM Contact Emails</p>
+                <div className="flex flex-col gap-2">
+                  {cmContactRows.map((row, i) => (
+                    <div key={i} className="flex gap-2">
+                      <input value={row.cm} onChange={(e) => updateCmContact(i, 'cm', e.target.value)}
+                        placeholder="CM name"
+                        className="flex-1 bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                      <input value={row.email} onChange={(e) => updateCmContact(i, 'email', e.target.value)}
+                        placeholder="contact@example.com"
+                        className="flex-1 bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                      <button onClick={() => removeCmContact(i)}
+                        className="text-red-400 hover:text-red-300 text-sm px-3">✕</button>
+                    </div>
+                  ))}
+                  <button onClick={addCmContact}
+                    className="self-start text-blue-400 hover:text-blue-300 text-xs font-semibold mt-1">+ Add CM Contact</button>
                 </div>
               </div>
 
