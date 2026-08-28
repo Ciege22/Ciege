@@ -725,6 +725,26 @@ export default function TrackerGridPage() {
     })
   }, [])
 
+  // Snap back to the top whenever the search, a column filter, or the sort
+  // changes — same reason as the clamp above: the real scrollbar doesn't
+  // move on its own when the row count shrinks, so without this the grid can
+  // sit scrolled past the new (shorter) result set and show nothing even
+  // though it correctly filtered. Matches Excel, which also jumps to the top
+  // of a freshly filtered/sorted range.
+  const filterSortKey = `${searchQuery}|${JSON.stringify(columnFilters)}|${JSON.stringify(sortOrder)}`
+  const [prevFilterSortKey, setPrevFilterSortKey] = useState(filterSortKey)
+  if (filterSortKey !== prevFilterSortKey) {
+    setPrevFilterSortKey(filterSortKey)
+    setScrollTop(0)
+  }
+  // The React-state half of the reset happens above (during render, per
+  // React's own pattern for resetting state on a dependency change) — this
+  // effect only syncs the real DOM scroll position to match, which is a
+  // legitimate external-system update for an effect to make.
+  useEffect(() => {
+    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0
+  }, [filterSortKey])
+
   // Debounced row selection (single click) — collapses rapid repeated clicks
   // into a single state update instead of one per click.
   const handleRowClick = useCallback((rowKey: string) => {
@@ -1112,7 +1132,15 @@ export default function TrackerGridPage() {
   const { visibleRows, topSpacerHeight, bottomSpacerHeight } = useMemo(() => {
     const totalRows = displayRows.length
     const visibleSlots = Math.ceil(viewportSize.height / ROW_HEIGHT) + ROW_BUFFER * 2
-    const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - ROW_BUFFER)
+    // scrollTop reflects wherever the container was scrolled to under the
+    // *previous* (possibly much longer) row set — a search/filter that
+    // shrinks the result set doesn't move the real scrollbar, so without
+    // clamping, `start` could land past the new, shorter `totalRows`. That
+    // made `.slice(start, end)` come back empty (start > end) with a huge
+    // top spacer — the grid would render nothing and just look frozen, even
+    // though the "Showing N of M" count above it was already correct.
+    const rawStart = Math.floor(scrollTop / ROW_HEIGHT) - ROW_BUFFER
+    const start = Math.max(0, Math.min(rawStart, totalRows))
     const end = Math.min(totalRows, start + visibleSlots)
     return {
       visibleRows: displayRows.slice(start, end).map((row, i) => ({ row, rowIndex: start + i })),
