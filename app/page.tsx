@@ -212,6 +212,9 @@ export default function Home() {
     }
     if (headerRow === -1) return
 
+    console.log('[kpi] full header row:', rows[0])
+    console.log('[kpi] cols 48-56:', (rows[0] as unknown[])?.slice(48, 57))
+
     const headers = rows[headerRow] as string[]
     const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
 
