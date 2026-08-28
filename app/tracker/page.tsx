@@ -17,8 +17,6 @@ const SELECTED_ROW = '#DCEAFB'
 const ROW_HEIGHT = 36
 const ROW_BUFFER = 10
 const COL_BUFFER = 3
-const INITIAL_COLUMN_COUNT = 20
-const COLUMN_PAGE_SIZE = 20
 
 // First five columns are pinned in place while the rest scroll horizontally.
 // Matched against normalized header names (see normHeader).
@@ -602,7 +600,6 @@ export default function TrackerGridPage() {
   const [scrollTop, setScrollTop] = useState(0)
   const [scrollLeft, setScrollLeft] = useState(0)
   const [viewportSize, setViewportSize] = useState({ width: 900, height: 600 })
-  const [loadedColumnCount, setLoadedColumnCount] = useState(INITIAL_COLUMN_COUNT)
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
   // User-resized column widths, keyed by column name — overrides the default
   // width heuristic once a column's been dragged. Session-only (not persisted).
@@ -727,17 +724,6 @@ export default function TrackerGridPage() {
       scrollRafRef.current = null
     })
   }, [])
-
-  // Reset lazy-loaded column count when switching views (a new view may have
-  // far fewer or far more visible columns than "20 loaded so far" implies).
-  // Adjusted during render (React's documented pattern for resetting state on
-  // a prop/dep change) rather than in an effect, which would cost an extra render pass.
-  const [viewKeyForColumnReset, setViewKeyForColumnReset] = useState(`${activeViewName}|${editorMode}`)
-  const currentViewKey = `${activeViewName}|${editorMode}`
-  if (currentViewKey !== viewKeyForColumnReset) {
-    setViewKeyForColumnReset(currentViewKey)
-    setLoadedColumnCount(INITIAL_COLUMN_COUNT)
-  }
 
   // Debounced row selection (single click) — collapses rapid repeated clicks
   // into a single state update instead of one per click.
@@ -977,12 +963,14 @@ export default function TrackerGridPage() {
   // name -> column, for filter lookups (covers frozen + scrollable).
   const colMap = useMemo(() => new Map(filteredColumns.map(c => [c.name, c])), [filteredColumns])
 
-  // Lazy column loading — capped to `loadedColumnCount` outside the column
-  // editor (where every not-yet-hidden column must stay clickable to hide).
-  const loadedColumns = useMemo(
-    () => (editorMode ? scrollableColumns : scrollableColumns.slice(0, loadedColumnCount)),
-    [scrollableColumns, editorMode, loadedColumnCount]
-  )
+  // Every scrollable column is always "loaded" — horizontal virtualization
+  // below already caps what actually reaches the DOM to whatever's in the
+  // scroll viewport, so there's no separate need to artificially truncate the
+  // pool of columns you can scroll to. (A prior lazy-load cap did that
+  // truncation and required a "Show More Columns" click to see the rest of a
+  // view — removed since it just meant a saved view's columns didn't all show
+  // up right away, without actually saving any rendering cost.)
+  const loadedColumns = scrollableColumns
 
   // Horizontal virtualization over whatever's currently loaded — cumulative
   // left-edge offsets, then a scroll-position scan to find the visible slice.
@@ -1044,23 +1032,28 @@ export default function TrackerGridPage() {
     )
   }, [trackerRows, searchQuery, filteredColumns, cellText])
 
-  // Unique values per column for the filter checklists — derived from the
-  // currently displayed (search-filtered) rows.
-  const uniqueColumnValues = useMemo(() => {
-    const map = new Map<string, string[]>()
-    for (const col of filteredColumns) {
-      const set = new Set<string>()
-      for (const row of searchedRows) set.add(cellText(row, col))
-      const arr = Array.from(set)
-      if (col.isDate) {
-        arr.sort((a, b) => (parseDateAny(a)?.getTime() ?? -Infinity) - (parseDateAny(b)?.getTime() ?? -Infinity))
-      } else {
-        arr.sort((a, b) => a.localeCompare(b))
-      }
-      map.set(col.name, arr)
+  const activeFilterCol = filterPanel ? colMap.get(filterPanel.col) : undefined
+
+  // Unique values for the filter checklist — computed for only the column
+  // whose dropdown is actually open, not every visible column. This used to
+  // scan every column x every row (up to 100+ columns in the Default view)
+  // on every render where the row or column set changed, including every
+  // view switch — an O(columns x rows) pass that was the main source of the
+  // sluggishness switching views, worse now that a HOP's two site rows both
+  // show (roughly doubling row count). A filter dropdown only ever needs one
+  // column's values at a time, so there's no reason to compute the rest.
+  const activeColumnValues = useMemo(() => {
+    if (!activeFilterCol) return []
+    const set = new Set<string>()
+    for (const row of searchedRows) set.add(cellText(row, activeFilterCol))
+    const arr = Array.from(set)
+    if (activeFilterCol.isDate) {
+      arr.sort((a, b) => (parseDateAny(a)?.getTime() ?? -Infinity) - (parseDateAny(b)?.getTime() ?? -Infinity))
+    } else {
+      arr.sort((a, b) => a.localeCompare(b))
     }
-    return map
-  }, [filteredColumns, searchedRows, cellText])
+    return arr
+  }, [activeFilterCol, searchedRows, cellText])
 
   // --- Column filters applied on top of the search filter. Single pass across
   // every active column filter simultaneously (never a sequential loop), then
@@ -1216,8 +1209,6 @@ export default function TrackerGridPage() {
 
   const viewBtnClass = (name: string) =>
     `px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${activeViewName === name && !editorMode ? 'text-white' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`
-
-  const activeFilterCol = filterPanel ? colMap.get(filterPanel.col) : undefined
 
   return (
     <div className="min-h-screen bg-gray-100 text-gray-900 p-4">
@@ -1482,18 +1473,6 @@ export default function TrackerGridPage() {
         </div>
       )}
 
-      {loaded && headers.length > 0 && !editorMode && loadedColumns.length < scrollableColumns.length && (
-        <div className="mb-2 flex items-center gap-3">
-          <span className="text-xs text-gray-500">Showing {loadedColumns.length} of {scrollableColumns.length} scrolling columns</span>
-          <button
-            onClick={() => setLoadedColumnCount(c => Math.min(c + COLUMN_PAGE_SIZE, scrollableColumns.length))}
-            className="text-xs font-semibold text-blue-700 hover:text-blue-900 underline"
-          >
-            Show More Columns →
-          </button>
-        </div>
-      )}
-
       {loaded && headers.length > 0 && (
         <div
           ref={scrollContainerRef}
@@ -1645,7 +1624,7 @@ export default function TrackerGridPage() {
           panelRef={filterPanelRef}
           columnName={activeFilterCol.name}
           isDateCol={activeFilterCol.isDate}
-          values={uniqueColumnValues.get(activeFilterCol.name) || []}
+          values={activeColumnValues}
           current={{
             sort: sortOrder.find(s => s.name === activeFilterCol.name)?.dir ?? null,
             selectedValues: columnFilters[activeFilterCol.name]?.selectedValues ?? null,
