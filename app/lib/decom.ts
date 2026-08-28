@@ -155,6 +155,40 @@ export function fmtDecomDate(d: Date | null): string {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`
 }
 
+// Some sites get physically dropped off at the warehouse before their CX
+// Complete date gets logged in the tracker — the two fields are updated
+// independently, not in a guaranteed order. parseDecomRows excludes any row
+// without CX Complete (it isn't "decom-eligible" yet), which also silently
+// excludes a real Drop Off date on that row from every count. This counts
+// those specifically — rows with a valid Drop Off date but no CX Complete —
+// so the Decom Funnel's "Dropped Off" stage can include them without
+// changing what counts as decom-eligible everywhere else in the app.
+export function countDroppedOffWithoutCxComplete(allRows: unknown[][]): number {
+  if (allRows.length === 0) return 0
+  const headers = allRows[0] as unknown[]
+  const col = (name: string) => findColCaseInsensitive(headers, name)
+  const hopCol = col('HOP')
+  const cxCompleteCol = col('CX Complete - MS16')
+  const dropOffCol = col('DECOM Drop Off')
+
+  let count = 0
+  for (let i = 1; i < allRows.length; i++) {
+    const row = allRows[i]
+    if (!row || !row.some(v => v !== null && v !== undefined && String(v).trim() !== '')) continue
+    const hop = String(row[hopCol] ?? '').trim()
+    if (!hop) continue
+
+    const cxCompleteRaw = parseDate(row[cxCompleteCol])
+    const cxComplete = yearOk(cxCompleteRaw) ? cxCompleteRaw : null
+    if (cxComplete) continue // already counted normally via parseDecomRows
+
+    const dropOffParsed = parseDropOff(row[dropOffCol])
+    const dropOffDate = yearOk(dropOffParsed.date) ? dropOffParsed.date : null
+    if (dropOffDate) count++
+  }
+  return count
+}
+
 // `allRows` is the raw chunked-and-reassembled sheet: row 0 is the header
 // row, everything after is data. Header matching is case-insensitive per
 // spec, since the source sheet's casing isn't guaranteed to match exactly.

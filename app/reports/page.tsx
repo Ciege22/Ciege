@@ -13,6 +13,7 @@ import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
 import {
   parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow,
   parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, STATUS_DISPLAY_LABEL, TrackerHop,
+  countDroppedOffWithoutCxComplete,
 } from '../lib/decom'
 
 interface ReportSnapshot {
@@ -73,9 +74,15 @@ interface DecomFunnel {
 
 // Shared by the Reports page funnel section and Tab 1 of the Decom Dashboard Excel,
 // so the two views can never drift out of sync with each other.
-function computeDecomFunnel(decomRows: DecomRow[]): DecomFunnel {
+// `extraDroppedOff` folds in sites that have a real Drop Off date but haven't
+// had CX Complete logged yet — parseDecomRows excludes those rows entirely
+// (they aren't decom-eligible), so their drop-off would otherwise be invisible
+// even though it genuinely happened. Only Dropped Off counts them — Total
+// Tracked stays scoped to CX-Complete-confirmed rows, so gap1 can legitimately
+// go negative (more dropped off than the tracked denominator) when it does.
+function computeDecomFunnel(decomRows: DecomRow[], extraDroppedOff: number = 0): DecomFunnel {
   const totalTracked = decomRows.length
-  const droppedOff = decomRows.filter(r => !!r.dropOffDate).length
+  const droppedOff = decomRows.filter(r => !!r.dropOffDate).length + extraDroppedOff
   const podPathwave = decomRows.filter(r => r.podPathwave).length
   const podQuickBase = decomRows.filter(r => r.podQuickBase).length
   return {
@@ -84,6 +91,16 @@ function computeDecomFunnel(decomRows: DecomRow[]): DecomFunnel {
     gap2: droppedOff - podPathwave,
     gap3: podPathwave - podQuickBase,
   }
+}
+
+// "Gap: -{N}" only reads correctly when gap is positive (sites stuck). Once
+// Dropped Off can exceed Total Tracked, gap1 can go negative or zero — this
+// picks the correct sign instead of rendering a literal double negative
+// ("Gap: --2").
+function fmtGapLabel(gap: number): string {
+  if (gap > 0) return `Gap: -${gap}`
+  if (gap < 0) return `Gap: +${Math.abs(gap)}`
+  return 'Gap: 0'
 }
 
 function downloadGCReport(rows: unknown[][], colIdx: number[], headers: string[], vendorColInMaster: number, matchList: string[], filename: string) {
@@ -188,7 +205,7 @@ function nokiaPmFor(r: DecomRow, lookup: ReturnType<typeof nokiaPmLookup>): stri
   return ''
 }
 
-function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDecomSite[], trackerHops: TrackerHop[]) {
+function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDecomSite[], trackerHops: TrackerHop[], extraDroppedOff: number) {
   // Every unique GC found in the decom file itself — not the GC_CONFIG roster —
   // so the breakdown always sums to the funnel's Total Decom Sites Tracked,
   // even for GCs not in the config list.
@@ -215,7 +232,7 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
 
   // Same funnel math as the Reports page section — kept in one shared function
   // so the on-screen view and this export can never drift out of sync.
-  const funnel = computeDecomFunnel(decomRows)
+  const funnel = computeDecomFunnel(decomRows, extraDroppedOff)
   const boxLabels = ['Total Decom Sites Tracked', 'Total Sites Dropped Off', 'Total Sites POD in Pathwave', 'Total POD in QuickBase']
   const boxCounts = [funnel.totalTracked, funnel.droppedOff, funnel.podPathwave, funnel.podQuickBase]
   const boxGaps: (number | null)[] = [null, funnel.gap1, funnel.gap2, funnel.gap3]
@@ -227,7 +244,7 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
   boxColStart.forEach((c, i) => {
     boxRow[c] = boxLabels[i]
     countRow[c] = boxCounts[i]
-    if (boxGaps[i] !== null) gapRow[c] = `Gap: -${boxGaps[i]}`
+    if (boxGaps[i] !== null) gapRow[c] = fmtGapLabel(boxGaps[i] as number)
   })
 
   const missingLineRowIdx = 7
@@ -392,11 +409,11 @@ function addSlideFooter(slide: pptxgen.Slide) {
   slide.addText('Nokia Confidential · Viaero MW Decom Program · Data sourced from Ciege PM Platform', { x: 0, y: 5.38, w: 10, h: 0.24, align: 'center', valign: 'middle', fontSize: 7, color: WHITE, isTextBox: true })
 }
 
-async function downloadDecomSlides(decomRows: DecomRow[], missingDecom: MissingDecomSite[]) {
+async function downloadDecomSlides(decomRows: DecomRow[], missingDecom: MissingDecomSite[], extraDroppedOff: number) {
   const pres = new pptxgen()
   pres.layout = 'LAYOUT_16x9'
 
-  const decomFunnel = computeDecomFunnel(decomRows)
+  const decomFunnel = computeDecomFunnel(decomRows, extraDroppedOff)
   // Same all-GC derivation as the on-page breakdown and the Excel dashboard —
   // every unique GC in the decom file itself, not the GC_CONFIG roster.
   const gcNames = Array.from(new Set(decomRows.map(r => r.gc).filter(Boolean)))
@@ -430,7 +447,7 @@ async function downloadDecomSlides(decomRows: DecomRow[], missingDecom: MissingD
     if (gap !== null) {
       const gapZoneX = x - boxGap
       slide1.addText('→', { x: gapZoneX, y: boxY + 0.42, w: boxGap, h: 0.4, align: 'center', fontSize: 18, bold: true, color: MID_GRAY, isTextBox: true })
-      slide1.addText(`Gap: -${gap}`, { x: gapZoneX - 0.3, y: boxY + 0.82, w: boxGap + 0.6, h: 0.3, align: 'center', fontSize: 8, bold: true, color: gap > 0 ? RED : GREEN, isTextBox: true })
+      slide1.addText(fmtGapLabel(gap), { x: gapZoneX - 0.3, y: boxY + 0.82, w: boxGap + 0.6, h: 0.3, align: 'center', fontSize: 8, bold: true, color: gap > 0 ? RED : GREEN, isTextBox: true })
     }
   })
 
@@ -637,7 +654,11 @@ export default function ReportsPage() {
   console.log('[decom-render] decomRawRows:', decomRawRows.length, 'rows (incl. header) → decomRows parsed:', decomRows.length)
   const trackerHops = parseTrackerHopsForDecom(trackerRawRows)
   const missingDecomSites = findMissingDecom(decomRows, trackerHops)
-  const decomFunnel = computeDecomFunnel(decomRows)
+  // Sites with a real Drop Off date but no CX Complete logged yet — excluded
+  // from decomRows entirely (not decom-eligible), so their drop-off has to be
+  // folded in separately or it's invisible everywhere, including here.
+  const extraDroppedOff = countDroppedOffWithoutCxComplete(decomRawRows)
+  const decomFunnel = computeDecomFunnel(decomRows, extraDroppedOff)
   // Every unique GC found in the decom file itself — not the GC_CONFIG roster —
   // so the breakdown always sums to Total Decom Sites Tracked, including GCs
   // not in the config list.
@@ -832,7 +853,7 @@ export default function ReportsPage() {
                     <div className="px-3 py-3 text-center text-3xl font-bold" style={{ color: `#${TEAL}` }}>{box.count}</div>
                     {box.gap !== null && (
                       <div className={`px-3 pb-2 text-center text-xs font-bold ${box.gap > 0 ? 'text-red-400' : 'text-green-400'}`}>
-                        Gap: -{box.gap}
+                        {fmtGapLabel(box.gap)}
                       </div>
                     )}
                   </div>
@@ -949,7 +970,7 @@ export default function ReportsPage() {
 
             <div className="mt-6 flex gap-3">
               <button
-                onClick={() => downloadDecomDashboard(decomRows, missingDecomSites, trackerHops)}
+                onClick={() => downloadDecomDashboard(decomRows, missingDecomSites, trackerHops, extraDroppedOff)}
                 className="px-4 py-2 bg-blue-600 hover:bg-blue-500 rounded-lg text-sm font-semibold"
               >
                 ⬇️ Download Decom Dashboard
@@ -959,7 +980,7 @@ export default function ReportsPage() {
                   if (decomRows.length === 0) { alert('Upload decom tracker first'); return }
                   setGeneratingSlides(true)
                   try {
-                    await downloadDecomSlides(decomRows, missingDecomSites)
+                    await downloadDecomSlides(decomRows, missingDecomSites, extraDroppedOff)
                   } finally {
                     setGeneratingSlides(false)
                   }
