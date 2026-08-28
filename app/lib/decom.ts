@@ -1,4 +1,5 @@
 import { GC_CONFIG, matches } from './gcConfig'
+import { lookupContactEmail } from './settings'
 
 export interface DecomRow {
   // Unique per site row — Path ID (falling back to Site Name + Site Number
@@ -552,7 +553,7 @@ export function buildDecomEmailMailto(
   body += `Please see the attached Excel for full site detail.\n\n`
   body += `Thank you,\nCJ`
 
-  const to = emailSettings.gcContactEmails[gc] || ''
+  const to = lookupContactEmail(emailSettings.gcContactEmails, gc)
   const cc = emailSettings.ccList.join(',')
 
   return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`

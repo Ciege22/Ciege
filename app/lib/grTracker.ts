@@ -1,5 +1,6 @@
 import { supabase, loadTrackerSnapshot } from './supabase'
 import { GC_CONFIG, matches } from './gcConfig'
+import { lookupContactEmail } from './settings'
 
 // Raw SPO report rows are stored as arrays with no header row (see app/reports/page.tsx).
 // These are the fixed column positions established by that page's SPO_COL_IDX mapping.
@@ -395,7 +396,7 @@ export function buildGrEmailMailto(
 
   const gcContactMap = emailOverrides?.gcContactEmails ?? GC_PRIMARY_CONTACT
   const financeEmails = emailOverrides?.financeEmails ?? GR_EMAIL_CC_BASE
-  const gcContact = gcContactMap[gc]
+  const gcContact = lookupContactEmail(gcContactMap, gc)
   const cc = [...(gcContact ? [gcContact] : []), ...financeEmails].join(',')
   const to = GR_EMAIL_TO.join(',')
 

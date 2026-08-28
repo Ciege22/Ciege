@@ -64,6 +64,19 @@ export const DEFAULT_CREW_COUNTS: Record<string, number> = {
   InSite: 1,
 }
 
+// GC/CM contact-email lookup, case/whitespace-insensitive — names get typed
+// by hand both in the source tracker (General Contractor / CM columns) and
+// again in Settings, so exact casing between the two isn't guaranteed. A
+// plain `map[name]` lookup silently misses on any casing/spacing mismatch
+// (e.g. tracker has "Vikor", Settings has "vikor "), which reads as "the
+// contact email never gets used" even though it's saved correctly.
+export function lookupContactEmail(map: Record<string, string>, name: string): string {
+  const target = name?.trim().toLowerCase()
+  if (!target) return ''
+  const key = Object.keys(map).find(k => k.trim().toLowerCase() === target)
+  return key ? map[key] : ''
+}
+
 export function crewCountForGc(program: ProgramSettings, gc: string): number {
   const entry = program.gcs.find(g => g.gc?.trim().toLowerCase() === gc?.trim().toLowerCase())
   if (entry && entry.crewCount > 0) return entry.crewCount

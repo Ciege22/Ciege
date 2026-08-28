@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail } from '../lib/settings'
 import { loadChunkedReport } from '../lib/reportChunks'
 import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, DecomRow } from '../lib/decom'
 import {
@@ -15,6 +15,20 @@ import {
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
 } from '../lib/grTracker'
 
+
+// The tracker's "General Contractor" column isn't guaranteed to be typed
+// with consistent casing across rows (e.g. "Vikor" vs "VIKOR"). Resolves a
+// raw cell value to GC_CONFIG's canonical casing when it's a known GC, so
+// the GC tab list — and everything keyed off selectedGC (GC_CM_MAP,
+// gcContactEmails via lookupContactEmail, email subject lines) — shows and
+// uses the same spelling a person would type into Settings, instead of a
+// forced-lowercase string nothing else in the app recognizes.
+function canonicalGcName(raw: string): string {
+  const trimmed = raw.trim()
+  if (!trimmed) return ''
+  const match = GC_CONFIG.find(cfg => cfg.gc.toLowerCase() === trimmed.toLowerCase())
+  return match ? match.gc : trimmed
+}
 
 const GC_CM_MAP: Record<string, string> = {
   'MZI': 'Steve',
@@ -1530,8 +1544,18 @@ export default function GCCallPage() {
 
     setHops(parsed)
 
-    // Build GC list dynamically from parsed HOPs
-    const uniqueGCs = Array.from(new Set(parsed.map(h => h.gc?.trim().toLowerCase()).filter(Boolean))).sort()
+    // Build GC list dynamically from parsed HOPs — dedup case-insensitively
+    // (rows can spell the same GC differently) but keep canonical display
+    // casing so the tab label, selectedGC, and every gcContactEmails /
+    // GC_CM_MAP lookup keyed off it line up with what's typed in Settings.
+    const seenGc = new Map<string, string>() // lowercase key -> canonical display
+    parsed.forEach(h => {
+      const raw = h.gc?.trim()
+      if (!raw) return
+      const key = raw.toLowerCase()
+      if (!seenGc.has(key)) seenGc.set(key, canonicalGcName(raw))
+    })
+    const uniqueGCs = Array.from(seenGc.values()).sort()
     setGcList(uniqueGCs)
     setLoaded(true)
   }, [thresholds])
@@ -1761,7 +1785,7 @@ export default function GCCallPage() {
     body += `For schedule, finance, or contract matters contact CJ directly.`
 
     const ccList = emailSettings.ccList.join(',')
-    const to = emailSettings.gcContactEmails[selectedGC] || ''
+    const to = lookupContactEmail(emailSettings.gcContactEmails, selectedGC)
 
     window.open(`mailto:${to}?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
