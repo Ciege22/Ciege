@@ -725,25 +725,29 @@ export default function TrackerGridPage() {
     })
   }, [])
 
-  // Snap back to the top whenever the search, a column filter, or the sort
-  // changes — same reason as the clamp above: the real scrollbar doesn't
-  // move on its own when the row count shrinks, so without this the grid can
-  // sit scrolled past the new (shorter) result set and show nothing even
-  // though it correctly filtered. Matches Excel, which also jumps to the top
+  // Snap back to top-left whenever anything that changes what rows or
+  // columns are showing takes effect — search, a column filter, the sort, or
+  // switching views/entering the column editor. The real scrollbar doesn't
+  // move on its own when the row or column set shrinks or shuffles, so
+  // without this the grid can sit scrolled past content that no longer
+  // exists there and show nothing (or the wrong columns) even though it
+  // filtered/switched correctly. Matches Excel, which also jumps to the top
   // of a freshly filtered/sorted range.
-  const filterSortKey = `${searchQuery}|${JSON.stringify(columnFilters)}|${JSON.stringify(sortOrder)}`
-  const [prevFilterSortKey, setPrevFilterSortKey] = useState(filterSortKey)
-  if (filterSortKey !== prevFilterSortKey) {
-    setPrevFilterSortKey(filterSortKey)
+  const gridResetKey = `${activeViewName}|${editorMode}|${searchQuery}|${JSON.stringify(columnFilters)}|${JSON.stringify(sortOrder)}`
+  const [prevGridResetKey, setPrevGridResetKey] = useState(gridResetKey)
+  if (gridResetKey !== prevGridResetKey) {
+    setPrevGridResetKey(gridResetKey)
     setScrollTop(0)
+    setScrollLeft(0)
   }
   // The React-state half of the reset happens above (during render, per
   // React's own pattern for resetting state on a dependency change) — this
   // effect only syncs the real DOM scroll position to match, which is a
   // legitimate external-system update for an effect to make.
   useEffect(() => {
-    if (scrollContainerRef.current) scrollContainerRef.current.scrollTop = 0
-  }, [filterSortKey])
+    const el = scrollContainerRef.current
+    if (el) { el.scrollTop = 0; el.scrollLeft = 0 }
+  }, [gridResetKey])
 
   // Debounced row selection (single click) — collapses rapid repeated clicks
   // into a single state update instead of one per click.
@@ -1054,6 +1058,23 @@ export default function TrackerGridPage() {
 
   const activeFilterCol = filterPanel ? colMap.get(filterPanel.col) : undefined
 
+  // Rows a column's own checklist should be built from: search applied, plus
+  // every OTHER column's active value filter (never this column's own — you're
+  // in the middle of changing that one). Without this, filtering column A
+  // then opening column B's dropdown showed every value B ever has anywhere
+  // in the sheet, including combinations that can't coexist with A's filter —
+  // pick one of those and you'd get zero rows with no visible reason why,
+  // which reads exactly like "filters don't line up with what's on screen."
+  const rowsForActiveChecklist = useMemo(() => {
+    if (!activeFilterCol) return searchedRows
+    const otherSpecs = Object.entries(columnFilters)
+      .filter(([name, f]) => name !== activeFilterCol.name && f.selectedValues !== null)
+      .map(([name, f]) => ({ col: colMap.get(name), allowed: new Set(f.selectedValues as string[]) }))
+      .filter((s): s is { col: GridColumn; allowed: Set<string> } => !!s.col)
+    if (otherSpecs.length === 0) return searchedRows
+    return searchedRows.filter(row => otherSpecs.every(s => s.allowed.has(cellText(row, s.col))))
+  }, [activeFilterCol, searchedRows, columnFilters, colMap, cellText])
+
   // Unique values for the filter checklist — computed for only the column
   // whose dropdown is actually open, not every visible column. This used to
   // scan every column x every row (up to 100+ columns in the Default view)
@@ -1065,7 +1086,7 @@ export default function TrackerGridPage() {
   const activeColumnValues = useMemo(() => {
     if (!activeFilterCol) return []
     const set = new Set<string>()
-    for (const row of searchedRows) set.add(cellText(row, activeFilterCol))
+    for (const row of rowsForActiveChecklist) set.add(cellText(row, activeFilterCol))
     const arr = Array.from(set)
     if (activeFilterCol.isDate) {
       arr.sort((a, b) => (parseDateAny(a)?.getTime() ?? -Infinity) - (parseDateAny(b)?.getTime() ?? -Infinity))
@@ -1073,7 +1094,7 @@ export default function TrackerGridPage() {
       arr.sort((a, b) => a.localeCompare(b))
     }
     return arr
-  }, [activeFilterCol, searchedRows, cellText])
+  }, [activeFilterCol, rowsForActiveChecklist, cellText])
 
   // --- Column filters applied on top of the search filter. Single pass across
   // every active column filter simultaneously (never a sequential loop), then
