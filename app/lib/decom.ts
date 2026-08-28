@@ -486,95 +486,75 @@ export function buildDecomEmailMailto(
   return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
 
-// One digest email covering every CM with outstanding decom work — a section
-// per CM, each with its own funnel summary and its own three aging-sorted
-// item lists (pending drop off / pending POD Pathwave / pending POD
-// QuickBase), same three-way split summarizeDecomByGc uses. CMs whose sites
-// are all fully complete are skipped entirely — nothing to action, nothing to
-// email about.
-export function buildDecomCmDigestMailto(
+// Program-wide decom status digest — a summary block, then the oldest 5 sites
+// in each of the three pending buckets (drop off / POD Pathwave / POD
+// QuickBase), same status split used everywhere else in this file. Simpler
+// than a per-CM breakdown (buildDecomEmailMailto handles that, per-GC): this
+// is a single "here's what's most overdue right now" snapshot across the
+// whole program, with CM named on each line rather than sectioned by CM.
+export function buildDecomCmEmailMailto(
   decomRows: DecomRow[],
   emailSettings: { ccList: string[]; cmContactEmails: Record<string, string> }
 ): string {
   const today = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   const dateStr = `${pad(today.getMonth() + 1)}/${pad(today.getDate())}/${today.getFullYear()}`
-  const subject = `Decom Action Required — All CMs — ${dateStr}`
+  const subject = `Decom Action Required — ${dateStr}`
   const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
   const byAgingDesc = (a: DecomRow, b: DecomRow) => (b.aging ?? -1) - (a.aging ?? -1)
 
-  const byCm = new Map<string, DecomRow[]>()
-  decomRows.forEach(r => {
-    const cm = r.cm?.trim() || 'Unassigned'
-    if (!byCm.has(cm)) byCm.set(cm, [])
-    byCm.get(cm)!.push(r)
-  })
+  const totalTracked = decomRows.length
+  const completeCount = decomRows.filter(r => r.status === 'complete').length
+  // pod_gap always implies a Drop Off date exists (that's the branch that
+  // produces it) — pathwave/quickbase here are the same non-overlapping split
+  // summarizeDecomByGc uses, so a row only ever counts toward one bucket.
+  const pendingDropOff = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending')
+  const pendingPathwave = decomRows.filter(r => r.status === 'pod_gap' && !r.podPathwave)
+  const pendingQuickBase = decomRows.filter(r => r.status === 'pod_gap' && r.podPathwave && !r.podQuickBase)
+
+  const top5DropOff = [...pendingDropOff].sort(byAgingDesc).slice(0, 5)
+  const top5Pathwave = [...pendingPathwave].sort(byAgingDesc).slice(0, 5)
+  const top5QuickBase = [...pendingQuickBase].sort(byAgingDesc).slice(0, 5)
 
   let body = `Dear Team,\n\n`
-  body += `Please find below outstanding decom items by CM requiring immediate attention.\n\n`
-  body += `${'═'.repeat(41)}\n\n`
+  body += `Please find below the current decom status requiring immediate attention.\n\n`
 
-  let totalOutstanding = 0
-  let maxAgingProgram = 0
+  body += `${'═'.repeat(41)}\n`
+  body += `PROGRAM DECOM SUMMARY\n`
+  body += `${'═'.repeat(41)}\n`
+  body += `Total Sites Tracked:        ${totalTracked}\n`
+  body += `✅ Complete:                ${completeCount} (${pct(completeCount, totalTracked)}%)\n`
+  body += `⏳ Pending Drop Off:        ${pendingDropOff.length} sites\n`
+  body += `⚠️  Pending POD Pathwave:   ${pendingPathwave.length} sites\n`
+  body += `📋 Pending POD QuickBase:  ${pendingQuickBase.length} sites\n\n`
 
-  Array.from(byCm.keys()).sort((a, b) => a.localeCompare(b)).forEach(cm => {
-    const rows = byCm.get(cm)!
-    const total = rows.length
-    const droppedOff = rows.filter(r => !!r.dropOffDate).length
-    const podPathwaveCount = rows.filter(r => r.podPathwave).length
-    const podQuickBaseCount = rows.filter(r => r.podQuickBase).length
+  body += `${'═'.repeat(41)}\n`
+  body += `★★★ TOP PRIORITY — PENDING DROP OFF ★★★\n`
+  body += `Oldest 5 sites requiring immediate warehouse drop off:\n\n`
+  top5DropOff.forEach(r => {
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+    body += `Site: ${r.siteName || '—'}  |  CX Complete: ${fmtDecomDate(r.cxComplete) || '—'}  |  Days Outstanding: ${r.aging ?? '—'} days\n`
+    if (r.comment) body += `💬 ${r.comment}\n`
+    body += `\n`
+  })
 
-    const pendingDropOffRows = rows.filter(r => r.status === 'outstanding' || r.status === 'pending').sort(byAgingDesc)
-    const pendingPathwaveRows = rows.filter(r => r.dropOffDate && !r.podPathwave).sort(byAgingDesc)
-    const pendingQuickBaseRows = rows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase).sort(byAgingDesc)
+  body += `★★★ TOP PRIORITY — PENDING POD PATHWAVE ★★★\n`
+  body += `Oldest 5 sites dropped off but not confirmed in Pathwave:\n\n`
+  top5Pathwave.forEach(r => {
+    const daysSinceDropOff = r.dropOffDate ? daysBetween(r.dropOffDate, today) : null
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+    body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  Days Since Drop Off: ${daysSinceDropOff ?? '—'} days\n\n`
+  })
 
-    // Skip CMs with zero action items — nothing outstanding, nothing to email.
-    if (pendingDropOffRows.length + pendingPathwaveRows.length + pendingQuickBaseRows.length === 0) return
-
-    totalOutstanding += pendingDropOffRows.length + pendingPathwaveRows.length + pendingQuickBaseRows.length
-    ;[...pendingDropOffRows, ...pendingPathwaveRows, ...pendingQuickBaseRows].forEach(r => {
-      maxAgingProgram = Math.max(maxAgingProgram, r.aging ?? 0)
-    })
-
-    const gapDropOff = total - droppedOff
-    const gapPathwave = droppedOff - podPathwaveCount
-    const gapQuickBase = podPathwaveCount - podQuickBaseCount
-
-    body += `★★★ ${cm} ★★★\n\n`
-    body += `SUMMARY\n`
-    body += `Total Sites: ${total}\n`
-    body += `Dropped Off: ${droppedOff} (${pct(droppedOff, total)}%) | Gap: ${gapDropOff} pending\n`
-    body += `POD Pathwave: ${podPathwaveCount} (${pct(podPathwaveCount, total)}%) | Gap: ${gapPathwave} pending\n`
-    body += `POD QuickBase: ${podQuickBaseCount} (${pct(podQuickBaseCount, total)}%) | Gap: ${gapQuickBase} pending\n\n`
-
-    body += `★★ PENDING DECOM DROP OFF (${pendingDropOffRows.length} sites) ★★\n`
-    pendingDropOffRows.forEach(r => {
-      body += `★ ${r.hop} ★ | Path ID: ${r.pathId || '—'}\n`
-      body += `Site: ${r.siteName || '—'} | CX Complete: ${fmtDecomDate(r.cxComplete) || '—'} | Days Outstanding: ${r.aging ?? '—'} days\n`
-      if (r.comment) body += `💬 ${r.comment}\n`
-      body += `\n`
-    })
-
-    body += `★★ PENDING POD IN PATHWAVE (${pendingPathwaveRows.length} sites) ★★\n`
-    pendingPathwaveRows.forEach(r => {
-      body += `★ ${r.hop} ★ | Path ID: ${r.pathId || '—'}\n`
-      body += `Site: ${r.siteName || '—'} | DECOM Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}\n`
-      body += `POD Pathwave: No | POD QuickBase: ${r.podQuickBase ? 'Yes' : 'No'}\n`
-      body += `\n`
-    })
-
-    body += `★★ PENDING POD IN QUICKBASE (${pendingQuickBaseRows.length} sites) ★★\n`
-    pendingQuickBaseRows.forEach(r => {
-      body += `★ ${r.hop} ★ | Path ID: ${r.pathId || '—'}\n`
-      body += `Site: ${r.siteName || '—'} | DECOM Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'} | POD Pathwave: Yes\n`
-      body += `\n`
-    })
-
-    body += `${'═'.repeat(41)}\n\n`
+  body += `★★★ TOP PRIORITY — PENDING POD QUICKBASE ★★★\n`
+  body += `Oldest 5 sites pending QuickBase confirmation:\n\n`
+  top5QuickBase.forEach(r => {
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+    body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  POD Pathwave: Yes\n\n`
   })
 
   body += `${'═'.repeat(41)}\n`
-  body += `Total Program Outstanding: ${totalOutstanding} sites | Oldest: ${maxAgingProgram} days\n\n`
+  body += `Please see the attached Excel for the full decom detail by site and CM.\n\n`
   body += `Thank you,\nCJ`
 
   const cc = Array.from(new Set([...emailSettings.ccList, ...Object.values(emailSettings.cmContactEmails)].filter(Boolean))).join(',')
