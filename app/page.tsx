@@ -262,15 +262,28 @@ export default function Home() {
     }
 
     const hopRows = new Map<string, unknown[][]>()
+    // Read-only diagnostic counts, computed in parallel — do not gate hopRows,
+    // since computeKPIs intentionally stays PM-unfiltered (all Nokia PMs' DON
+    // 444 HOPs go into hopRows/hopDetails; the CJ-only view is applied
+    // downstream at render time via filteredDetails/filteredKpis, based on the
+    // pmFilter dropdown state — filtering to CJ here would break that dropdown
+    // for every other PM).
+    const don444Rows: unknown[][] = []
+    const cjRows: unknown[][] = []
     for (let i = headerRow + 1; i < rows.length; i++) {
       const row = rows[i] as unknown[]
       const don = String(row[don444Col] || '').trim().toUpperCase()
       if (don !== 'DON 444') continue
+      don444Rows.push(row)
+      const pm = String(row[nokiaPmCol] || '').trim().toUpperCase()
+      if (pm === 'CJ') cjRows.push(row)
       const hop = String(row[hopCol] || '').trim()
       if (!hop || hop === 'undefined') continue
       if (!hopRows.has(hop)) hopRows.set(hop, [])
       hopRows.get(hop)!.push(row)
     }
+    console.log('[kpi] rows surviving DON 444 filter:', don444Rows.length)
+    console.log('[kpi] rows surviving Nokia PM=CJ filter:', cjRows.length)
 
     let totalHops = 0, ntpComplete = 0, materialsReceived = 0
     let startsToDate = 0, completesToDate = 0, activeNow = 0, over18d = 0
