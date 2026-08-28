@@ -231,6 +231,10 @@ export default function Home() {
     const ssSCol      = col('Samsung Schedule Start')
     const ssECol      = col('Samsung Schedule Complete')
 
+    console.log('[kpi] headerRow index:', headerRow)
+    console.log('[kpi] ntpCol index:', ntpCol)
+    console.log('[kpi] total data rows being processed:', rows.length - headerRow - 1)
+
     const parseD = (val: unknown): Date | null => {
       if (!val) return null
       if (val instanceof Date) return isNaN(val.getTime()) ? null : val
@@ -328,6 +332,13 @@ export default function Home() {
       })
       if (hasConflict && !complete) vendorConflicts++
     })
+
+    console.log('[kpi] NTP complete count:', ntpComplete)
+    const sampleNtp = []
+    for (let i = headerRow + 1; i < Math.min(headerRow + 6, rows.length); i++) {
+      sampleNtp.push((rows[i] as unknown[])[ntpCol])
+    }
+    console.log('[kpi] sample NTP values (first 5 rows):', sampleNtp)
 
     const details: {
       hop: string, gc: string, nokiaPm: string,
