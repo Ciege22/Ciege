@@ -421,63 +421,135 @@ export function parseTrackerHopsForDecom(rows: unknown[][]): TrackerHop[] {
   return result
 }
 
+// ─────────────────────────────────────────────
+// DECOM STATUS EMAILS — shared summary + top-priority body builder used by
+// both the per-GC email (buildDecomEmailMailto) and the program-wide email
+// (buildDecomCmEmailMailto, all GCs combined). Aging tiers: 🔴 Critical = 7+
+// days, 🟡 Urgent = 4-6 days, 🟢 On Track = 0-3 days — applied to "days
+// outstanding" (CX Complete → today) in the Pending Drop Off section, and to
+// "days since drop off" in the Pathwave/QuickBase sections.
+// ─────────────────────────────────────────────
+
+type AgingTier = 'critical' | 'urgent' | 'onTrack'
+
+function classifyAgingTier(days: number | null): AgingTier {
+  const n = days ?? 0
+  if (n >= 7) return 'critical'
+  if (n >= 4) return 'urgent'
+  return 'onTrack'
+}
+
+const TIER_ICON: Record<AgingTier, string> = { critical: '🔴', urgent: '🟡', onTrack: '🟢' }
+
+function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: string): string {
+  const today = new Date()
+  const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
+  const byAgingDesc = (a: DecomRow, b: DecomRow) => (b.aging ?? -1) - (a.aging ?? -1)
+
+  const total = gcRows.length
+  const completeCount = gcRows.filter(r => r.status === 'complete').length
+  // pod_gap always implies a Drop Off date exists (that's the branch that
+  // produces it) — pathwave/quickbase here are the same non-overlapping split
+  // summarizeDecomByGc uses, so a row only ever counts toward one bucket.
+  const pendingDropOff = gcRows.filter(r => r.status === 'outstanding' || r.status === 'pending')
+  const pendingPathwave = gcRows.filter(r => r.status === 'pod_gap' && !r.podPathwave)
+  const pendingQuickBase = gcRows.filter(r => r.status === 'pod_gap' && r.podPathwave && !r.podQuickBase)
+
+  // outstanding/pending already partition Pending Drop Off at the aging >= 7
+  // line (see parseDecomRows), so these three tiers exactly re-slice it.
+  const criticalCount = pendingDropOff.filter(r => (r.aging ?? 0) >= 7).length
+  const urgentCount = pendingDropOff.filter(r => (r.aging ?? 0) >= 4 && (r.aging ?? 0) < 7).length
+  const onTrackCount = pendingDropOff.filter(r => (r.aging ?? 0) < 4).length
+  const maxAging = pendingDropOff.reduce((max, r) => Math.max(max, r.aging ?? 0), 0)
+
+  const top5DropOff = [...pendingDropOff].sort(byAgingDesc).slice(0, 5)
+  const top5Pathwave = [...pendingPathwave].sort(byAgingDesc).slice(0, 5)
+  const top5QuickBase = [...pendingQuickBase].sort(byAgingDesc).slice(0, 5)
+
+  const thinDiv = `${'─'.repeat(41)}\n`
+  const thickDiv = `${'═'.repeat(41)}\n`
+
+  let body = thickDiv
+  body += `📊 DECOM PROGRAM SUMMARY — ${headerLabel}\n`
+  body += thickDiv
+  body += `Total Sites Tracked:        ${total}\n`
+  body += `✅ Complete:                ${completeCount} (${pct(completeCount, total)}%)\n\n`
+  body += `⏳ Pending Drop Off:        ${pendingDropOff.length} sites\n`
+  body += `   🔴 Critical (7+ days):  ${criticalCount} sites\n`
+  body += `   🟡 Urgent (4-6 days):   ${urgentCount} sites\n`
+  body += `   🟢 On Track (0-3 days): ${onTrackCount} sites\n\n`
+  body += `⚠️  Pending POD Pathwave:  ${pendingPathwave.length} sites\n`
+  body += `📋 Pending POD QuickBase:  ${pendingQuickBase.length} sites\n\n`
+  body += `⏱️  Oldest Outstanding:    ${maxAging} days\n`
+  body += `📅 Report Date:            ${dateStr}\n\n`
+
+  body += thinDiv
+  body += `★★★ TOP PRIORITY — PENDING DROP OFF ★★★\n`
+  body += thinDiv
+  body += `\n`
+  top5DropOff.forEach(r => {
+    const tier = classifyAgingTier(r.aging)
+    const days = r.aging ?? 0
+    const label = tier === 'onTrack' ? `ON TRACK — ${days} DAYS` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${days} DAYS OUTSTANDING`
+    body += `${TIER_ICON[tier]} ${label}\n`
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+    body += `Site: ${r.siteName || '—'}  |  CX Complete: ${fmtDecomDate(r.cxComplete) || '—'}\n`
+    if (tier === 'critical') body += `⚠️  DROP OFF OVERDUE — IMMEDIATE ACTION REQUIRED\n`
+    else if (tier === 'urgent') body += `⏳ Drop Off Due — Action needed soon\n`
+    if (r.comment) body += `💬 Note: ${r.comment}\n`
+    body += `\n`
+  })
+
+  body += thinDiv
+  body += `★★★ TOP PRIORITY — PENDING POD PATHWAVE ★★★\n`
+  body += thinDiv
+  body += `\n`
+  top5Pathwave.forEach(r => {
+    const daysSince = r.dropOffDate ? daysBetween(r.dropOffDate, today) : 0
+    const tier = classifyAgingTier(daysSince)
+    const label = tier === 'onTrack' ? `ON TRACK — ${daysSince} DAYS SINCE DROP OFF` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${daysSince} DAYS SINCE DROP OFF`
+    body += `${TIER_ICON[tier]} ${label}\n`
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+    body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}\n`
+    if (tier === 'critical') body += `⚠️  POD PATHWAVE OVERDUE — IMMEDIATE ACTION REQUIRED\n`
+    else if (tier === 'urgent') body += `⏳ POD Pathwave pending — Action needed soon\n`
+    body += `\n`
+  })
+
+  body += thinDiv
+  body += `★★★ TOP PRIORITY — PENDING POD QUICKBASE ★★★\n`
+  body += thinDiv
+  body += `\n`
+  top5QuickBase.forEach(r => {
+    const daysSince = r.dropOffDate ? daysBetween(r.dropOffDate, today) : 0
+    const tier = classifyAgingTier(daysSince)
+    const label = tier === 'onTrack' ? `ON TRACK — ${daysSince} DAYS SINCE DROP OFF` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${daysSince} DAYS SINCE DROP OFF`
+    body += `${TIER_ICON[tier]} ${label}\n`
+    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+    body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  POD Pathwave: ✅\n`
+    if (tier === 'critical') body += `⚠️  POD QUICKBASE OVERDUE — IMMEDIATE ACTION REQUIRED\n`
+    else if (tier === 'urgent') body += `⏳ POD QuickBase pending — Action needed soon\n`
+    body += `\n`
+  })
+
+  return body
+}
+
 export function buildDecomEmailMailto(
   gc: string,
-  outstandingAndPending: DecomRow[],
-  podGapRows: DecomRow[],
+  gcRows: DecomRow[],
   emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> }
 ): string {
   const today = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
   const dateStr = `${pad(today.getMonth() + 1)}/${pad(today.getDate())}/${today.getFullYear()}`
-  const subject = `Decom Outstanding — ${gc} — ${dateStr}`
-
-  const sorted = [...outstandingAndPending].sort((a, b) => (b.aging ?? -1) - (a.aging ?? -1))
-  const sortedPodGap = [...podGapRows].sort((a, b) => (b.dropOffDate?.getTime() ?? 0) - (a.dropOffDate?.getTime() ?? 0))
-  const maxAging = sorted.reduce((max, r) => Math.max(max, r.aging ?? 0), 0)
+  const subject = `Viaero Decom Analysis — ${gc} — ${dateStr}`
 
   let body = `Dear ${gc} Team,\n\n`
-  body += `Please find below outstanding decom items requiring immediate attention.\n\n`
-
-  body += `Total Pending Decom Drop Off: ${sorted.length} sites\n`
-  body += `Total Pending POD in Pathwave / QuickBase: ${sortedPodGap.length} sites\n`
-  body += `Oldest Outstanding: ${maxAging} days since CX Complete\n\n`
-  body += `${'═'.repeat(41)}\n\n`
-
-  body += `★★★ OUTSTANDING DECOM ★★★\n\n`
-
-  sorted.forEach(r => {
-    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}\n`
-    body += `Site: ${r.siteName || '—'}\n`
-    body += `CX Complete: ${fmtDecomDate(r.cxComplete) || '—'}\n`
-    body += `Days Outstanding: ${r.aging ?? '—'} days\n`
-    body += `POD In Pathwave: ${r.podPathwave ? 'Yes' : 'No'}\n`
-    body += `POD In QuickBase: ${r.podQuickBase ? 'Yes' : 'No'}\n`
-    if (r.comment) body += `💬 Note: ${r.comment}\n`
-    body += `\n`
-  })
-
+  body += `Please find below your current decom status requiring immediate attention.\n\n`
+  body += buildDecomStatusBody(gcRows, gc.toUpperCase(), dateStr)
   body += `${'═'.repeat(41)}\n`
-  body += `Total Outstanding: ${sorted.length} sites | Oldest: ${maxAging} days\n\n`
-
-  body += `★★★ PENDING POD IN PATHWAVE / QUICKBASE ★★★\n\n`
-
-  sortedPodGap.forEach(r => {
-    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}\n`
-    body += `Site: ${r.siteName || '—'}\n`
-    body += `DECOM Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}\n`
-    body += `POD In Pathwave: ${r.podPathwave ? 'Yes' : 'No'}\n`
-    body += `POD In QuickBase: ${r.podQuickBase ? 'Yes' : 'No'}\n`
-    if (r.comment) body += `💬 Note: ${r.comment}\n`
-    body += `\n`
-  })
-
-  body += `${'═'.repeat(41)}\n`
-  body += `Total Pending POD: ${sortedPodGap.length} sites\n\n`
-
-  body += `${'═'.repeat(41)}\n`
-  body += `Please see the attached Excel for your full decom detail.\n\n`
-
+  body += `Please see the attached Excel for full site detail.\n\n`
   body += `Thank you,\nCJ`
 
   const to = emailSettings.gcContactEmails[gc] || ''
@@ -486,12 +558,9 @@ export function buildDecomEmailMailto(
   return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
 
-// Program-wide decom status digest — a summary block, then the oldest 5 sites
-// in each of the three pending buckets (drop off / POD Pathwave / POD
-// QuickBase), same status split used everywhere else in this file. Simpler
-// than a per-CM breakdown (buildDecomEmailMailto handles that, per-GC): this
-// is a single "here's what's most overdue right now" snapshot across the
-// whole program, with CM named on each line rather than sectioned by CM.
+// Program-wide decom status digest — same summary + top-priority format as
+// buildDecomEmailMailto, but built across every GC's rows combined instead
+// of scoping to one GC.
 export function buildDecomCmEmailMailto(
   decomRows: DecomRow[],
   emailSettings: { ccList: string[]; cmContactEmails: Record<string, string> }
@@ -500,59 +569,10 @@ export function buildDecomCmEmailMailto(
   const pad = (n: number) => String(n).padStart(2, '0')
   const dateStr = `${pad(today.getMonth() + 1)}/${pad(today.getDate())}/${today.getFullYear()}`
   const subject = `Viaero Decom Analysis — ${dateStr}`
-  const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
-  const byAgingDesc = (a: DecomRow, b: DecomRow) => (b.aging ?? -1) - (a.aging ?? -1)
-
-  const totalTracked = decomRows.length
-  const completeCount = decomRows.filter(r => r.status === 'complete').length
-  // pod_gap always implies a Drop Off date exists (that's the branch that
-  // produces it) — pathwave/quickbase here are the same non-overlapping split
-  // summarizeDecomByGc uses, so a row only ever counts toward one bucket.
-  const pendingDropOff = decomRows.filter(r => r.status === 'outstanding' || r.status === 'pending')
-  const pendingPathwave = decomRows.filter(r => r.status === 'pod_gap' && !r.podPathwave)
-  const pendingQuickBase = decomRows.filter(r => r.status === 'pod_gap' && r.podPathwave && !r.podQuickBase)
-
-  const top5DropOff = [...pendingDropOff].sort(byAgingDesc).slice(0, 5)
-  const top5Pathwave = [...pendingPathwave].sort(byAgingDesc).slice(0, 5)
-  const top5QuickBase = [...pendingQuickBase].sort(byAgingDesc).slice(0, 5)
 
   let body = `Dear Team,\n\n`
   body += `Please find below the current decom status requiring immediate attention.\n\n`
-
-  body += `${'═'.repeat(41)}\n`
-  body += `PROGRAM DECOM SUMMARY\n`
-  body += `${'═'.repeat(41)}\n`
-  body += `Total Sites Tracked:        ${totalTracked}\n`
-  body += `✅ Complete:                ${completeCount} (${pct(completeCount, totalTracked)}%)\n`
-  body += `⏳ Pending Drop Off:        ${pendingDropOff.length} sites\n`
-  body += `⚠️  Pending POD Pathwave:   ${pendingPathwave.length} sites\n`
-  body += `📋 Pending POD QuickBase:  ${pendingQuickBase.length} sites\n\n`
-
-  body += `${'═'.repeat(41)}\n`
-  body += `★★★ TOP PRIORITY — PENDING DROP OFF ★★★\n`
-  body += `Oldest 5 sites requiring immediate warehouse drop off:\n\n`
-  top5DropOff.forEach(r => {
-    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
-    body += `Site: ${r.siteName || '—'}  |  CX Complete: ${fmtDecomDate(r.cxComplete) || '—'}  |  Days Outstanding: ${r.aging ?? '—'} days\n`
-    if (r.comment) body += `💬 ${r.comment}\n`
-    body += `\n`
-  })
-
-  body += `★★★ TOP PRIORITY — PENDING POD PATHWAVE ★★★\n`
-  body += `Oldest 5 sites dropped off but not confirmed in Pathwave:\n\n`
-  top5Pathwave.forEach(r => {
-    const daysSinceDropOff = r.dropOffDate ? daysBetween(r.dropOffDate, today) : null
-    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
-    body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  Days Since Drop Off: ${daysSinceDropOff ?? '—'} days\n\n`
-  })
-
-  body += `★★★ TOP PRIORITY — PENDING POD QUICKBASE ★★★\n`
-  body += `Oldest 5 sites pending QuickBase confirmation:\n\n`
-  top5QuickBase.forEach(r => {
-    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
-    body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  POD Pathwave: Yes\n\n`
-  })
-
+  body += buildDecomStatusBody(decomRows, 'ALL GCs', dateStr)
   body += `${'═'.repeat(41)}\n`
   body += `Please see the attached Excel for the full decom detail by site and CM.\n\n`
   body += `Thank you,\nCJ`

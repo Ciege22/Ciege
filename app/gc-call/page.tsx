@@ -346,7 +346,7 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
   const showMissing = showMissingOverride !== null ? showMissingOverride : missingSites.length <= 5
 
   const generateDecomEmail = () => {
-    const mailto = buildDecomEmailMailto(selectedGC, outstandingPending, podGap, emailSettings)
+    const mailto = buildDecomEmailMailto(selectedGC, gcRows, emailSettings)
     window.open(mailto)
   }
 
