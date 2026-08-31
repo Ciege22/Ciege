@@ -1667,10 +1667,13 @@ export default function TrackerGridPage() {
               )}
               {visibleRows.map(({ row, rowIndex }) => {
                 const isSelected = row.rowKey === selectedRowKey
+                // rowBg is always one of three fully-opaque colors (white / zebra
+                // gray / selected blue) — safe to reuse on the frozen (sticky)
+                // columns too, so scrolling cells still never show through
+                // underneath them, but the zebra striping matches across the
+                // frozen/scrolling boundary instead of the frozen side always
+                // reading solid white.
                 const rowBg = isSelected ? SELECTED_ROW : (rowIndex % 2 === 1 ? ALT_ROW : '#FFFFFF')
-                // Frozen columns carry a solid (white / selected) background so
-                // scrolling cells never show through underneath them.
-                const frozenBg = isSelected ? SELECTED_ROW : '#FFFFFF'
                 return (
                   <tr key={row.rowKey} onClick={() => handleRowClick(row.rowKey)} style={{ height: ROW_HEIGHT, cursor: 'pointer' }}>
                     {frozenColumns.map((col, i) => {
@@ -1682,7 +1685,7 @@ export default function TrackerGridPage() {
                               position: 'sticky',
                               left: frozenLeft[i],
                               zIndex: 10,
-                              backgroundColor: frozenBg,
+                              backgroundColor: rowBg,
                               color: NAVY,
                               height: ROW_HEIGHT,
                               boxShadow: FROZEN_SHADOW,
@@ -1702,7 +1705,7 @@ export default function TrackerGridPage() {
                               position: 'sticky',
                               left: frozenLeft[i],
                               zIndex: 10,
-                              backgroundColor: frozenBg,
+                              backgroundColor: rowBg,
                               height: ROW_HEIGHT,
                               boxShadow: FROZEN_SHADOW,
                             }}
@@ -1722,7 +1725,7 @@ export default function TrackerGridPage() {
                         displayValue: shown,
                         isChanged: !!change,
                         isEditing,
-                        rowBg: frozenBg,
+                        rowBg,
                         stickyLeft: frozenLeft[i],
                         onStartEdit: () => setEditingCell({ rowKey: row.rowKey, field: col.name }),
                         onCommit: (newValue: string) => saveEdit(row.rowKey, row.hop, col.name, displayValue, newValue),
