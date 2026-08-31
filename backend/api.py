@@ -7,6 +7,7 @@ import shutil
 import zipfile
 import tempfile
 import traceback
+import logging
 from datetime import datetime
 
 import requests
@@ -22,6 +23,11 @@ import gr_tracker
 
 app = Flask(__name__)
 CORS(app)
+# Flask's default logger level is WARNING (since debug=False below), which
+# would silently drop app.logger.info(...) calls — bump it to INFO so the
+# ai_assistant diagnostic logging below actually reaches Railway's log
+# stream instead of being swallowed.
+app.logger.setLevel(logging.INFO)
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
@@ -177,12 +183,16 @@ def gr_data_endpoint():
 @app.route('/ai_assistant', methods=['POST'])
 def ai_assistant_endpoint():
 	try:
+		app.logger.info('ai_assistant endpoint hit')
+
 		if not ANTHROPIC_API_KEY:
+			app.logger.error('ai_assistant error: ANTHROPIC_API_KEY not configured on server')
 			return jsonify({'error': 'ANTHROPIC_API_KEY not configured on server'}), 500
 
 		body = request.get_json(silent=True) or {}
 		messages = body.get('messages') or []
 		context = body.get('context') or ''
+		app.logger.info(f'Request data keys: {list(body.keys())}, message count: {len(messages)}, context length: {len(context)}')
 
 		if not messages:
 			return jsonify({'error': 'No messages provided'}), 400
@@ -206,6 +216,16 @@ def ai_assistant_endpoint():
 		)
 
 		if anthropic_resp.status_code != 200:
+			# This is the most likely source of the 502s reported against this
+			# endpoint — the Flask route itself returns 502 whenever Anthropic's
+			# API responds with anything other than 200 (bad/missing API key,
+			# invalid model id, rate limit, malformed request body, etc.).
+			# Logged here (in addition to the JSON body already returned) since
+			# that JSON body reaching Railway's logs is what the caller needs
+			# to actually see the upstream response text.
+			app.logger.error(
+				f'ai_assistant error: Anthropic API returned {anthropic_resp.status_code} — {anthropic_resp.text[:500]}'
+			)
 			return jsonify({
 				'error': f'Anthropic API error: {anthropic_resp.status_code}',
 				'detail': anthropic_resp.text[:500],
@@ -219,6 +239,8 @@ def ai_assistant_endpoint():
 		return jsonify({'response': answer})
 	except Exception as e:
 		tb = traceback.format_exc()
+		app.logger.error(f'ai_assistant error: {str(e)}')
+		app.logger.error(tb)
 		return jsonify({'error': str(e), 'traceback': tb}), 500
 
 
