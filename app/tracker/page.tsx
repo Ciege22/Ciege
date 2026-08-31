@@ -200,14 +200,6 @@ function fromDateInputValue(inputVal: string): string {
   return `${parseInt(parts[1], 10)}/${parseInt(parts[2], 10)}/${parts[0]}`
 }
 
-function formatChangeLine(c: TrackerChange): string {
-  const dateStr = new Date(c.timestamp).toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' })
-  if (c.oldValue) {
-    return `${c.hop} | ${dateStr}: (${c.user}) ${c.field} updated from '${c.oldValue}' to '${c.newValue}'`
-  }
-  return `${c.hop} | ${dateStr}: (${c.user}) ${c.field}: ${c.newValue}`
-}
-
 // EditableCell / DatePickerCell are defined at module scope (not inside the
 // page component) so React never remounts them on re-render — a component
 // defined inside another component's render body gets a new identity every
@@ -832,15 +824,6 @@ export default function TrackerGridPage() {
     })
   }
 
-  const copyUpdates = () => {
-    if (pendingChanges.length === 0) return
-    const sorted = [...pendingChanges].sort((a, b) => a.hop.localeCompare(b.hop) || new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-    const text = sorted.map(formatChangeLine).join('\n')
-    navigator.clipboard.writeText(text)
-      .then(() => alert('✅ Copied to clipboard!'))
-      .catch(() => alert('Copy failed — please try manually'))
-  }
-
   const clearChanges = () => {
     setPendingChanges([])
     persistChanges([])
@@ -1419,13 +1402,6 @@ export default function TrackerGridPage() {
               📋 Pending Updates ({pendingChanges.length})
             </button>
           )}
-          <button
-            onClick={copyUpdates}
-            disabled={pendingChanges.length === 0}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold"
-          >
-            📋 Copy Updates ({pendingChanges.length})
-          </button>
           <button
             onClick={clearChanges}
             disabled={pendingChanges.length === 0}
