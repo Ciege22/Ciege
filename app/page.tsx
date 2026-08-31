@@ -161,11 +161,17 @@ function hasValidMs16a(ms16a: string): boolean {
   return !isNaN(d.getTime()) && d.getFullYear() >= 2025
 }
 
+// HOPs that count toward the Nebraska program deadline despite not matching
+// the "NE-" naming convention (e.g. named after a Wyoming site but still
+// part of the Nebraska count) — confirmed manually, not inferable from the
+// HOP name itself. Add to this list as more come up.
+const NEBRASKA_EXTRA_HOPS = new Set(['WY-TORRINGTON_SOUTH-WY-TORRINGTON_DT'])
+
 // Deliberately takes only the two fields it needs (not the full hopDetails
 // row shape, which is declared inline inside the Home component below) —
 // hopDetails structurally satisfies this narrower shape.
 function NebraskaWidget({ hopDetails }: { hopDetails: { hop: string; ms16a: string }[] }) {
-  const neHops = hopDetails.filter(h => h.hop.toUpperCase().includes('NE-'))
+  const neHops = hopDetails.filter(h => h.hop.toUpperCase().includes('NE-') || NEBRASKA_EXTRA_HOPS.has(h.hop))
   const total = neHops.length
   const remaining = neHops.filter(h => !hasValidMs16a(h.ms16a)).length
   const complete = total - remaining
