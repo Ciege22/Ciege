@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { parseDateAny } from '../lib/grTracker'
+import { ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import BackToDashboard from '../components/BackToDashboard'
 
 const NAVY = '#124191'
@@ -20,7 +21,7 @@ const COL_BUFFER = 3
 
 // First five columns are pinned in place while the rest scroll horizontally.
 // Matched against normalized header names (see normHeader).
-const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID', 'New CM', 'General Contractor', 'Blockers']
+const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID', 'New CM', 'General Contractor', 'Crew', 'Blockers']
 // Subtle right-edge shadow that separates the frozen columns from the
 // scrolling ones underneath them.
 const FROZEN_SHADOW = '2px 0 4px -1px rgba(0,0,0,0.18)'
@@ -64,9 +65,9 @@ interface ColumnFilterState {
 }
 
 interface GridColumn {
-  // -1 for the computed Blockers column (see isBlockers) — it has no
-  // backing cell in row.cells, so this index must never be used to read
-  // one; every access path checks isBlockers first.
+  // -1 for the computed Blockers/Crew columns (see isBlockers/isCrew) —
+  // neither has a backing cell in row.cells, so this index must never be
+  // used to read one; every access path checks isBlockers/isCrew first.
   index: number
   name: string
   isHop: boolean
@@ -76,6 +77,13 @@ interface GridColumn {
   // column, so it's excluded from editing and derived on the fly via
   // blockersText() instead of row.cells[index].
   isBlockers: boolean
+  // Per-HOP crew assignment — not a sheet column at all, and not part of
+  // the pending-updates staging system either. It reads/writes the same
+  // `crew-assign-{hop}` Supabase rows app/gc-call/page.tsx already uses,
+  // so it's a live, immediately-persisted, two-way-synced field: edit it
+  // here and it's what GC Call View shows next time that page loads, and
+  // vice versa.
+  isCrew: boolean
   width: number
 }
 
@@ -117,6 +125,11 @@ function isDateColumn(name: string): boolean {
 // in the app. Computed per physical site row (not merged across a HOP's two
 // rows) — consistent with this grid never merging rows anywhere else.
 const BLOCKERS_COL_NAME = 'Blockers'
+
+// Same crew-badge dropdown app/gc-call/page.tsx offers ('--' plus Crew 1..N),
+// N being that GC's configured crew count (crewCountForGc) — mirrored here
+// exactly so a HOP's crew assignment reads the same either place.
+const CREW_COL_NAME = 'Crew'
 
 // Parses the full tracker snapshot with NO column subsetting — every column
 // survives — and NO dedup-by-HOP either: a HOP can span two physical site
@@ -633,6 +646,12 @@ export default function TrackerGridPage() {
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
   const colResizeRef = useRef<{ name: string; startX: number; startWidth: number } | null>(null)
 
+  // Program roster (GC crew counts) and per-HOP crew assignments — same
+  // Supabase-backed state app/gc-call/page.tsx reads/writes, so the Crew
+  // column here and the crew dropdown there stay two-way in sync.
+  const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
+  const [crewAssignments, setCrewAssignments] = useState<Record<string, string>>({})
+
   // Load tracker snapshot — all columns, no dedup (see parseAllTrackerRows).
   useEffect(() => {
     const load = async () => {
@@ -644,6 +663,27 @@ export default function TrackerGridPage() {
       setLoaded(true)
     }
     load()
+  }, [])
+
+  // Load program settings (GC crew counts) and per-HOP crew assignments —
+  // same source app/gc-call/page.tsx reads.
+  useEffect(() => {
+    loadProgramSettings().then(setProgram)
+  }, [])
+  useEffect(() => {
+    const loadCrewAssignments = async () => {
+      const { data } = await supabase.from('pm_updates_cache').select('id, updates').like('id', 'crew-assign-%')
+      const map: Record<string, string> = {}
+      ;(data || []).forEach(row => {
+        const hop = row.id.slice('crew-assign-'.length)
+        try {
+          const parsed = JSON.parse(row.updates)
+          if (parsed?.crew) map[hop] = parsed.crew
+        } catch {}
+      })
+      setCrewAssignments(map)
+    }
+    loadCrewAssignments()
   }, [])
 
   // Load saved views.
@@ -804,6 +844,31 @@ export default function TrackerGridPage() {
     window.addEventListener('mousemove', handleMouseMove)
     window.addEventListener('mouseup', handleMouseUp)
   }, [])
+
+  // Crew assignment is a live, immediately-persisted field — not staged
+  // through pendingChanges/persistChanges like a sheet-cell edit — exactly
+  // mirroring app/gc-call/page.tsx's setCrewForHop against the same
+  // `crew-assign-{hop}` rows, so either page's edit is what the other shows
+  // on its next load.
+  const setCrewForHop = async (hop: string, crew: string) => {
+    setCrewAssignments(prev => {
+      const next = { ...prev }
+      if (crew) next[hop] = crew
+      else delete next[hop]
+      return next
+    })
+    if (crew) {
+      const { error } = await supabase.from('pm_updates_cache').upsert({
+        id: `crew-assign-${hop}`,
+        updates: JSON.stringify({ crew }),
+        updated_at: new Date().toISOString(),
+      })
+      if (error) console.error('[crew-assign] upsert failed:', error)
+    } else {
+      const { error } = await supabase.from('pm_updates_cache').delete().eq('id', `crew-assign-${hop}`)
+      if (error) console.error('[crew-assign] delete failed:', error)
+    }
+  }
 
   const persistChanges = async (changes: TrackerChange[]) => {
     const todayKey = new Date().toISOString().slice(0, 10)
@@ -996,14 +1061,18 @@ export default function TrackerGridPage() {
       const isHop = i === hopColIdx
       const isDate = isDateColumn(name)
       const defaultWidth = isHop ? 220 : (isDate ? 150 : 130)
-      return { index: i, name, isHop, isDate, isBlockers: false, width: columnWidths[name] ?? defaultWidth }
+      return { index: i, name, isHop, isDate, isBlockers: false, isCrew: false, width: columnWidths[name] ?? defaultWidth }
     })
     if (real.length === 0) return real
+    const crewCol: GridColumn = {
+      index: -1, name: CREW_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: true,
+      width: columnWidths[CREW_COL_NAME] ?? 110,
+    }
     const blockersCol: GridColumn = {
-      index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true,
+      index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true, isCrew: false,
       width: columnWidths[BLOCKERS_COL_NAME] ?? 260,
     }
-    return [real[0], blockersCol, ...real.slice(1)]
+    return [real[0], crewCol, blockersCol, ...real.slice(1)]
   }, [headers, columnWidths])
 
   // Resolves the raw-sheet columns Blockers reads from — done once per
@@ -1016,6 +1085,11 @@ export default function TrackerGridPage() {
     const spo = headers.findIndex(h => h.toLowerCase() === 'cx spo issued')
     return { ntpA, ntpWaiting, matA, matForecast, spo }
   }, [headers])
+
+  // General Contractor's own column index — Crew's dropdown option count
+  // (crewCountForGc) is scoped per row's own GC, since this grid (unlike
+  // gc-call's per-GC tab) shows every GC's HOPs at once.
+  const gcColIdx = useMemo(() => headers.findIndex(h => h === 'General Contractor'), [headers])
 
   const filteredColumns = useMemo(
     () => allColumns.filter(c => c.isHop || !effectiveHidden.has(c.name)),
@@ -1134,16 +1208,28 @@ export default function TrackerGridPage() {
     return parts.join(' | ') || '✅ No blockers'
   }, [blockerSourceCols, changeMap, headers])
 
+  // Row's own General Contractor value (honoring a pending edit to that
+  // column, same as every other lookup here) — Crew's dropdown option count
+  // is scoped to this row's GC via crewCountForGc.
+  const rowGc = useCallback((row: TrackerRowData): string => {
+    if (gcColIdx < 0) return ''
+    const change = changeMap.get(`${row.rowKey}|General Contractor`)
+    return String((change ? change.newValue : row.cells[gcColIdx]) ?? '').trim()
+  }, [gcColIdx, changeMap])
+
+  const crewMaxFor = useCallback((row: TrackerRowData): number => crewCountForGc(program, rowGc(row)), [program, rowGc])
+
   // Display text for a cell, honoring an in-flight edit override. Shared by
   // search, the per-column checklists, and the column-filter pass so all three
   // agree on what a cell "contains".
   const cellText = useCallback((row: TrackerRowData, col: GridColumn): string => {
     if (col.isBlockers) return blockersText(row)
+    if (col.isCrew) return crewAssignments[row.hop] || ''
     const change = changeMap.get(`${row.rowKey}|${col.name}`)
     if (change) return change.newValue ?? ''
     if (col.isHop) return row.hop
     return cellDisplayValue(row.cells[col.index], col.isDate).text
-  }, [changeMap, blockersText])
+  }, [changeMap, blockersText, crewAssignments])
 
   // --- Search filter. Scoped to every column in the sheet — NOT filteredColumns
   // (the current view's visible set) — so search behaves the same regardless
@@ -1702,6 +1788,36 @@ export default function TrackerGridPage() {
                             className="px-2 py-1 text-xs font-bold whitespace-nowrap border-r border-b border-gray-200"
                           >
                             {row.hop}
+                          </td>
+                        )
+                      }
+                      if (col.isCrew) {
+                        const crew = crewAssignments[row.hop] || ''
+                        const max = crewMaxFor(row)
+                        return (
+                          <td
+                            key={col.name}
+                            style={{
+                              position: 'sticky',
+                              left: frozenLeft[i],
+                              zIndex: 10,
+                              backgroundColor: rowBg,
+                              height: ROW_HEIGHT,
+                              boxShadow: FROZEN_SHADOW,
+                            }}
+                            className="px-1 py-1 border-r border-b border-gray-200"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <select
+                              value={crew}
+                              onChange={(e) => setCrewForHop(row.hop, e.target.value)}
+                              className="w-full bg-white text-gray-800 text-xs rounded px-1 py-1 border border-gray-300 focus:outline-none focus:border-blue-500"
+                            >
+                              <option value="">--</option>
+                              {Array.from({ length: max }, (_, idx) => `Crew ${idx + 1}`).map(c => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
                           </td>
                         )
                       }
