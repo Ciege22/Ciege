@@ -113,7 +113,19 @@ function normHeader(h: unknown): string {
 }
 
 const DATE_COL_REGEX = /start|end|complete|date|ntp|material|mss|power|forecast|actual/i
+// Free-text columns that happen to contain a date-ish keyword ("ntp",
+// "material") and so falsely match DATE_COL_REGEX — every other page in
+// this app already classifies these three as text, never dates (see
+// app/page.tsx, app/gc-call/page.tsx, app/cm-view/page.tsx, etc.). Treating
+// them as date columns here was a real bug: cellDisplayValue's date-parse
+// fallback only catches a value that fails to parse as a date at all — a
+// free-text comment that happens to contain a date-shaped fragment (e.g.
+// "Meeting with Hosp on 8/18") still "succeeds" as a JS Date via a wrong,
+// coincidental year, and got displayed as that bogus date instead of the
+// real note.
+const NON_DATE_COLUMN_NAMES = new Set(['NTP Action Owner', 'NTP is waiting on', 'Material Current Location'])
 function isDateColumn(name: string): boolean {
+  if (NON_DATE_COLUMN_NAMES.has(name)) return false
   return DATE_COL_REGEX.test(name)
 }
 
