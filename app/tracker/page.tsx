@@ -60,10 +60,18 @@ interface ColumnFilterState {
 }
 
 interface GridColumn {
+  // -1 for the computed Blockers column (see isBlockers) — it has no
+  // backing cell in row.cells, so this index must never be used to read
+  // one; every access path checks isBlockers first.
   index: number
   name: string
   isHop: boolean
   isDate: boolean
+  // Computed, read-only column showing why MS15 Implementation Start A
+  // (CX Start Actual) hasn't happened yet — not backed by a raw sheet
+  // column, so it's excluded from editing and derived on the fly via
+  // blockersText() instead of row.cells[index].
+  isBlockers: boolean
   width: number
 }
 
@@ -96,6 +104,15 @@ const DATE_COL_REGEX = /start|end|complete|date|ntp|material|mss|power|forecast|
 function isDateColumn(name: string): boolean {
   return DATE_COL_REGEX.test(name)
 }
+
+// Computed "Blockers" column — flags why MS15 Implementation Start A (CX
+// Start Actual) hasn't happened yet: NTP not issued, Material not received,
+// SPO not issued. Same conditions/thresholds gc-call/page.tsx's getBlockers
+// uses for pull-in readiness (hasNtp requires year >= 2025, hasMat requires
+// year >= 2020), kept in sync so "blocker" means the same thing everywhere
+// in the app. Computed per physical site row (not merged across a HOP's two
+// rows) — consistent with this grid never merging rows anywhere else.
+const BLOCKERS_COL_NAME = 'Blockers'
 
 // Parses the full tracker snapshot with NO column subsetting — every column
 // survives — and NO dedup-by-HOP either: a HOP can span two physical site
@@ -951,20 +968,38 @@ export default function TrackerGridPage() {
 
   // Full column list — memoized so it's only recomputed when the tracker's
   // header row actually changes, not on every render (e.g. every keystroke
-  // while editing a cell).
+  // while editing a cell). The computed Blockers column is spliced in right
+  // after HOP — it has no real header index, so it's built separately from
+  // the real, sheet-backed columns.
   const allColumns = useMemo<GridColumn[]>(() => {
     const hopColIdx = headers.findIndex(h => h === 'HOP')
     const orderedIndexes = headers.length > 0
       ? [hopColIdx, ...headers.map((_, i) => i).filter(i => i !== hopColIdx)]
       : []
-    return orderedIndexes.map(i => {
+    const real = orderedIndexes.map(i => {
       const name = headers[i] || `Column ${i + 1}`
       const isHop = i === hopColIdx
       const isDate = isDateColumn(name)
       const defaultWidth = isHop ? 220 : (isDate ? 150 : 130)
-      return { index: i, name, isHop, isDate, width: columnWidths[name] ?? defaultWidth }
+      return { index: i, name, isHop, isDate, isBlockers: false, width: columnWidths[name] ?? defaultWidth }
     })
+    if (real.length === 0) return real
+    const blockersCol: GridColumn = {
+      index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true,
+      width: columnWidths[BLOCKERS_COL_NAME] ?? 260,
+    }
+    return [real[0], blockersCol, ...real.slice(1)]
   }, [headers, columnWidths])
+
+  // Resolves the raw-sheet columns Blockers reads from — done once per
+  // header change rather than re-scanning `headers` on every row.
+  const blockerSourceCols = useMemo(() => {
+    const ntpA = headers.findIndex(h => h === 'NTP A')
+    const ntpWaiting = headers.findIndex(h => h === 'NTP is waiting on')
+    const matA = headers.findIndex(h => h.replace(/\s+/g, ' ').startsWith('Material Received A'))
+    const spo = headers.findIndex(h => h.toLowerCase() === 'cx spo issued')
+    return { ntpA, ntpWaiting, matA, spo }
+  }, [headers])
 
   const filteredColumns = useMemo(
     () => allColumns.filter(c => c.isHop || !effectiveHidden.has(c.name)),
@@ -1050,15 +1085,46 @@ export default function TrackerGridPage() {
     return map
   }, [pendingChanges])
 
+  // Computed Blockers text for one row — reads NTP A / NTP is waiting on /
+  // Material Received A / CX SPO Issued, honoring any pending in-grid edit
+  // to those same source columns (same changeMap lookup cellText uses)
+  // rather than only the original sheet value.
+  const blockersText = useCallback((row: TrackerRowData): string => {
+    const { ntpA, ntpWaiting, matA, spo } = blockerSourceCols
+    const rawFor = (idx: number) => {
+      if (idx < 0) return undefined
+      const change = changeMap.get(`${row.rowKey}|${headers[idx]}`)
+      return change ? change.newValue : row.cells[idx]
+    }
+    const parts: string[] = []
+
+    const ntpDate = ntpA >= 0 ? parseDateAny(rawFor(ntpA)) : null
+    const hasNtp = !!(ntpDate && ntpDate.getFullYear() >= 2025)
+    if (!hasNtp) {
+      const waitingOn = ntpWaiting >= 0 ? String(rawFor(ntpWaiting) ?? '').trim() : ''
+      parts.push(waitingOn ? `🔴 NTP pending — ${waitingOn}` : '🔴 NTP pending')
+    }
+
+    const matDate = matA >= 0 ? parseDateAny(rawFor(matA)) : null
+    const hasMat = !!(matDate && matDate.getFullYear() >= 2020)
+    if (!hasMat) parts.push('🔴 Material not received')
+
+    const spoDate = spo >= 0 ? parseDateAny(rawFor(spo)) : null
+    if (!spoDate) parts.push('🔴 SPO not issued')
+
+    return parts.join(' | ') || '✅ No blockers'
+  }, [blockerSourceCols, changeMap, headers])
+
   // Display text for a cell, honoring an in-flight edit override. Shared by
   // search, the per-column checklists, and the column-filter pass so all three
   // agree on what a cell "contains".
   const cellText = useCallback((row: TrackerRowData, col: GridColumn): string => {
+    if (col.isBlockers) return blockersText(row)
     const change = changeMap.get(`${row.rowKey}|${col.name}`)
     if (change) return change.newValue ?? ''
     if (col.isHop) return row.hop
     return cellDisplayValue(row.cells[col.index], col.isDate).text
-  }, [changeMap])
+  }, [changeMap, blockersText])
 
   // --- Search filter. Scoped to every column in the sheet — NOT filteredColumns
   // (the current view's visible set) — so search behaves the same regardless
@@ -1652,6 +1718,19 @@ export default function TrackerGridPage() {
                             className="px-2 py-1 text-xs font-bold whitespace-nowrap border-r border-b border-gray-200"
                           >
                             {row.hop}
+                          </td>
+                        )
+                      }
+                      if (col.isBlockers) {
+                        const text = blockersText(row)
+                        return (
+                          <td
+                            key={col.name}
+                            style={{ backgroundColor: rowBg, height: ROW_HEIGHT }}
+                            className="px-2 py-1 text-xs whitespace-nowrap border-r border-b border-gray-200 overflow-hidden text-ellipsis"
+                            title={text}
+                          >
+                            {text}
                           </td>
                         )
                       }
