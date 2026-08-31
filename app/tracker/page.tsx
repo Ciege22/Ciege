@@ -131,7 +131,21 @@ function parseAllTrackerRows(rows: unknown[][]): { headers: string[]; trackerRow
     const pathId = pathIdCol >= 0 ? normHeader(row[pathIdCol]) : ''
     const siteName = siteNameCol >= 0 ? normHeader(row[siteNameCol]) : ''
     const siteNumber = siteNumberCol >= 0 ? normHeader(row[siteNumberCol]) : ''
-    const rowKey = pathId || (siteName || siteNumber ? `${siteName}|${siteNumber}` : `${hop}-row-${rowCounter}`)
+    // Path ID names a PATH (both endpoints of a hop), not a single physical
+    // site — a HOP's two site rows share the identical Path ID by design
+    // (confirmed against live data: HOP "CO-ABBEY-CO-HOGBACK"'s two rows,
+    // Site Name "CO-HOGBACK" and "CO-ABBEY", both carry Path ID
+    // "0369<>0853"). Using Path ID alone as rowKey collided for roughly half
+    // the sheet, and React's key-based reconciliation genuinely breaks under
+    // duplicate keys — DOM rows from a larger previous render getting left
+    // on screen instead of removed after a filter/sort/search shrinks the
+    // result set, which is exactly the "grid doesn't match the filter"
+    // symptom this caused. Site Name/Number differ between a hop's two rows
+    // whenever either is populated, so combine everything available instead
+    // of leaning on Path ID alone to disambiguate them.
+    const rowKey = (siteName || siteNumber)
+      ? `${pathId}|${siteName}|${siteNumber}`
+      : (pathId || `${hop}-row-${rowCounter}`)
     rowCounter++
 
     trackerRows.push({ rowKey, hop, cells: row })
