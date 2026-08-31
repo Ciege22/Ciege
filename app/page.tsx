@@ -9,16 +9,21 @@ import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDispl
 import { loadChunkedReport } from './lib/reportChunks'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 
+// Decom isn't its own page (it lives inside Reports' Decom section and
+// GC Call View's Decom tab), so it isn't listed as a separate nav card here
+// — a dedicated "Decom" link would either duplicate Reports or 404.
 const navItems = [
-  { label: "HOP Readiness", href: "/weekly-focus", active: false },
-  { label: "Deck Builder", href: "/deck-builder", active: false },
-  { label: "GC Call View", href: "/gc-call", active: false },
-  { label: "CM Call View", href: "/cm-view", active: false },
-  { label: "Schedule Optimizer", href: "/schedule", active: false },
-  { label: "NTP Tracker", href: "/ntp-tracker", active: false },
-  { label: "Change Log", href: "/change-log", active: false },
-  { label: "Reports", href: "/reports", active: false },
-  { label: "📊 Tracker", href: "/tracker", active: false },
+  { label: "HOP Readiness", href: "/weekly-focus", emoji: "🎯" },
+  { label: "Deck Builder", href: "/deck-builder", emoji: "🃏" },
+  { label: "GC Call View", href: "/gc-call", emoji: "🏗️" },
+  { label: "CM Call View", href: "/cm-view", emoji: "👷" },
+  { label: "GR Tracker", href: "/gr-tracker", emoji: "💰" },
+  { label: "Schedule Optimizer", href: "/schedule", emoji: "📅" },
+  { label: "NTP Tracker", href: "/ntp-tracker", emoji: "⏱️" },
+  { label: "Change Log", href: "/change-log", emoji: "📜" },
+  { label: "Reports", href: "/reports", emoji: "📋" },
+  { label: "Tracker", href: "/tracker", emoji: "🔭" },
+  { label: "Settings", href: "/settings", emoji: "⚙️" },
 ];
 
 const stats = [
@@ -1110,30 +1115,58 @@ export default function Home() {
               </div>
             </div>
 
-            <nav className="space-y-2">
-              {navItems.map((item) =>
-                item.href ? (
-                  <a
-                    key={item.label}
-                    href={item.href}
-                    className={`block w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition hover:bg-white/10 ${
-                      item.active ? "bg-emerald-400/10 text-emerald-300" : "text-zinc-300"
-                    }`}
-                  >
-                    {item.label}
-                  </a>
-                ) : (
-                  <button
-                    key={item.label}
-                    className={`w-full rounded-2xl px-4 py-3 text-left text-sm font-medium transition hover:bg-white/10 ${
-                      item.active ? "bg-emerald-400/10 text-emerald-300" : "text-zinc-300"
-                    }`}
-                    type="button"
-                  >
-                    {item.label}
-                  </button>
-                )
-              )}
+            <style>{`
+              .nav-card {
+                display: flex;
+                align-items: center;
+                gap: 12px;
+                width: 100%;
+                padding: 12px 16px;
+                margin-bottom: 6px;
+                border-radius: 10px;
+                border-left: 3px solid transparent;
+                background: linear-gradient(180deg, #1a3a6b 0%, #124191 100%);
+                box-shadow: 0 4px 6px rgba(0,0,0,0.3), 0 1px 3px rgba(0,0,0,0.2);
+                text-decoration: none;
+                cursor: pointer;
+                transition: all 0.2s ease;
+              }
+              .nav-card-emoji {
+                font-size: 20px;
+                line-height: 1;
+                flex-shrink: 0;
+                transition: all 0.2s ease;
+              }
+              .nav-card-label {
+                color: #e4e7eb;
+                font-size: 0.875rem;
+                font-weight: 500;
+              }
+              .nav-card:hover {
+                transform: translateY(-3px) scale(1.03);
+                box-shadow: 0 8px 15px rgba(0,0,0,0.4), 0 0 12px rgba(0,160,176,0.3);
+                background: linear-gradient(180deg, #234a86 0%, #1650a8 100%);
+              }
+              .nav-card:hover .nav-card-emoji {
+                font-size: 1.3em;
+              }
+              .nav-card:active {
+                transform: translateY(1px);
+                box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
+                border-left: 3px solid #00A0B0;
+                background: linear-gradient(180deg, #0d2d5e 0%, #0a1f45 100%);
+              }
+              .nav-card:active .nav-card-emoji {
+                filter: drop-shadow(0 0 6px #00A0B0);
+              }
+            `}</style>
+            <nav>
+              {navItems.map((item) => (
+                <a key={item.label} href={item.href} className="nav-card">
+                  <span className="nav-card-emoji">{item.emoji}</span>
+                  <span className="nav-card-label">{item.label}</span>
+                </a>
+              ))}
             </nav>
 
             <button

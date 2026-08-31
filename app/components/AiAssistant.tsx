@@ -351,13 +351,7 @@ export default function AiAssistant() {
             onClick={openPanel}
             aria-label="Open Ciege AI Assistant — Navi"
             className="navi-hover-wrapper"
-            style={{
-              background: 'none',
-              border: 'none',
-              padding: 0,
-              cursor: 'pointer',
-              filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.35))',
-            }}
+            style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer' }}
           >
             <NaviFairy size={48} />
           </button>
