@@ -20,7 +20,7 @@ const COL_BUFFER = 3
 
 // First five columns are pinned in place while the rest scroll horizontally.
 // Matched against normalized header names (see normHeader).
-const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID', 'New CM', 'General Contractor']
+const FROZEN_COL_NAMES = ['HOP', 'Site Name', 'Path ID', 'New CM', 'General Contractor', 'Blockers']
 // Subtle right-edge shadow that separates the frozen columns from the
 // scrolling ones underneath them.
 const FROZEN_SHADOW = '2px 0 4px -1px rgba(0,0,0,0.18)'
@@ -1686,6 +1686,26 @@ export default function TrackerGridPage() {
                             className="px-2 py-1 text-xs font-bold whitespace-nowrap border-r border-b border-gray-200"
                           >
                             {row.hop}
+                          </td>
+                        )
+                      }
+                      if (col.isBlockers) {
+                        const text = blockersText(row)
+                        return (
+                          <td
+                            key={col.name}
+                            style={{
+                              position: 'sticky',
+                              left: frozenLeft[i],
+                              zIndex: 10,
+                              backgroundColor: frozenBg,
+                              height: ROW_HEIGHT,
+                              boxShadow: FROZEN_SHADOW,
+                            }}
+                            className="px-2 py-1 text-xs whitespace-nowrap border-r border-b border-gray-200 overflow-hidden text-ellipsis"
+                            title={text}
+                          >
+                            {text}
                           </td>
                         )
                       }
