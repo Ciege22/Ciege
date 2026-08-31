@@ -48,6 +48,10 @@ interface TrackerChange {
 interface TrackerView {
   name: string
   hiddenColumns: string[]
+  // Optional so older saved views (created before this existed) still load
+  // fine — selectView/editView fall back to "no filter, no sort" for them.
+  columnFilters?: Record<string, ColumnFilterState>
+  sortOrder?: { name: string; dir: ColSort }[]
 }
 
 // Per-column ("Excel style") filter state. `sort` drives the whole grid's row
@@ -847,16 +851,21 @@ export default function TrackerGridPage() {
     })
   }
 
-  // Switching views resets the search box and every column filter, but a
-  // half-typed search survives ordinary re-renders (it lives in state).
+  // Switching views resets the search box, but applies whatever filter/sort
+  // was saved WITH the view (empty for Default and for older views saved
+  // before this existed) — that's what makes clicking a view jump straight
+  // to its filtered/sorted state instead of just changing which columns
+  // show. A half-typed search survives ordinary re-renders (it lives in
+  // state) since it isn't part of a saved view.
   const selectView = (name: string) => {
+    const view = views.find(v => v.name === name)
     setActiveViewName(name)
     setEditorMode(false)
     setEditingViewName(null)
     setSearchInput('')
     setSearchQuery('')
-    setColumnFilters({})
-    setSortOrder([])
+    setColumnFilters(view?.columnFilters ?? {})
+    setSortOrder(view?.sortOrder ?? [])
     setFilterPanel(null)
   }
 
@@ -870,10 +879,15 @@ export default function TrackerGridPage() {
   }
 
   // Enter the column editor pre-populated with an existing view's hidden
-  // columns — same UI as Create View, but Save overwrites the view.
+  // columns AND its saved filter/sort — same UI as Create View, but Save
+  // overwrites the view. Loading the saved filter/sort onto the live grid
+  // lets you see and adjust it (via the normal column ▼ menus) in context
+  // before re-saving, instead of editing it blind.
   const editView = (v: TrackerView) => {
     setEditingViewName(v.name)
     setDraftHidden(new Set(v.hiddenColumns))
+    setColumnFilters(v.columnFilters ?? {})
+    setSortOrder(v.sortOrder ?? [])
     setSavePromptOpen(false)
     setViewNameDraft(v.name)
     setFilterPanel(null)
@@ -886,6 +900,14 @@ export default function TrackerGridPage() {
     setViewNameDraft('')
     setEditingViewName(null)
     setDraftHidden(new Set())
+    // Editing a view loads ITS saved filter/sort onto the grid (see
+    // editView) so it can be tweaked in context — cancelling without saving
+    // should snap that back to whatever the currently ACTIVE view actually
+    // has, the same way hidden columns already do via effectiveHidden,
+    // rather than leaving the edited-but-unsaved view's filter/sort applied.
+    const av = views.find(v => v.name === activeViewName)
+    setColumnFilters(av?.columnFilters ?? {})
+    setSortOrder(av?.sortOrder ?? [])
   }
 
   const toggleDraftHidden = (name: string) => {
@@ -903,7 +925,11 @@ export default function TrackerGridPage() {
   const confirmSaveView = async () => {
     const name = viewNameDraft.trim()
     if (!name) return
-    const view: TrackerView = { name, hiddenColumns: Array.from(draftHidden) }
+    // Captures whatever filter/sort is currently active on the grid — set
+    // via the normal column ▼ menus before (or while) creating/editing this
+    // view — so selecting it later reapplies the exact same filtered/sorted
+    // state instead of just restoring which columns are visible.
+    const view: TrackerView = { name, hiddenColumns: Array.from(draftHidden), columnFilters, sortOrder }
     await supabase.from('pm_updates_cache').upsert({
       id: `tracker-view-${name}`,
       updates: JSON.stringify(view),
@@ -916,10 +942,16 @@ export default function TrackerGridPage() {
     }
     setViews(prev => [...prev.filter(v => v.name !== name && v.name !== editingViewName), view])
     setActiveViewName(name)
-    setColumnFilters({})
-    setSortOrder([])
     setFilterPanel(null)
-    cancelEditorMode()
+    // Close the editor UI directly instead of calling cancelEditorMode() —
+    // that also reverts columnFilters/sortOrder to match the (still stale,
+    // pre-update) activeViewName/views closure, which would immediately
+    // wipe the filter/sort just saved above before the next render catches up.
+    setEditorMode(false)
+    setSavePromptOpen(false)
+    setViewNameDraft('')
+    setEditingViewName(null)
+    setDraftHidden(new Set())
   }
 
   const deleteView = async (name: string) => {
@@ -1493,6 +1525,7 @@ export default function TrackerGridPage() {
               {editingViewName
                 ? `Editing view "${editingViewName}" — click ✕ on any column to hide it`
                 : 'Column Editor Mode — click ✕ on any column to hide it from this view'}
+              <span className="font-normal text-blue-700"> · whatever filter/sort is set on the grid right now (via each column ▼ menu) saves with this view too</span>
             </p>
             <div className="flex items-center gap-2">
               {!savePromptOpen ? (
