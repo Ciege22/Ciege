@@ -33,6 +33,62 @@ const stats = [
   { label: "SCOP Invoices", value: "18", delta: "+22%" },
 ];
 
+// Data-quality check: flags any column whose "percent of DON 444 rows with a
+// value" craters between the previous snapshot and this one. Built for
+// formula-driven lookup columns (NTP A, NTP Action Owner, NTP is waiting on)
+// that pull from another tracker — their value is whatever was cached in the
+// file when it was last saved, not a live recalculation, so a file saved
+// before Excel resolved those links comes through mostly blank even though
+// the same file looks fine the moment you open it in Excel. Generic over
+// every column (not hardcoded to those three) so it also catches this
+// happening to some other lookup-driven column later. Pure function of its
+// two row arrays — no component state — so it lives at module scope.
+const POPULATION_DROP_MIN_PREV_PCT = 0.3  // ignore columns that were already sparse — nothing to regress from
+const POPULATION_DROP_MIN_DELTA = 0.4     // only flag a real collapse, not normal week-to-week variation
+function detectColumnPopulationDrops(newRows: unknown[][], oldRows: unknown[][]): { column: string; prevPct: number; currentPct: number }[] {
+  const getHeaderInfo = (rows: unknown[][]): { headers: string[]; index: number } => {
+    for (let i = 0; i < 10; i++) {
+      if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) return { headers: (rows[i] as unknown[]).map(h => String(h).trim()), index: i }
+    }
+    return { headers: [], index: -1 }
+  }
+
+  const populationRates = (rows: unknown[][]): Record<string, number> => {
+    const { headers, index } = getHeaderInfo(rows)
+    if (headers.length === 0) return {}
+    const hopCol = headers.findIndex(h => h === 'HOP')
+    const don444Col = headers.findIndex(h => h === 'DON 444')
+    const dataRows: unknown[][] = []
+    for (let i = index + 1; i < rows.length; i++) {
+      const row = rows[i] as unknown[]
+      if (!row) continue
+      if (String(row[don444Col] ?? '').trim().toUpperCase() !== 'DON 444') continue
+      const hop = String(row[hopCol] ?? '').trim()
+      if (!hop || hop === 'undefined') continue
+      dataRows.push(row)
+    }
+    const rates: Record<string, number> = {}
+    if (dataRows.length === 0) return rates
+    headers.forEach((h, i) => {
+      if (!h) return
+      const populated = dataRows.filter(r => r[i] !== null && r[i] !== undefined && String(r[i]).trim() !== '').length
+      rates[h] = populated / dataRows.length
+    })
+    return rates
+  }
+
+  const currentRates = populationRates(newRows)
+  const prevRates = populationRates(oldRows)
+  const drops: { column: string; prevPct: number; currentPct: number }[] = []
+  Object.entries(prevRates).forEach(([column, prevPct]) => {
+    const currentPct = currentRates[column] ?? 0
+    if (prevPct >= POPULATION_DROP_MIN_PREV_PCT && prevPct - currentPct >= POPULATION_DROP_MIN_DELTA) {
+      drops.push({ column, prevPct, currentPct })
+    }
+  })
+  return drops.sort((a, b) => (b.prevPct - b.currentPct) - (a.prevPct - a.currentPct))
+}
+
 function WeatherWidget() {
   const [weather, setWeather] = useState<{
     time: string
@@ -207,6 +263,11 @@ function NebraskaWidget({ hopDetails }: { hopDetails: { hop: string; ms16a: stri
 export default function Home() {
   const router = useRouter()
   const [snapshotInfo, setSnapshotInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
+  // Columns whose populated-rate collapsed vs. the previous snapshot — see
+  // detectColumnPopulationDrops. Persists across page loads (recomputed
+  // whenever the current snapshot loads, not just right after an upload) so
+  // it doesn't silently disappear the moment you leave and come back.
+  const [dataQualityWarnings, setDataQualityWarnings] = useState<{ column: string; prevPct: number; currentPct: number }[]>([])
   const [uploading, setUploading] = useState(false)
   const [kpis, setKpis] = useState<{
     totalHops: number
@@ -535,6 +596,15 @@ export default function Home() {
       if (snap) {
         computeKPIs(snap.data)
         setTrackerRawRows(snap.data)
+        // Re-check on every normal page load too, not just right after an
+        // upload — so a bad upload's warning is still there if you come back
+        // to the dashboard later instead of only flashing in the moment.
+        try {
+          const prevSnap = await getPreviousSnapshot()
+          if (prevSnap) setDataQualityWarnings(detectColumnPopulationDrops(snap.data, prevSnap.data))
+        } catch (err) {
+          console.error('Data quality check error:', err)
+        }
       }
     }
     loadKPIs()
@@ -946,6 +1016,7 @@ export default function Home() {
             const schemaChanges = detectSchemaChanges(rows, prevSnap.data, newSnap.id)
             await saveTrackerChanges(newSnap.id, changes)
             await saveSchemaChanges(newSnap.id, schemaChanges)
+            setDataQualityWarnings(detectColumnPopulationDrops(rows, prevSnap.data))
           }
         } catch (err) {
           console.error('Change detection error:', err)
@@ -1181,6 +1252,32 @@ export default function Home() {
           </aside>
 
           <main className="space-y-6">
+            {dataQualityWarnings.length > 0 && (
+              <section className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-5">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-semibold text-amber-300">⚠️ Data quality warning — {dataQualityWarnings.length} column{dataQualityWarnings.length === 1 ? '' : 's'} dropped sharply vs. your last upload</p>
+                    <p className="mt-1 text-xs text-amber-200/80">
+                      This usually means the file was saved before its lookup formulas recalculated — open it in Excel, force a recalc (Ctrl+Alt+F9), save, and re-upload before trusting this data.
+                    </p>
+                    <ul className="mt-3 space-y-1 text-xs text-amber-100">
+                      {dataQualityWarnings.map(w => (
+                        <li key={w.column}>
+                          <span className="font-semibold">{w.column}</span>: {Math.round(w.prevPct * 100)}% populated last time → {Math.round(w.currentPct * 100)}% now
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                  <button
+                    onClick={() => setDataQualityWarnings([])}
+                    className="text-amber-300 hover:text-amber-100 text-xs font-semibold flex-shrink-0"
+                    title="Dismiss for this session"
+                  >
+                    ✕ Dismiss
+                  </button>
+                </div>
+              </section>
+            )}
             <section className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-[0_24px_120px_-80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
               <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
                 <div className="max-w-2xl">
