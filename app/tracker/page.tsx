@@ -959,6 +959,21 @@ export default function TrackerGridPage() {
     setEditorMode(true)
   }
 
+  // Same starting point as editView — loads v's hidden columns + filter/sort
+  // into the editor — but leaves editingViewName unset, so Save creates a
+  // brand-new view under whatever name is typed instead of overwriting or
+  // renaming v. v itself is never touched.
+  const duplicateView = (v: TrackerView) => {
+    setEditingViewName(null)
+    setDraftHidden(new Set(v.hiddenColumns))
+    setColumnFilters(v.columnFilters ?? {})
+    setSortOrder(v.sortOrder ?? [])
+    setSavePromptOpen(false)
+    setViewNameDraft(`${v.name} copy`)
+    setFilterPanel(null)
+    setEditorMode(true)
+  }
+
   const cancelEditorMode = () => {
     setEditorMode(false)
     setSavePromptOpen(false)
@@ -1493,6 +1508,13 @@ export default function TrackerGridPage() {
                 title={`Edit "${v.name}"`}
               >
                 ✏️
+              </button>
+              <button
+                onClick={() => duplicateView(v)}
+                className="px-1 text-xs text-gray-500 hover:text-gray-900"
+                title={`Duplicate "${v.name}" — build a new view starting from its columns and filter/sort`}
+              >
+                ⧉
               </button>
               <button
                 onClick={() => deleteView(v.name)}
