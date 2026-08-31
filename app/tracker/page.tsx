@@ -997,8 +997,9 @@ export default function TrackerGridPage() {
     const ntpA = headers.findIndex(h => h === 'NTP A')
     const ntpWaiting = headers.findIndex(h => h === 'NTP is waiting on')
     const matA = headers.findIndex(h => h.replace(/\s+/g, ' ').startsWith('Material Received A'))
+    const matForecast = headers.findIndex(h => h === 'Material Forecast +4ish')
     const spo = headers.findIndex(h => h.toLowerCase() === 'cx spo issued')
-    return { ntpA, ntpWaiting, matA, spo }
+    return { ntpA, ntpWaiting, matA, matForecast, spo }
   }, [headers])
 
   const filteredColumns = useMemo(
@@ -1086,11 +1087,11 @@ export default function TrackerGridPage() {
   }, [pendingChanges])
 
   // Computed Blockers text for one row — reads NTP A / NTP is waiting on /
-  // Material Received A / CX SPO Issued, honoring any pending in-grid edit
-  // to those same source columns (same changeMap lookup cellText uses)
-  // rather than only the original sheet value.
+  // Material Received A / Material Forecast +4ish / CX SPO Issued, honoring
+  // any pending in-grid edit to those same source columns (same changeMap
+  // lookup cellText uses) rather than only the original sheet value.
   const blockersText = useCallback((row: TrackerRowData): string => {
-    const { ntpA, ntpWaiting, matA, spo } = blockerSourceCols
+    const { ntpA, ntpWaiting, matA, matForecast, spo } = blockerSourceCols
     const rawFor = (idx: number) => {
       if (idx < 0) return undefined
       const change = changeMap.get(`${row.rowKey}|${headers[idx]}`)
@@ -1107,7 +1108,10 @@ export default function TrackerGridPage() {
 
     const matDate = matA >= 0 ? parseDateAny(rawFor(matA)) : null
     const hasMat = !!(matDate && matDate.getFullYear() >= 2020)
-    if (!hasMat) parts.push('🔴 Material not received')
+    if (!hasMat) {
+      const forecast = matForecast >= 0 ? cellDisplayValue(rawFor(matForecast), true).text : ''
+      parts.push(forecast ? `🔴 Material not received — forecast ${forecast}` : '🔴 Material not received')
+    }
 
     const spoDate = spo >= 0 ? parseDateAny(rawFor(spo)) : null
     if (!spoDate) parts.push('🔴 SPO not issued')
