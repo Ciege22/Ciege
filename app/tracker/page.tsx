@@ -1046,15 +1046,21 @@ export default function TrackerGridPage() {
     return cellDisplayValue(row.cells[col.index], col.isDate).text
   }, [changeMap])
 
-  // --- Search filter. Recomputes only when the debounced query, the row set,
-  // or the visible column set changes — never on unrelated re-renders.
+  // --- Search filter. Scoped to every column in the sheet — NOT filteredColumns
+  // (the current view's visible set) — so search behaves the same regardless
+  // of which view you're on, matching what the placeholder text promises
+  // ("Search all columns — HOP, GC, Path ID, PO number..."). Scoping this to
+  // the visible columns instead used to mean a search term sitting in a
+  // column the active view hides (true for every view except Default) just
+  // silently never matched, with no visible reason why — exactly the "search
+  // doesn't line up with what's on screen" symptom.
   const searchedRows = useMemo(() => {
     const q = searchQuery.trim().toLowerCase()
     if (!q) return trackerRows
     return trackerRows.filter(row =>
-      filteredColumns.some(col => cellText(row, col).toLowerCase().includes(q))
+      allColumns.some(col => cellText(row, col).toLowerCase().includes(q))
     )
-  }, [trackerRows, searchQuery, filteredColumns, cellText])
+  }, [trackerRows, searchQuery, allColumns, cellText])
 
   const activeFilterCol = filterPanel ? colMap.get(filterPanel.col) : undefined
 
