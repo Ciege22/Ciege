@@ -108,8 +108,9 @@ function WeatherWidget() {
   useEffect(() => {
     const fetchWeather = async () => {
       try {
+        // Kearny, NJ 07032
         const res = await fetch(
-          'https://api.open-meteo.com/v1/forecast?latitude=40.2508&longitude=-103.7996&current=temperature_2m,weathercode,windspeed_10m,winddirection_10m,precipitation&hourly=temperature_2m,weathercode,precipitation_probability,windspeed_10m&temperature_unit=fahrenheit&timezone=America%2FDenver&forecast_days=1'
+          'https://api.open-meteo.com/v1/forecast?latitude=40.7684&longitude=-74.1454&current=temperature_2m,weathercode,windspeed_10m,winddirection_10m,precipitation&hourly=temperature_2m,weathercode,precipitation_probability,windspeed_10m&temperature_unit=fahrenheit&timezone=America%2FNew_York&forecast_days=1'
         )
         const data = await res.json()
         const now = new Date()
@@ -163,7 +164,7 @@ function WeatherWidget() {
         <span className="text-gray-300 text-sm">{weather.condition}</span>
         <span className="text-gray-400 text-sm">💨 {weather.wind} mph {getWindDir(weather.windDir)}</span>
         <span className="text-gray-400 text-sm">🌧️ {weather.precip} mm</span>
-        <span className="text-gray-500 text-xs">Fort Morgan, CO</span>
+        <span className="text-gray-500 text-xs">Kearny, NJ 07032</span>
       </div>
       <div className="flex gap-4 flex-wrap">
         {weather.hourly.map((h, i) => (
