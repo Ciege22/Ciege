@@ -605,6 +605,7 @@ interface HOP {
   hop: string
   pathId: string
   gc: string
+  nokiaPm: string
   ops: string
   ms15f: string
   ms15a: string
@@ -1017,7 +1018,10 @@ export default function GCCallPage() {
   const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
   const [loaded, setLoaded] = useState(false)
   const [fileName, setFileName] = useState('')
-  const [gcList, setGcList] = useState<string[]>([])
+  // Nokia PM filter — same pattern as the Dashboard's pmFilter/pmOptions.
+  // gcList (below, computed at render time) and gcHops both narrow to this.
+  const [pmFilter, setPmFilter] = useState<string>('ALL')
+  const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
@@ -1300,16 +1304,20 @@ export default function GCCallPage() {
     const ssSCol    = col('Samsung Schedule Start')
     const ssECol    = col('Samsung Schedule Complete')
 
-    // First pass — collect all rows per HOP
+    // First pass — collect all rows per HOP. Program-wide (every Nokia PM),
+    // same as the Dashboard: the PM scoping used to be baked in here
+    // (CJ-only), which meant no other PM's GCs/HOPs ever reached this page
+    // at all. Now every PM's DON 444 rows survive parsing, and the PM
+    // filter (pmFilter, set via the "All GCs" question, see the reactive
+    // gcList below) narrows the view at render time instead — same
+    // pattern the Dashboard's pmFilter/hopDetails already use.
     const hopRows = new Map<string, unknown[][]>()
 
     const TARGET_HOP = 'NE-SQUAW_MOUND-NE-CHADRON'
     let rawRowCount = 0
     let don444SurviveCount = 0
-    let nokiaPmSurviveCount = 0
     let sawTargetRaw = false
     let sawTargetAfterDon444 = false
-    let sawTargetAfterNokiaPm = false
 
     for (let i = headerRow + 1; i < rows.length; i++) {
       const row = rows[i] as unknown[]
@@ -1322,19 +1330,14 @@ export default function GCCallPage() {
       don444SurviveCount++
       if (hopRaw === TARGET_HOP) sawTargetAfterDon444 = true
 
-      const nokiaPm = String(row[nokiaPmCol] || '').trim().toUpperCase()
-      if (nokiaPm !== 'CJ') continue
-      nokiaPmSurviveCount++
-      if (hopRaw === TARGET_HOP) sawTargetAfterNokiaPm = true
-
       const hop = String(row[hopCol] || '').trim()
       if (!hop || hop === 'undefined') continue
       if (!hopRows.has(hop)) hopRows.set(hop, [])
       hopRows.get(hop)!.push(row)
     }
 
-    console.log(`[gc-call] processRows: raw rows=${rawRowCount}, survived DON 444=${don444SurviveCount}, survived Nokia PM=${nokiaPmSurviveCount}, unique HOPs after dedup=${hopRows.size}`)
-    console.log(`[gc-call] ${TARGET_HOP} present — raw: ${sawTargetRaw}, after DON 444: ${sawTargetAfterDon444}, after Nokia PM: ${sawTargetAfterNokiaPm}, after dedup: ${hopRows.has(TARGET_HOP)}`)
+    console.log(`[gc-call] processRows: raw rows=${rawRowCount}, survived DON 444=${don444SurviveCount}, unique HOPs after dedup=${hopRows.size}`)
+    console.log(`[gc-call] ${TARGET_HOP} present — raw: ${sawTargetRaw}, after DON 444: ${sawTargetAfterDon444}, after dedup: ${hopRows.has(TARGET_HOP)}`)
 
     // Build site occupancy map from all in-progress HOPs
     // Maps "SiteName|SiteNumber" -> { gc, hop, ms16f }
@@ -1366,6 +1369,7 @@ export default function GCCallPage() {
       const row2 = rows2.find(r => r !== row) || null
 
       const gc      = String(row[gcCol] || '').trim() || String(row2?.[gcCol] || '').trim()
+      const nokiaPm = String(row[nokiaPmCol] || '').trim() || String(row2?.[nokiaPmCol] || '').trim()
       const ms15f   = parseDateAny(row[ms15fCol])
       const ms15a   = parseDate(row[ms15aCol])
       const ms16f   = parseDateAny(row[ms16fCol])
@@ -1480,7 +1484,7 @@ export default function GCCallPage() {
       }
 
       const hopObj: HOP = {
-        hop, gc,
+        hop, gc, nokiaPm,
         pathId:       String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         ops:          String(row[opsCol] || '').trim(),
         ms15f:        fmtDate(ms15f),
@@ -1529,23 +1533,13 @@ export default function GCCallPage() {
 
     setHops(parsed)
 
-    // Build GC list dynamically from parsed HOPs — dedup case-insensitively
-    // (rows can spell the same GC differently) but keep canonical display
-    // casing so the tab label, selectedGC, and every gcContactEmails /
-    // GC_CM_MAP lookup keyed off it line up with what's typed in Settings.
-    // Only lists a GC if they have at least one non-complete HOP — same fix
-    // as CM View's cmList: a GC whose every HOP is already complete has
-    // nothing in their pipeline to call about, so their tab shouldn't show.
-    const seenGc = new Map<string, string>() // lowercase key -> canonical display
-    parsed.forEach(h => {
-      if (h.complete) return
-      const raw = h.gc?.trim()
-      if (!raw) return
-      const key = raw.toLowerCase()
-      if (!seenGc.has(key)) seenGc.set(key, canonicalGcName(raw))
-    })
-    const uniqueGCs = Array.from(seenGc.values()).sort()
-    setGcList(uniqueGCs)
+    // Nokia PM options for the filter row — 'ALL' plus every PM actually
+    // present in this upload, same derivation as the Dashboard's pmOptions.
+    // gcList itself (which GC tabs to show) is computed at render time
+    // below, since it needs to react to pmFilter changing after upload.
+    const pmSet = new Set<string>()
+    parsed.forEach(h => { if (h.nokiaPm) pmSet.add(h.nokiaPm) })
+    setPmOptions(['ALL', ...Array.from(pmSet).sort()])
     setLoaded(true)
   }, [thresholds])
 
@@ -1584,7 +1578,30 @@ export default function GCCallPage() {
     upsertPmUpdate({ hop, field, oldValue: oldVal, newValue: newVal, timestamp: new Date().toISOString() })
   }
 
-  const gcHops      = hops.filter(h => h.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase())
+  // Matches the Nokia PM filter — 'ALL' passes everything.
+  const matchesPmFilter = (h: HOP) => pmFilter === 'ALL' || h.nokiaPm?.trim().toUpperCase() === pmFilter.toUpperCase()
+
+  // GC tab list — dedup case-insensitively (rows can spell the same GC
+  // differently) but keep canonical display casing so the tab label,
+  // selectedGC, and every gcContactEmails / GC_CM_MAP lookup keyed off it
+  // line up with what's typed in Settings. Recomputed every render (not
+  // useState) so it reacts immediately to pmFilter as well as to hops.
+  // Only lists a GC if they have at least one non-complete HOP matching the
+  // current PM filter — a GC with nothing outstanding for the selected PM
+  // has nothing to call about, so their tab shouldn't show.
+  const gcList = (() => {
+    const seenGc = new Map<string, string>() // lowercase key -> canonical display
+    hops.forEach(h => {
+      if (h.complete || !matchesPmFilter(h)) return
+      const raw = h.gc?.trim()
+      if (!raw) return
+      const key = raw.toLowerCase()
+      if (!seenGc.has(key)) seenGc.set(key, canonicalGcName(raw))
+    })
+    return Array.from(seenGc.values()).sort()
+  })()
+
+  const gcHops      = hops.filter(h => h.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase() && matchesPmFilter(h))
   const active      = gcHops.filter(h => h.inProgress).sort((a, b) => {
     const aTime = a.ms16f ? new Date(a.ms16f).getTime() : Infinity
     const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
@@ -1944,6 +1961,19 @@ export default function GCCallPage() {
         {!snapshotTime && (
           <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
             <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+          </div>
+        )}
+
+        {/* Nokia PM filter — same pattern as the Dashboard's pmFilter row */}
+        {pmOptions.length > 1 && (
+          <div className="flex gap-2 mb-4 flex-wrap items-center">
+            <span className="text-gray-500 text-xs font-semibold">Nokia PM:</span>
+            {pmOptions.map(pm => (
+              <button key={pm} onClick={() => setPmFilter(pm)}
+                className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${pmFilter === pm ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                {pm}
+              </button>
+            ))}
           </div>
         )}
 
