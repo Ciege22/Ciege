@@ -1533,8 +1533,12 @@ export default function GCCallPage() {
     // (rows can spell the same GC differently) but keep canonical display
     // casing so the tab label, selectedGC, and every gcContactEmails /
     // GC_CM_MAP lookup keyed off it line up with what's typed in Settings.
+    // Only lists a GC if they have at least one non-complete HOP — same fix
+    // as CM View's cmList: a GC whose every HOP is already complete has
+    // nothing in their pipeline to call about, so their tab shouldn't show.
     const seenGc = new Map<string, string>() // lowercase key -> canonical display
     parsed.forEach(h => {
+      if (h.complete) return
       const raw = h.gc?.trim()
       if (!raw) return
       const key = raw.toLowerCase()
