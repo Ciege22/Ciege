@@ -13,7 +13,7 @@ import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
 import {
   parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow,
   parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, STATUS_DISPLAY_LABEL, TrackerHop,
-  countDroppedOffWithoutCxComplete, uniqueDecomGcNames, buildDecomCmEmailMailto,
+  countDroppedOffWithoutCxComplete, uniqueDecomGcNames, buildDecomCmEmailMailto, resolveGc,
 } from '../lib/decom'
 import { EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
 
@@ -678,6 +678,26 @@ export default function ReportsPage() {
   // not in the config list.
   const decomGcNames = uniqueDecomGcNames(decomRows)
 
+  // Every GC with any real activity right now — decom, or an active/complete
+  // HOP in the master tracker — program-wide, not scoped to any one Nokia
+  // PM ("regardless if they are mine or not"). Case-insensitive dedup, kept
+  // in GC_CONFIG's canonical casing when a GC is in that roster so it lines
+  // up with the SPO/CR vendor-matched cards below; GCs outside GC_CONFIG
+  // (no vendor-alias mapping yet) keep whatever casing the tracker itself
+  // uses, since there's no canonical spelling to prefer yet.
+  const allActiveGcNames = (() => {
+    const seen = new Map<string, string>() // lowercase key -> display casing
+    decomGcNames.forEach(gc => { if (gc) seen.set(gc.toLowerCase(), gc) })
+    trackerHops.forEach(t => {
+      const resolved = resolveGc(t.gc, '')
+      if (resolved) {
+        const key = resolved.toLowerCase()
+        if (!seen.has(key)) seen.set(key, resolved)
+      }
+    })
+    return Array.from(seen.values()).sort()
+  })()
+
   useEffect(() => {
     loadEmailSettings().then(setEmailSettings)
   }, [])
@@ -1027,19 +1047,32 @@ export default function ReportsPage() {
 
         {activeTab === 'spo-cr-decom' && (
           <>
-        {/* GC Download Grid */}
+        {/* GC Download Grid — every active GC program-wide (allActiveGcNames),
+            not just the GC_CONFIG roster and not scoped to any one Nokia PM.
+            A GC outside GC_CONFIG has no SPO/CR vendor-alias mapping yet, so
+            those two downloads are disabled with an explanatory title until
+            it's added there — Decom works for any GC name already, since
+            decomRowsForGc is a plain string match with no alias table. */}
         {(spoRows.length > 0 || crRows.length > 0 || decomRows.length > 0) && (
           <div>
             <h2 className="text-lg font-bold mb-4">GC-Specific Reports — Download on Demand</h2>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {GC_CONFIG.map(cfg => {
-                const spoCount = spoRows.filter(row => matches(row[SPO_VENDOR_COL_IN_MASTER], cfg.spo_match)).length
-                const crCount = crRows.filter(row => matches(row[CR_SUPPLIER_COL_IN_MASTER], cfg.cr_match)).length
-                const gcDecomRows = decomRowsForGc(decomRows, cfg.gc)
+              {allActiveGcNames.map(gcName => {
+                const cfg = GC_CONFIG.find(c => c.gc.toLowerCase() === gcName.toLowerCase())
+                const spoCount = cfg ? spoRows.filter(row => matches(row[SPO_VENDOR_COL_IN_MASTER], cfg.spo_match)).length : 0
+                const crCount = cfg ? crRows.filter(row => matches(row[CR_SUPPLIER_COL_IN_MASTER], cfg.cr_match)).length : 0
+                const gcDecomRows = decomRowsForGc(decomRows, gcName)
+                const fileSafeName = gcName.replace(/\s+/g, '_')
+                const spoLabel = cfg?.spo_label ?? fileSafeName
+                const crLabel = cfg?.cr_label ?? fileSafeName
+                const notConfiguredTitle = `${gcName} isn't in the GC vendor-matching config yet — add its SPO/CR vendor names in app/lib/gcConfig.ts to enable this download`
 
                 return (
-                  <div key={cfg.gc} className="bg-gray-900 rounded-xl border border-gray-700 p-4">
-                    <h3 className="font-bold text-white text-base mb-1">{cfg.gc}</h3>
+                  <div key={gcName} className="bg-gray-900 rounded-xl border border-gray-700 p-4">
+                    <h3 className="font-bold text-white text-base mb-1">{gcName}</h3>
+                    {!cfg && (
+                      <p className="text-amber-500 text-xs mb-2">⚠️ SPO/CR vendor matching not configured</p>
+                    )}
                     <div className="flex gap-2 text-xs text-gray-500 mb-3">
                       <span>{spoCount} SPO rows</span>
                       <span>·</span>
@@ -1049,19 +1082,21 @@ export default function ReportsPage() {
                     </div>
                     <div className="flex flex-col gap-2">
                       <button
-                        onClick={() => downloadGCReport(spoRows, SPO_COL_IDX, SPO_HEADERS, SPO_VENDOR_COL_IN_MASTER, cfg.spo_match, `${cfg.spo_label}_-_SPO_Report_-_${today}.xlsx`)}
-                        disabled={spoRows.length === 0}
+                        onClick={() => cfg && downloadGCReport(spoRows, SPO_COL_IDX, SPO_HEADERS, SPO_VENDOR_COL_IN_MASTER, cfg.spo_match, `${spoLabel}_-_SPO_Report_-_${today}.xlsx`)}
+                        disabled={!cfg || spoRows.length === 0}
+                        title={!cfg ? notConfiguredTitle : undefined}
                         className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
                         📥 Download SPO Report
                       </button>
                       <button
-                        onClick={() => downloadGCReport(crRows, CR_COL_IDX, CR_HEADERS, CR_SUPPLIER_COL_IN_MASTER, cfg.cr_match, `${cfg.cr_label}_-_CR_Tracker_-_${today}.xlsx`)}
-                        disabled={crRows.length === 0}
+                        onClick={() => cfg && downloadGCReport(crRows, CR_COL_IDX, CR_HEADERS, CR_SUPPLIER_COL_IN_MASTER, cfg.cr_match, `${crLabel}_-_CR_Tracker_-_${today}.xlsx`)}
+                        disabled={!cfg || crRows.length === 0}
+                        title={!cfg ? notConfiguredTitle : undefined}
                         className="bg-teal-700 hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
                         📥 Download CR Tracker
                       </button>
                       <button
-                        onClick={() => downloadGcDecomReport(gcDecomRows, `${cfg.gc}_-_Decom_Report_-_${today}.xlsx`)}
+                        onClick={() => downloadGcDecomReport(gcDecomRows, `${fileSafeName}_-_Decom_Report_-_${today}.xlsx`)}
                         disabled={gcDecomRows.length === 0}
                         className="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
                         📥 Download Decom Report
