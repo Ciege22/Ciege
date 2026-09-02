@@ -1581,24 +1581,28 @@ export default function GCCallPage() {
   // Matches the Nokia PM filter — 'ALL' passes everything.
   const matchesPmFilter = (h: HOP) => pmFilter === 'ALL' || h.nokiaPm?.trim().toUpperCase() === pmFilter.toUpperCase()
 
-  // GC tab list — dedup case-insensitively (rows can spell the same GC
-  // differently) but keep canonical display casing so the tab label,
-  // selectedGC, and every gcContactEmails / GC_CM_MAP lookup keyed off it
-  // line up with what's typed in Settings. Recomputed every render (not
-  // useState) so it reacts immediately to pmFilter as well as to hops.
-  // Only lists a GC if they have at least one non-complete HOP matching the
-  // current PM filter — a GC with nothing outstanding for the selected PM
-  // has nothing to call about, so their tab shouldn't show.
-  const gcList = (() => {
+  // GC tab list (+ per-GC outstanding count for the tab badge) — dedup
+  // case-insensitively (rows can spell the same GC differently) but keep
+  // canonical display casing so the tab label, selectedGC, and every
+  // gcContactEmails / GC_CM_MAP lookup keyed off it line up with what's
+  // typed in Settings. Recomputed every render (not useState) so both react
+  // immediately to pmFilter as well as to hops. Only lists a GC if they
+  // have at least one non-complete HOP matching the current PM filter — a
+  // GC with nothing outstanding for the selected PM has nothing to call
+  // about, so their tab shouldn't show; gcOutstandingCounts is exactly that
+  // same non-complete, PM-filtered count, per GC, for the "quick view" badge.
+  const { gcList, gcOutstandingCounts } = (() => {
     const seenGc = new Map<string, string>() // lowercase key -> canonical display
+    const counts = new Map<string, number>() // lowercase key -> outstanding count
     hops.forEach(h => {
       if (h.complete || !matchesPmFilter(h)) return
       const raw = h.gc?.trim()
       if (!raw) return
       const key = raw.toLowerCase()
       if (!seenGc.has(key)) seenGc.set(key, canonicalGcName(raw))
+      counts.set(key, (counts.get(key) || 0) + 1)
     })
-    return Array.from(seenGc.values()).sort()
+    return { gcList: Array.from(seenGc.values()).sort(), gcOutstandingCounts: counts }
   })()
 
   const gcHops      = hops.filter(h => h.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase() && matchesPmFilter(h))
@@ -1979,12 +1983,19 @@ export default function GCCallPage() {
 
         {/* GC Selector */}
         <div className="flex gap-3 mb-6 flex-wrap">
-          {gcList.map((gc) => (
-            <button key={gc} onClick={() => setSelectedGC(gc)}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all ${selectedGC?.trim().toLowerCase() === gc?.trim().toLowerCase() ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
-              {gc}
-            </button>
-          ))}
+          {gcList.map((gc) => {
+            const isSelected = selectedGC?.trim().toLowerCase() === gc?.trim().toLowerCase()
+            return (
+              <button key={gc} onClick={() => setSelectedGC(gc)}
+                title={`${gcOutstandingCounts.get(gc.toLowerCase()) ?? 0} outstanding HOP${(gcOutstandingCounts.get(gc.toLowerCase()) ?? 0) === 1 ? '' : 's'}`}
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm transition-all ${isSelected ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                {gc}
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-gray-700 text-gray-300'}`}>
+                  {gcOutstandingCounts.get(gc.toLowerCase()) ?? 0}
+                </span>
+              </button>
+            )
+          })}
         </div>
 
         {/* GC Panel */}
