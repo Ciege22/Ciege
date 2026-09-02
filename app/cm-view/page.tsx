@@ -447,79 +447,16 @@ export default function CMViewPage() {
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
   const [showPmUpdates, setShowPmUpdates] = useState(false)
-  const [pmSortAsc, setPmSortAsc] = useState(true)
-  const [pmSortField, setPmSortField] = useState<'hop' | 'field'>('field')
+  const [pmSortField, setPmSortField] = useState<'hop' | 'field'>('hop')
   const [pmSearch, setPmSearch] = useState('')
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
   const [snapshotTime, setSnapshotTime] = useState<string>('')
-  const [clearedNoteIds, setClearedNoteIds] = useState<Set<string>>(new Set())
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
 
-  useEffect(() => {
-    const loadClearedNotes = async () => {
-      const todayDate = new Date().toLocaleDateString('en-US')
-      const { data } = await supabase
-        .from('pm_updates_cache')
-        .select('updates')
-        .eq('id', 'cm-cleared-notes')
-        .single()
-      if (data?.updates) {
-        try {
-          const parsed = JSON.parse(data.updates) as { date: string; ids: string[] }
-          if (parsed.date === todayDate) {
-            setClearedNoteIds(new Set(parsed.ids))
-          } else {
-            await supabase.from('pm_updates_cache').upsert({
-              id: 'cm-cleared-notes',
-              updates: JSON.stringify({ date: todayDate, ids: [] }),
-              updated_at: new Date().toISOString()
-            })
-          }
-        } catch {}
-      }
-    }
-    loadClearedNotes()
-  }, [])
   const today = new Date()
   // Zero out the time-of-day so daysOut is a clean whole-day count — same fix
   // as the dashboard's computeKPIs (commit 8a32098).
   today.setHours(0, 0, 0, 0)
-
-  const todayStr = today.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
-
-  const todayCallNotes = Object.entries(noteHistory)
-    .flatMap(([hop, notes]) => notes
-      .filter(n => {
-        const noteDate = new Date(n.logged_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
-        return noteDate === todayStr && !clearedNoteIds.has(n.id)
-      })
-      .map(n => ({ hop, note: n.note, logged_at: n.logged_at, id: n.id }))
-    )
-    .sort((a, b) => new Date(a.logged_at).getTime() - new Date(b.logged_at).getTime())
-
-  const copyTodayNotes = () => {
-    if (todayCallNotes.length === 0) return
-    const text = todayCallNotes.map(n => {
-      const noteDate = new Date(n.logged_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
-      return `${n.hop}  |  ${noteDate}: (CJ) ${n.note}`
-    }).join('\n')
-    navigator.clipboard.writeText(text)
-      .then(() => alert('✅ Copied to clipboard!'))
-      .catch(() => alert('Copy failed — please try manually'))
-  }
-
-  const clearTodayNotes = async () => {
-    const newIds = new Set([...clearedNoteIds, ...todayCallNotes.map(n => n.id)])
-    setClearedNoteIds(newIds)
-    await supabase.from('pm_updates_cache').upsert({
-      id: 'cm-cleared-notes',
-      updates: JSON.stringify({
-        date: new Date().toLocaleDateString('en-US'),
-        ids: Array.from(newIds)
-      }),
-      updated_at: new Date().toISOString()
-    })
-  }
 
   useEffect(() => {
     const loadNoteHistory = async () => {
@@ -540,12 +477,28 @@ export default function CMViewPage() {
     loadNoteHistory()
   }, [])
 
+  // Date-keyed id — a fresh row per calendar day, same reset behavior as
+  // app/tracker/page.tsx's tracker-changes-{date} cache.
+  const pmUpdatesStorageId = `cm-updates-${new Date().toISOString().slice(0, 10)}`
+
+  // Explicit persist, called from every mutator below — mirrors
+  // app/tracker/page.tsx's persistChanges rather than a reactive
+  // useEffect([pmUpdates]) autosave (which also had a real gap: it silently
+  // skipped persisting whenever the array went back to empty).
+  const persistPmUpdates = async (updates: PmUpdate[]) => {
+    await supabase.from('pm_updates_cache').upsert({
+      id: pmUpdatesStorageId,
+      updates: JSON.stringify(updates),
+      updated_at: new Date().toISOString(),
+    })
+  }
+
   useEffect(() => {
     const loadUpdates = async () => {
       const { data } = await supabase
         .from('pm_updates_cache')
         .select('updates')
-        .eq('id', 'cm-view')
+        .eq('id', `cm-updates-${new Date().toISOString().slice(0, 10)}`)
         .single()
       if (data?.updates) {
         try {
@@ -558,38 +511,67 @@ export default function CMViewPage() {
     loadUpdates()
   }, [])
 
-  useEffect(() => {
-    if (pmUpdates.length === 0) return
-    const save = async () => {
-      await supabase.from('pm_updates_cache').upsert({
-        id: 'cm-view',
-        updates: JSON.stringify(pmUpdates),
-        updated_at: new Date().toISOString()
-      })
-    }
-    save()
-  }, [pmUpdates])
+  // Dedup on hop+field before appending — same pattern as
+  // app/tracker/page.tsx's saveEdit: a second edit/comment for the same
+  // HOP+field today replaces the pending entry instead of stacking a
+  // duplicate. The full note history itself (hop_call_notes, below) is
+  // untouched by this — only what's queued as "still needs to go in the
+  // tracker" collapses to the latest one.
+  const upsertPmUpdate = (next: { hop: string; field: string; oldValue: string; newValue: string; timestamp: string }) => {
+    setPmUpdates(prev => {
+      const updated = [...prev.filter(u => !(u.hop === next.hop && u.field === next.field)), { ...next, completed: false }]
+      persistPmUpdates(updated)
+      return updated
+    })
+  }
 
+  const toggleUpdateCompleted = (hop: string, field: string, timestamp: string) => {
+    setPmUpdates(prev => {
+      const next = prev.map(u => (u.hop === hop && u.field === field && u.timestamp === timestamp ? { ...u, completed: !u.completed } : u))
+      persistPmUpdates(next)
+      return next
+    })
+  }
+
+  const clearCompletedUpdates = () => {
+    setPmUpdates(prev => {
+      const next = prev.filter(u => !u.completed)
+      persistPmUpdates(next)
+      if (next.length === 0) setShowPmUpdates(false)
+      return next
+    })
+  }
+
+  const clearAllUpdates = () => {
+    setPmUpdates([])
+    persistPmUpdates([])
+    setShowPmUpdates(false)
+  }
+
+  // CX note entries flow into the SAME unified pending-updates table as
+  // milestone edits (field: 'CX Notes') so there's one single "what needs
+  // to go back into the tracker" list — not a separate comments queue with
+  // its own copy/clear buttons. The full history (hop_call_notes, feeding
+  // the inline "Notes History" column) is untouched — this is additive.
   const saveCallNote = async (hop: string, note: string) => {
     if (!note.trim()) return
+    const logged_at = new Date().toISOString()
     const { data, error } = await supabase
       .from('hop_call_notes')
-      .insert({ hop_name: hop, note: note.trim() })
+      .insert({ hop_name: hop, note: note.trim(), logged_at })
       .select()
     if (error) { console.error('Error saving note:', error); return }
     if (data) {
       setNoteHistory(prev => ({ ...prev, [hop]: [data[0], ...(prev[hop] || [])] }))
       setSessionNotes(prev => ({ ...prev, [hop]: '' }))
     }
+    upsertPmUpdate({ hop, field: 'CX Notes', oldValue: '—', newValue: note.trim(), timestamp: logged_at })
   }
 
   const logDateEdit = (hop: string, field: string, oldVal: string, newVal: string) => {
     if (!newVal || newVal === oldVal) return
     setEditedDates(prev => ({ ...prev, [hop]: { ...(prev[hop] || {}), [field]: newVal } }))
-    setPmUpdates(prev => {
-      const filtered = prev.filter(u => !(u.hop === hop && u.field === field))
-      return [...filtered, { hop, field, oldValue: oldVal, newValue: newVal, timestamp: new Date().toLocaleTimeString() }]
-    })
+    upsertPmUpdate({ hop, field, oldValue: oldVal, newValue: newVal, timestamp: new Date().toISOString() })
   }
 
   const logNA = (hop: string, field: string) => {
@@ -1126,99 +1108,80 @@ export default function CMViewPage() {
             <p className="text-gray-400 mt-1">Select a Site CM to view their pipeline, log field updates, and generate a follow-up email.</p>
           </div>
           <div className="flex gap-2">
-            {todayCallNotes.length > 0 && (
-              <div className="flex gap-2">
-                <button onClick={copyTodayNotes}
-                  className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
-                  📋 Copy Today's Notes ({todayCallNotes.length})
-                </button>
-                <button onClick={clearTodayNotes}
-                  className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">
-                  ✕ Clear
-                </button>
-              </div>
-            )}
             {pmUpdates.length > 0 && (
               <button onClick={() => setShowPmUpdates(!showPmUpdates)}
-                className="bg-yellow-600 hover:bg-yellow-700 text-white px-4 py-2 rounded-lg text-sm font-semibold">
-                📋 PM Updates ({pmUpdates.length})
+                className="bg-amber-500 hover:bg-amber-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                📋 Pending Updates ({pmUpdates.length})
               </button>
             )}
           </div>
         </div>
 
-        {/* PM Daily Updates Panel */}
+        {/* PM Daily Updates Panel — same shape as app/tracker/page.tsx's
+            Pending Updates panel: unified table for milestone edits AND
+            CX note comments, no separate copy/clear-for-comments flow. */}
         {showPmUpdates && pmUpdates.length > 0 && (
-          <div className="mb-6 bg-yellow-950 border border-yellow-600 rounded-xl p-5">
+          <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h2 className="text-yellow-300 font-bold text-lg">📋 PM Daily Updates — Update These in Your Tracker</h2>
+              <h2 className="text-amber-900 font-bold text-base">📋 PM Daily Updates — Update These in Your Tracker</h2>
               <div className="flex gap-2 items-center flex-wrap">
                 <input
                   type="text"
                   placeholder="Search HOP or field..."
                   value={pmSearch}
                   onChange={(e) => setPmSearch(e.target.value)}
-                  className="bg-yellow-900 border border-yellow-700 text-yellow-100 text-xs rounded px-2 py-1 w-44 focus:outline-none focus:border-yellow-400"
+                  className="bg-white border border-amber-300 text-amber-900 text-xs rounded px-2 py-1 w-44 focus:outline-none focus:border-amber-500"
                 />
                 <button onClick={() => setPmSortField(prev => prev === 'field' ? 'hop' : 'field')}
-                  className="bg-yellow-800 hover:bg-yellow-700 text-yellow-200 text-xs px-3 py-1 rounded font-semibold">
+                  className="bg-amber-200 hover:bg-amber-300 text-amber-900 text-xs px-3 py-1 rounded font-semibold">
                   Sort by {pmSortField === 'field' ? 'Field ↑' : 'HOP ↑'}
                 </button>
               </div>
             </div>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-yellow-400 text-xs">
-                  <th className="text-left p-2">Done</th>
-                  <th className="text-left p-2">HOP</th>
-                  <th className="text-left p-2">Field</th>
-                  <th className="text-left p-2">Old Value</th>
-                  <th className="text-left p-2">New Value</th>
-                  <th className="text-left p-2">Logged At</th>
-                </tr>
-              </thead>
-              <tbody>
-                {[...pmUpdates]
-                  .filter(u => {
-                    if (!pmSearch) return true
-                    return u.hop.toLowerCase().includes(pmSearch.toLowerCase()) ||
-                           u.field.toLowerCase().includes(pmSearch.toLowerCase())
-                  })
-                  .sort((a, b) => pmSortField === 'field'
-                    ? a.field.localeCompare(b.field)
-                    : a.hop.localeCompare(b.hop))
-                  .map((u) => (
-                  <tr key={`${u.hop}-${u.field}-${u.timestamp}`} className={`border-t border-yellow-800 ${u.completed ? 'opacity-40' : ''}`}>
-                    <td className="p-2">
-                      <input type="checkbox" checked={u.completed || false}
-                        onChange={() => setPmUpdates(prev => prev.map((item) => item.hop === u.hop && item.field === u.field && item.timestamp === u.timestamp ? { ...item, completed: !item.completed } : item))}
-                        className="w-4 h-4 cursor-pointer accent-green-500" />
-                    </td>
-                    <td className={`p-2 font-semibold ${u.completed ? 'line-through text-gray-500' : 'text-white'}`}>{u.hop}</td>
-                    <td className={`p-2 ${u.completed ? 'line-through text-gray-500' : 'text-yellow-300'}`}>{u.field}</td>
-                    <td className="p-2 text-gray-400">{u.oldValue || '—'}</td>
-                    <td className={`p-2 font-bold ${u.completed ? 'text-gray-500' : 'text-green-400'}`}>{u.newValue}</td>
-                    <td className="p-2 text-gray-500">{u.timestamp}</td>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-amber-700 text-xs">
+                    <th className="text-left p-2">Done</th>
+                    <th className="text-left p-2">HOP</th>
+                    <th className="text-left p-2">Field</th>
+                    <th className="text-left p-2">Old Value</th>
+                    <th className="text-left p-2">New Value</th>
+                    <th className="text-left p-2">Logged At</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {[...pmUpdates]
+                    .filter(u => {
+                      if (!pmSearch) return true
+                      const q = pmSearch.toLowerCase()
+                      return u.hop.toLowerCase().includes(q) || u.field.toLowerCase().includes(q)
+                    })
+                    .sort((a, b) => pmSortField === 'field'
+                      ? a.field.localeCompare(b.field)
+                      : a.hop.localeCompare(b.hop))
+                    .map((u) => (
+                    <tr key={`${u.hop}-${u.field}-${u.timestamp}`} className={`border-t border-amber-200 ${u.completed ? 'opacity-40' : ''}`}>
+                      <td className="p-2">
+                        <input type="checkbox" checked={u.completed || false}
+                          onChange={() => toggleUpdateCompleted(u.hop, u.field, u.timestamp)}
+                          className="w-4 h-4 cursor-pointer accent-green-600" />
+                      </td>
+                      <td className={`p-2 font-semibold ${u.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}>{u.hop}</td>
+                      <td className={`p-2 ${u.completed ? 'line-through text-gray-500' : 'text-amber-800'}`}>{u.field}</td>
+                      <td className="p-2 text-gray-500">{u.oldValue || '—'}</td>
+                      <td className={`p-2 font-bold ${u.completed ? 'text-gray-500' : 'text-green-700'}`}>{u.newValue}</td>
+                      <td className="p-2 text-gray-500">{new Date(u.timestamp).toLocaleString()}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <div className="mt-4 flex gap-3">
-              <button onClick={async () => {
-                const r = pmUpdates.filter(u => !u.completed)
-                setPmUpdates(r)
-                await supabase.from('pm_updates_cache').upsert({ id: 'cm-view', updates: JSON.stringify(r), updated_at: new Date().toISOString() })
-                if (r.length === 0) setShowPmUpdates(false)
-              }}
-                className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold">
+              <button onClick={clearCompletedUpdates} className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold">
                 ✅ Clear Completed
               </button>
-              <button onClick={async () => {
-                setPmUpdates([])
-                setShowPmUpdates(false)
-                await supabase.from('pm_updates_cache').upsert({ id: 'cm-view', updates: JSON.stringify([]), updated_at: new Date().toISOString() })
-              }}
-                className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded text-sm">
+              <button onClick={clearAllUpdates} className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded text-sm">
                 🗑 Clear All
               </button>
             </div>
