@@ -280,9 +280,13 @@ interface PipelineSectionProps {
   logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
   setCxNotesModal: (val: { hop: string; notes: string } | null) => void
   showNokiaPm?: boolean
+  // Read-only here — crew is assigned/edited in GC Call View and the Tracker
+  // Grid (same crew-assign-{hop} Supabase rows), this just displays it for
+  // reference.
+  crewAssignments: Record<string, string>
 }
 
-function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal, showNokiaPm }: PipelineSectionProps) {
+function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal, showNokiaPm, crewAssignments }: PipelineSectionProps) {
   return (
     <div className="mb-8">
       <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
@@ -297,6 +301,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                   <th className="text-left p-2">Path ID</th>
                   {showNokiaPm && <th className="text-left p-2">Nokia PM</th>}
                   <th className="text-left p-2">GC</th>
+                  <th className="text-left p-2">Crew</th>
                   <th className="text-left p-2">Days Out</th>
                   <th className="text-left p-2">NTP</th>
                   <th className="text-left p-2">Mat</th>
@@ -328,6 +333,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                       {showNokiaPm && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{crewAssignments[h.hop] || '—'}</td>
                       <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>
                         {h.daysOut !== null ? `${h.daysOut}d` : '—'}
                       </td>
@@ -452,6 +458,26 @@ export default function CMViewPage() {
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
+  // hop -> 'Crew 1' | 'Crew 2' | ... — read-only reference here; assigned/
+  // edited in GC Call View and the Tracker Grid, same crew-assign-{hop}
+  // Supabase rows.
+  const [crewAssignments, setCrewAssignments] = useState<Record<string, string>>({})
+
+  useEffect(() => {
+    const loadCrewAssignments = async () => {
+      const { data } = await supabase.from('pm_updates_cache').select('id, updates').like('id', 'crew-assign-%')
+      const map: Record<string, string> = {}
+      ;(data || []).forEach(row => {
+        const hop = row.id.slice('crew-assign-'.length)
+        try {
+          const parsed = JSON.parse(row.updates)
+          if (parsed?.crew) map[hop] = parsed.crew
+        } catch {}
+      })
+      setCrewAssignments(map)
+    }
+    loadCrewAssignments()
+  }, [])
 
   const today = new Date()
   // Zero out the time-of-day so daysOut is a clean whole-day count — same fix
@@ -1269,6 +1295,7 @@ export default function CMViewPage() {
                               <th className="text-left p-2">Path ID</th>
                               {workloadMode === 'full' && <th className="text-left p-2">Nokia PM</th>}
                               <th className="text-left p-2">GC</th>
+                              <th className="text-left p-2">Crew</th>
                               <th className="text-left p-2">Started</th>
                               <th className="text-left p-2">FC End</th>
                               <th className="text-left p-2">Days Elapsed</th>
@@ -1293,6 +1320,7 @@ export default function CMViewPage() {
                                 <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                 {workloadMode === 'full' && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
+                                <td className="p-2 text-gray-300 whitespace-nowrap">{crewAssignments[h.hop] || '—'}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15a}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
                                 <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > thresholds.durationAlertDays ? 'text-red-400' : 'text-green-400'}`}>
@@ -1357,10 +1385,10 @@ export default function CMViewPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
-                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
-                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
-                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
+                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
+                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
+                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
+                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
 
               </div>
             )}
