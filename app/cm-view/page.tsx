@@ -860,8 +860,14 @@ export default function CMViewPage() {
   // bulk all-CM actions (download/email) always use cjHops regardless of the
   // toggle, since that toggle is scoped to the selected-CM view only.
   const cjHops    = hops.filter(h => h.regionPm?.trim().toUpperCase() === 'CJ')
+  // Only list a CM if they have at least one HOP that isn't complete —
+  // active + thisWeek + next2Wks + thisMonth + pipeline below is exactly
+  // the set of !h.complete HOPs (inProgress and complete are mutually
+  // exclusive), so a CM whose every HOP is already complete would show
+  // every section empty anyway. Filtering the tab out here avoids
+  // presenting names with genuinely nothing to call about.
   const cmList    = Array.from(new Set(
-    (workloadMode === 'full' ? hops : cjHops).map(h => h.cm?.trim().toLowerCase()).filter(Boolean)
+    (workloadMode === 'full' ? hops : cjHops).filter(h => !h.complete).map(h => h.cm?.trim().toLowerCase()).filter(Boolean)
   )).sort()
   const cmHops    = (workloadMode === 'full' ? hops : cjHops)
     .filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
