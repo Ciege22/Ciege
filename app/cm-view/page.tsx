@@ -869,6 +869,20 @@ export default function CMViewPage() {
   const cmList    = Array.from(new Set(
     (workloadMode === 'full' ? hops : cjHops).filter(h => !h.complete).map(h => h.cm?.trim().toLowerCase()).filter(Boolean)
   )).sort()
+  // Per-CM active-site count for the tab badge — "active" is the same
+  // in-progress set the panel's ACTIVE SITES section uses (started, not yet
+  // complete), scoped to whatever the workload toggle currently shows, so
+  // the badge tracks the PM filter just like the GC view's outstanding count.
+  const cmActiveCounts = (() => {
+    const counts = new Map<string, number>()
+    ;(workloadMode === 'full' ? hops : cjHops).forEach(h => {
+      if (!h.inProgress) return
+      const key = h.cm?.trim().toLowerCase()
+      if (!key) return
+      counts.set(key, (counts.get(key) || 0) + 1)
+    })
+    return counts
+  })()
   const cmHops    = (workloadMode === 'full' ? hops : cjHops)
     .filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
   const active    = cmHops.filter(h => h.inProgress).sort((a, b) => {
@@ -1246,12 +1260,20 @@ export default function CMViewPage() {
 
         {/* CM Selector */}
         <div className="flex gap-3 mb-6 flex-wrap">
-          {cmList.map((cm) => (
-            <button key={cm} onClick={() => setSelectedCM(cm)}
-              className={`px-6 py-3 rounded-lg font-semibold text-sm transition-all ${selectedCM?.trim().toLowerCase() === cm?.trim().toLowerCase() ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
-              {cm}
-            </button>
-          ))}
+          {cmList.map((cm) => {
+            const isSelected = selectedCM?.trim().toLowerCase() === cm?.trim().toLowerCase()
+            const activeCount = cmActiveCounts.get(cm.toLowerCase()) ?? 0
+            return (
+              <button key={cm} onClick={() => setSelectedCM(cm)}
+                title={`${activeCount} active site${activeCount === 1 ? '' : 's'}`}
+                className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm transition-all ${isSelected ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+                {cm}
+                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-gray-700 text-gray-300'}`}>
+                  {activeCount}
+                </span>
+              </button>
+            )
+          })}
         </div>
 
         {/* CM Panel */}
