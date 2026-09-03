@@ -14,6 +14,15 @@ export const GC_CONFIG: GcConfigEntry[] = [
   { gc: 'Vikor',    cr_match: ['vikor'],              spo_match: ['sioux falls tower specialists inc.', 'sioux falls tower specialists inc'], cr_label: 'Vikor',     spo_label: 'SIOUX_FALLS_TOWER_SPECIALISTS_INC' },
   { gc: 'TCE',      cr_match: ['tce'],                spo_match: ['tower communications experts. llc', 'tower communications experts llc'],  cr_label: 'TCE',       spo_label: 'TOWER_COMMUNICATIONS_EXPERTS_LLC' },
   { gc: 'InSite',   cr_match: ['insite'],             spo_match: ['insite telecom llc'],                                                     cr_label: 'InSite',    spo_label: 'INSITE_TELECOM_LLC' },
+  // Vendor names below confirmed directly against the source SPO Report /
+  // CR Tracker files by CJ (2026-09-02) — not guessed.
+  { gc: 'Capital Tower', cr_match: ['capital tower'],  spo_match: ['capital tower and communications'],   cr_label: 'Capital_Tower', spo_label: 'CAPITAL_TOWER_AND_COMMUNICATIONS' },
+  { gc: 'Elite',         cr_match: ['elite'],          spo_match: ['elite microwave solutions'],          cr_label: 'Elite',         spo_label: 'ELITE_MICROWAVE_SOLUTIONS' },
+  { gc: 'Ethos',         cr_match: ['ethos'],          spo_match: ['ethos distributed solutions inc'],    cr_label: 'Ethos',         spo_label: 'ETHOS_DISTRIBUTED_SOLUTIONS_INC' },
+  { gc: 'Site Property', cr_match: ['site properties'],spo_match: ['site property company llc'],          cr_label: 'Site_Property', spo_label: 'SITE_PROPERTY_COMPANY_LLC' },
+  { gc: 'Steimel',       cr_match: ['steimel communications inc'], spo_match: ['steimel communications inc'], cr_label: 'Steimel',   spo_label: 'STEIMEL_COMMUNICATIONS_INC' },
+  { gc: 'Viking',        cr_match: ['viking'],         spo_match: ['viking maintenance ltd dba finish'],  cr_label: 'Viking',        spo_label: 'VIKING_MAINTENANCE_LTD_DBA_FINISH' },
+  { gc: 'WaveLink',      cr_match: ['wavelink'],        spo_match: ['wave link corp. of puerto rico'],     cr_label: 'WaveLink',      spo_label: 'WAVE_LINK_CORP_OF_PUERTO_RICO' },
 ]
 
 export const SPO_VENDOR_COL_IN_MASTER = 43
