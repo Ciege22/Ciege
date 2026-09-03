@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import pptxgen from 'pptxgenjs'
+import JSZip from 'jszip'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
@@ -104,7 +105,7 @@ function fmtGapLabel(gap: number): string {
   return 'Gap: 0'
 }
 
-function downloadGCReport(rows: unknown[][], colIdx: number[], headers: string[], vendorColInMaster: number, matchList: string[], filename: string) {
+function buildGCReportWorkbook(rows: unknown[][], colIdx: number[], headers: string[], vendorColInMaster: number, matchList: string[], sheetName: string): XLSX.WorkBook {
   const gcRows = rows.filter(row => matches(row[vendorColInMaster], matchList))
 
   const wb = XLSX.utils.book_new()
@@ -138,7 +139,12 @@ function downloadGCReport(rows: unknown[][], colIdx: number[], headers: string[]
     return { wch: Math.min(Math.max(maxLen + 2, 10), 40) }
   })
 
-  XLSX.utils.book_append_sheet(wb, ws, headers[0].includes('SPO') || filename.includes('SPO') ? 'SPO Report' : 'CR Tracker')
+  XLSX.utils.book_append_sheet(wb, ws, sheetName)
+  return wb
+}
+
+function downloadGCReport(rows: unknown[][], colIdx: number[], headers: string[], vendorColInMaster: number, matchList: string[], filename: string, sheetName: string) {
+  const wb = buildGCReportWorkbook(rows, colIdx, headers, vendorColInMaster, matchList, sheetName)
   XLSX.writeFile(wb, filename)
 }
 
@@ -169,7 +175,7 @@ function styleDecomSheet(ws: XLSX.WorkSheet) {
   ws['!cols'] = DECOM_HEADERS.map(h => ({ wch: Math.max(h.length + 2, 12) }))
 }
 
-function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
+function buildGcDecomReportWorkbook(gcRows: DecomRow[]): XLSX.WorkBook {
   // Decom Drop Off pending = no Drop Off date yet (every row here already has
   // CX Complete confirmed, since that's required just to exist in gcRows).
   const outstandingPending = gcRows
@@ -197,7 +203,60 @@ function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
   styleDecomSheet(ws3)
   XLSX.utils.book_append_sheet(wb, ws3, 'Pending POD in QuickBase')
 
+  return wb
+}
+
+function downloadGcDecomReport(gcRows: DecomRow[], filename: string) {
+  const wb = buildGcDecomReportWorkbook(gcRows)
   XLSX.writeFile(wb, filename)
+}
+
+// Bundles whichever of the three GC reports actually have data into a single
+// ZIP — SPO/CR only when this GC has a GC_CONFIG vendor-match entry (same
+// gate the individual buttons use), Decom whenever there are matching rows.
+// Client-side only (JSZip + a Blob URL), same as every other download on
+// this page — no new backend endpoint needed.
+async function downloadAllGcReports(
+  fileSafeName: string,
+  today: string,
+  // `count` is this GC's already-filtered row count (spoCount/crCount from
+  // the card render), not rows.length — rows is the whole unfiltered SPO/CR
+  // dataset, so checking its length would always be true and include an
+  // empty sheet for a GC with zero matching rows.
+  spo: { rows: unknown[][]; label: string; match: string[]; count: number } | null,
+  cr: { rows: unknown[][]; label: string; match: string[]; count: number } | null,
+  gcDecomRows: DecomRow[]
+) {
+  const zip = new JSZip()
+  let added = 0
+
+  if (spo && spo.count > 0) {
+    const wb = buildGCReportWorkbook(spo.rows, SPO_COL_IDX, SPO_HEADERS, SPO_VENDOR_COL_IN_MASTER, spo.match, 'SPO Report')
+    zip.file(`${spo.label}_-_SPO_Report_-_${today}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))
+    added++
+  }
+  if (cr && cr.count > 0) {
+    const wb = buildGCReportWorkbook(cr.rows, CR_COL_IDX, CR_HEADERS, CR_SUPPLIER_COL_IN_MASTER, cr.match, 'CR Tracker')
+    zip.file(`${cr.label}_-_CR_Tracker_-_${today}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))
+    added++
+  }
+  if (gcDecomRows.length > 0) {
+    const wb = buildGcDecomReportWorkbook(gcDecomRows)
+    zip.file(`${fileSafeName}_-_Decom_Report_-_${today}.xlsx`, XLSX.write(wb, { type: 'array', bookType: 'xlsx' }))
+    added++
+  }
+
+  if (added === 0) { alert('No report data available to zip for this GC yet.'); return }
+
+  const blob = await zip.generateAsync({ type: 'blob' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${fileSafeName}_Reports_${today}.zip`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 // Decom rows don't carry Nokia PM (the decom file has no such column) — cross-reference
@@ -1082,14 +1141,14 @@ export default function ReportsPage() {
                     </div>
                     <div className="flex flex-col gap-2">
                       <button
-                        onClick={() => cfg && downloadGCReport(spoRows, SPO_COL_IDX, SPO_HEADERS, SPO_VENDOR_COL_IN_MASTER, cfg.spo_match, `${spoLabel}_-_SPO_Report_-_${today}.xlsx`)}
+                        onClick={() => cfg && downloadGCReport(spoRows, SPO_COL_IDX, SPO_HEADERS, SPO_VENDOR_COL_IN_MASTER, cfg.spo_match, `${spoLabel}_-_SPO_Report_-_${today}.xlsx`, 'SPO Report')}
                         disabled={!cfg || spoRows.length === 0}
                         title={!cfg ? notConfiguredTitle : undefined}
                         className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
                         📥 Download SPO Report
                       </button>
                       <button
-                        onClick={() => cfg && downloadGCReport(crRows, CR_COL_IDX, CR_HEADERS, CR_SUPPLIER_COL_IN_MASTER, cfg.cr_match, `${crLabel}_-_CR_Tracker_-_${today}.xlsx`)}
+                        onClick={() => cfg && downloadGCReport(crRows, CR_COL_IDX, CR_HEADERS, CR_SUPPLIER_COL_IN_MASTER, cfg.cr_match, `${crLabel}_-_CR_Tracker_-_${today}.xlsx`, 'CR Tracker')}
                         disabled={!cfg || crRows.length === 0}
                         title={!cfg ? notConfiguredTitle : undefined}
                         className="bg-teal-700 hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
@@ -1100,6 +1159,18 @@ export default function ReportsPage() {
                         disabled={gcDecomRows.length === 0}
                         className="bg-purple-700 hover:bg-purple-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
                         📥 Download Decom Report
+                      </button>
+                      <button
+                        onClick={() => downloadAllGcReports(
+                          fileSafeName, today,
+                          cfg ? { rows: spoRows, label: spoLabel, match: cfg.spo_match, count: spoCount } : null,
+                          cfg ? { rows: crRows, label: crLabel, match: cfg.cr_match, count: crCount } : null,
+                          gcDecomRows
+                        )}
+                        disabled={spoCount === 0 && crCount === 0 && gcDecomRows.length === 0}
+                        title="Download SPO, CR, and Decom reports together in one ZIP"
+                        className="bg-amber-700 hover:bg-amber-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
+                        🗜️ Download All (ZIP)
                       </button>
                     </div>
                   </div>
