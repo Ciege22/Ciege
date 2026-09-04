@@ -8,6 +8,7 @@ import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRo
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings } from './lib/settings'
 import { loadChunkedReport } from './lib/reportChunks'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
+import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
 
 // Decom isn't its own page (it lives inside Reports' Decom section and
 // GC Call View's Decom tab), so it isn't listed as a separate nav card here
@@ -323,6 +324,11 @@ export default function Home() {
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
   const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
+  // Consolidated Tracker/CM View/GC Call View edit log (app/lib/pendingUpdates.ts)
+  // — read-only mirror here, same shared row those three pages write to.
+  const [pendingUpdates, setPendingUpdates] = useState<PendingUpdate[]>([])
+  const [pmUpdatesSearch, setPmUpdatesSearch] = useState('')
+  const [pmUpdatesSort, setPmUpdatesSort] = useState<'hop' | 'field'>('hop')
 
   useEffect(() => {
     const checkSnapshot = async () => {
@@ -688,6 +694,31 @@ export default function Home() {
     }
     loadOpenActions()
   }, [])
+
+  useEffect(() => {
+    loadPendingUpdates().then(setPendingUpdates).catch(() => {})
+  }, [])
+
+  const togglePendingUpdateCompleted = (hop: string, field: string, timestamp: string) => {
+    setPendingUpdates(prev => {
+      const next = prev.map(u => (u.hop === hop && u.field === field && u.timestamp === timestamp ? { ...u, completed: !u.completed } : u))
+      persistPendingUpdates(next)
+      return next
+    })
+  }
+
+  const clearCompletedPendingUpdates = () => {
+    setPendingUpdates(prev => {
+      const next = prev.filter(u => !u.completed)
+      persistPendingUpdates(next)
+      return next
+    })
+  }
+
+  const clearAllPendingUpdates = () => {
+    setPendingUpdates([])
+    persistPendingUpdates([])
+  }
 
   // Comment history is permanent, per HOP + action type — appends only, never overwrites.
   const saveComment = async (hop: string, actionType: string) => {
@@ -1458,6 +1489,105 @@ export default function Home() {
 
                   {/* Focus Items */}
                   <div className="flex flex-col gap-2">
+                    {/* PM Updates — consolidated edit log from Tracker, CM View,
+                        and GC Call View (app/lib/pendingUpdates.ts). Always shown
+                        (unlike the items below, which hide at zero) so it's a
+                        stable entry point to the combined list right on the
+                        dashboard, on top of Needs Attention Now. */}
+                    <div>
+                      <div
+                        onClick={() => setExpandedFocusItem(expandedFocusItem === 'PM Updates' ? null : 'PM Updates')}
+                        className={`flex items-center justify-between bg-gray-900 border rounded-xl px-5 py-3 cursor-pointer transition-all ${pendingUpdates.filter(u => !u.completed).length > 0 ? 'border-amber-700 hover:border-amber-500' : 'border-gray-700 hover:border-gray-600'}`}>
+                        <div className="flex items-center gap-3">
+                          <span className="text-lg">📋</span>
+                          <div>
+                            <span className="text-white text-sm font-semibold">PM Updates</span>
+                            <span className="text-gray-500 text-xs ml-2">consolidated from Tracker, CM View &amp; GC Call View</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xl font-bold ${pendingUpdates.filter(u => !u.completed).length > 0 ? 'text-amber-400' : 'text-gray-500'}`}>{pendingUpdates.filter(u => !u.completed).length}</span>
+                          <span className="text-gray-600 text-xs">open</span>
+                          <span className="text-gray-500 text-sm">{expandedFocusItem === 'PM Updates' ? '▲' : '▼'}</span>
+                        </div>
+                      </div>
+
+                      {expandedFocusItem === 'PM Updates' && (
+                        <div className="bg-amber-50 border border-t-0 border-amber-300 rounded-b-xl p-4">
+                          {pendingUpdates.length === 0 ? (
+                            <p className="text-amber-800 text-sm text-center py-2">No pending updates — nothing logged in Tracker, CM View, or GC Call View today.</p>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-end mb-3 gap-2 flex-wrap">
+                                <input
+                                  type="text"
+                                  placeholder="Search HOP or field..."
+                                  value={pmUpdatesSearch}
+                                  onChange={(e) => setPmUpdatesSearch(e.target.value)}
+                                  className="bg-white border border-amber-300 text-amber-900 text-xs rounded px-2 py-1 w-44 focus:outline-none focus:border-amber-500"
+                                />
+                                <button onClick={() => setPmUpdatesSort(prev => prev === 'field' ? 'hop' : 'field')}
+                                  className="bg-amber-200 hover:bg-amber-300 text-amber-900 text-xs px-3 py-1 rounded font-semibold">
+                                  Sort by {pmUpdatesSort === 'field' ? 'Field ↑' : 'HOP ↑'}
+                                </button>
+                              </div>
+                              <div className="overflow-x-auto">
+                                <table className="w-full text-sm">
+                                  <thead>
+                                    <tr className="text-amber-700 text-xs">
+                                      <th className="text-left p-2">Done</th>
+                                      <th className="text-left p-2">From</th>
+                                      <th className="text-left p-2">HOP</th>
+                                      <th className="text-left p-2">Field</th>
+                                      <th className="text-left p-2">Old Value</th>
+                                      <th className="text-left p-2">New Value</th>
+                                      <th className="text-left p-2">Logged At</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {[...pendingUpdates]
+                                      .filter(u => {
+                                        if (!pmUpdatesSearch) return true
+                                        const q = pmUpdatesSearch.toLowerCase()
+                                        return u.hop.toLowerCase().includes(q) || u.field.toLowerCase().includes(q)
+                                      })
+                                      .sort((a, b) => pmUpdatesSort === 'field' ? a.field.localeCompare(b.field) : a.hop.localeCompare(b.hop))
+                                      .map(u => (
+                                        <tr key={`${u.source}-${u.hop}-${u.field}-${u.timestamp}`} className={`border-t border-amber-200 ${u.completed ? 'opacity-40' : ''}`}>
+                                          <td className="p-2">
+                                            <input type="checkbox" checked={u.completed || false}
+                                              onChange={() => togglePendingUpdateCompleted(u.hop, u.field, u.timestamp)}
+                                              className="w-4 h-4 cursor-pointer accent-green-600" />
+                                          </td>
+                                          <td className="p-2">
+                                            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${SOURCE_BADGE_CLASSES[u.source]}`}>
+                                              {SOURCE_LABELS[u.source]}
+                                            </span>
+                                          </td>
+                                          <td className={`p-2 font-semibold ${u.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}>{u.hop}</td>
+                                          <td className={`p-2 ${u.completed ? 'line-through text-gray-500' : 'text-amber-800'}`}>{u.field}</td>
+                                          <td className="p-2 text-gray-500">{u.oldValue || '—'}</td>
+                                          <td className={`p-2 font-bold ${u.completed ? 'text-gray-500' : 'text-green-700'}`}>{u.newValue}</td>
+                                          <td className="p-2 text-gray-500">{new Date(u.timestamp).toLocaleString()}</td>
+                                        </tr>
+                                      ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <div className="mt-4 flex gap-3">
+                                <button onClick={clearCompletedPendingUpdates} className="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded text-sm font-semibold">
+                                  ✅ Clear Completed
+                                </button>
+                                <button onClick={clearAllPendingUpdates} className="bg-gray-600 hover:bg-gray-500 text-white px-4 py-2 rounded text-sm">
+                                  🗑 Clear All
+                                </button>
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+
                     {focusItems.filter(item => item.value > 0).map(item => (
                       <div key={item.label}>
                         <div
