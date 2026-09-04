@@ -6,7 +6,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 
 interface HOP {
@@ -272,13 +272,14 @@ interface PipelineSectionProps {
   logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
   setCxNotesModal: (val: { hop: string; notes: string } | null) => void
   showNokiaPm?: boolean
-  // Read-only here — crew is assigned/edited in GC Call View and the Tracker
-  // Grid (same crew-assign-{hop} Supabase rows), this just displays it for
-  // reference.
+  // Same crew-assign-{hop} Supabase rows as GC Call View and the Tracker
+  // Grid — editable here via onCrewChange, same as those two.
   crewAssignments: Record<string, string>
+  program: ProgramSettings
+  onCrewChange: (hop: string, crew: string) => void
 }
 
-function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal, showNokiaPm, crewAssignments }: PipelineSectionProps) {
+function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal, showNokiaPm, crewAssignments, program, onCrewChange }: PipelineSectionProps) {
   return (
     <div className="mb-8">
       <h3 className="text-base font-semibold text-white mb-3">{title} ({rows.length})</h3>
@@ -325,7 +326,16 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                       {showNokiaPm && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
-                      <td className="p-2 text-gray-300 whitespace-nowrap">{crewAssignments[h.hop] || '—'}</td>
+                      <td className="p-2">
+                        <select value={crewAssignments[h.hop] || ''}
+                          onChange={(e) => onCrewChange(h.hop, e.target.value)}
+                          className="bg-gray-800 text-gray-300 text-xs rounded px-1 py-1 border border-gray-600 focus:outline-none focus:border-blue-500">
+                          <option value="">--</option>
+                          {Array.from({ length: crewCountForGc(program, h.gc) }, (_, i) => `Crew ${i + 1}`).map(c => (
+                            <option key={c} value={c}>{c}</option>
+                          ))}
+                        </select>
+                      </td>
                       <td className={`p-2 font-bold whitespace-nowrap ${(h.daysOut ?? 99) <= 7 ? 'text-red-400' : (h.daysOut ?? 99) <= 14 ? 'text-yellow-400' : 'text-gray-300'}`}>
                         {h.daysOut !== null ? `${h.daysOut}d` : '—'}
                       </td>
@@ -450,10 +460,15 @@ export default function CMViewPage() {
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
-  // hop -> 'Crew 1' | 'Crew 2' | ... — read-only reference here; assigned/
-  // edited in GC Call View and the Tracker Grid, same crew-assign-{hop}
-  // Supabase rows.
+  // hop -> 'Crew 1' | 'Crew 2' | ... — same crew-assign-{hop} Supabase rows as
+  // GC Call View and the Tracker Grid; editable here too (setCrewForHop
+  // below), so an assignment made on any of the three shows up on the others.
   const [crewAssignments, setCrewAssignments] = useState<Record<string, string>>({})
+  const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
+
+  useEffect(() => {
+    loadProgramSettings().then(setProgram)
+  }, [])
 
   useEffect(() => {
     const loadCrewAssignments = async () => {
@@ -470,6 +485,30 @@ export default function CMViewPage() {
     }
     loadCrewAssignments()
   }, [])
+
+  // Mirrors app/gc-call/page.tsx's setCrewForHop against the same
+  // crew-assign-{hop} rows — a CM's HOPs can span multiple GCs (unlike GC
+  // View, which is already scoped to one GC), so the crew-count cap is
+  // looked up per-row by that row's GC rather than once per tab.
+  const setCrewForHop = async (hop: string, crew: string) => {
+    setCrewAssignments(prev => {
+      const next = { ...prev }
+      if (crew) next[hop] = crew
+      else delete next[hop]
+      return next
+    })
+    if (crew) {
+      const { error } = await supabase.from('pm_updates_cache').upsert({
+        id: `crew-assign-${hop}`,
+        updates: JSON.stringify({ crew }),
+        updated_at: new Date().toISOString(),
+      })
+      if (error) console.error('[crew-assign] upsert failed:', error)
+    } else {
+      const { error } = await supabase.from('pm_updates_cache').delete().eq('id', `crew-assign-${hop}`)
+      if (error) console.error('[crew-assign] delete failed:', error)
+    }
+  }
 
   const today = new Date()
   // Zero out the time-of-day so daysOut is a clean whole-day count — same fix
@@ -1129,14 +1168,14 @@ export default function CMViewPage() {
           </div>
         </div>
 
-        {/* PM Daily Updates Panel — consolidated list shared with Tracker
+        {/* PM Updates Panel — consolidated list shared with Tracker
             and GC Call View (app/lib/pendingUpdates.ts): unified table for
             milestone edits AND CX note comments, tagged with which view each
             entry came from, no separate copy/clear-for-comments flow. */}
         {showPmUpdates && pmUpdates.length > 0 && (
           <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h2 className="text-amber-900 font-bold text-base">📋 PM Daily Updates — All Views Combined</h2>
+              <h2 className="text-amber-900 font-bold text-base">📋 PM Updates — All Views Combined</h2>
               <div className="flex gap-2 items-center flex-wrap">
                 <input
                   type="text"
@@ -1321,7 +1360,16 @@ export default function CMViewPage() {
                                 <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                 {workloadMode === 'full' && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
-                                <td className="p-2 text-gray-300 whitespace-nowrap">{crewAssignments[h.hop] || '—'}</td>
+                                <td className="p-2">
+                                  <select value={crewAssignments[h.hop] || ''}
+                                    onChange={(e) => setCrewForHop(h.hop, e.target.value)}
+                                    className="bg-gray-800 text-gray-300 text-xs rounded px-1 py-1 border border-gray-600 focus:outline-none focus:border-blue-500">
+                                    <option value="">--</option>
+                                    {Array.from({ length: crewCountForGc(program, h.gc) }, (_, i) => `Crew ${i + 1}`).map(c => (
+                                      <option key={c} value={c}>{c}</option>
+                                    ))}
+                                  </select>
+                                </td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms15a}</td>
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.ms16f}</td>
                                 <td className={`p-2 font-bold ${(h.daysElapsed ?? 0) > thresholds.durationAlertDays ? 'text-red-400' : 'text-green-400'}`}>
@@ -1386,10 +1434,10 @@ export default function CMViewPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
-                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
-                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
-                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} />
+                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
+                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
+                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
+                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
 
               </div>
             )}

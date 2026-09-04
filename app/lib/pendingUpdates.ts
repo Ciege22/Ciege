@@ -35,29 +35,44 @@ export const SOURCE_BADGE_CLASSES: Record<UpdateSource, string> = {
   gc: 'bg-orange-200 text-orange-900',
 }
 
-// Still date-keyed so the list resets to a fresh slate each calendar day —
-// matches the reset behavior every view's own list had individually.
-function storageId(): string {
-  return `pending-updates-${new Date().toISOString().slice(0, 10)}`
+// One permanent row, not date-keyed — earlier versions reset to empty every
+// calendar day, which silently dropped anything still open at midnight.
+// Open items now persist until done; only completed ones age out (see
+// HISTORY_DAYS below), so the list still reads as "today's stuff" without
+// erasing work that spans a day boundary.
+const STORAGE_ID = 'pending-updates'
+
+// How long a completed entry stays visible (as history/audit trail) before
+// it's pruned on load. Open (incomplete) entries are never pruned this way —
+// they only leave the list via Clear Completed/Clear All or getting undone.
+const HISTORY_DAYS = 7
+
+function pruneOldCompleted(updates: PendingUpdate[]): PendingUpdate[] {
+  const cutoff = Date.now() - HISTORY_DAYS * 24 * 60 * 60 * 1000
+  return updates.filter(u => !u.completed || new Date(u.timestamp).getTime() >= cutoff)
 }
 
 export async function loadPendingUpdates(): Promise<PendingUpdate[]> {
   const { data } = await supabase
     .from('pm_updates_cache')
     .select('updates')
-    .eq('id', storageId())
+    .eq('id', STORAGE_ID)
     .single()
   if (!data?.updates) return []
+  let parsed: PendingUpdate[]
   try {
-    return JSON.parse(data.updates)
+    parsed = JSON.parse(data.updates)
   } catch {
     return []
   }
+  const pruned = pruneOldCompleted(parsed)
+  if (pruned.length !== parsed.length) await persistPendingUpdates(pruned)
+  return pruned
 }
 
 export async function persistPendingUpdates(updates: PendingUpdate[]): Promise<void> {
   await supabase.from('pm_updates_cache').upsert({
-    id: storageId(),
+    id: STORAGE_ID,
     updates: JSON.stringify(updates),
     updated_at: new Date().toISOString(),
   })
