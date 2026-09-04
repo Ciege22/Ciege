@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
+import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 
 interface HOP {
   hop: string
@@ -57,15 +58,6 @@ interface CallNote {
   hop_name: string
   note: string
   logged_at: string
-}
-
-interface PmUpdate {
-  hop: string
-  field: string
-  oldValue: string
-  newValue: string
-  timestamp: string
-  completed?: boolean
 }
 
 function parseDate(val: unknown): Date | null {
@@ -451,7 +443,7 @@ export default function CMViewPage() {
   }, [])
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
-  const [pmUpdates, setPmUpdates] = useState<PmUpdate[]>([])
+  const [pmUpdates, setPmUpdates] = useState<PendingUpdate[]>([])
   const [showPmUpdates, setShowPmUpdates] = useState(false)
   const [pmSortField, setPmSortField] = useState<'hop' | 'field'>('hop')
   const [pmSearch, setPmSearch] = useState('')
@@ -503,49 +495,23 @@ export default function CMViewPage() {
     loadNoteHistory()
   }, [])
 
-  // Date-keyed id — a fresh row per calendar day, same reset behavior as
-  // app/tracker/page.tsx's tracker-changes-{date} cache.
-  const pmUpdatesStorageId = `cm-updates-${new Date().toISOString().slice(0, 10)}`
-
-  // Explicit persist, called from every mutator below — mirrors
-  // app/tracker/page.tsx's persistChanges rather than a reactive
-  // useEffect([pmUpdates]) autosave (which also had a real gap: it silently
-  // skipped persisting whenever the array went back to empty).
-  const persistPmUpdates = async (updates: PmUpdate[]) => {
-    await supabase.from('pm_updates_cache').upsert({
-      id: pmUpdatesStorageId,
-      updates: JSON.stringify(updates),
-      updated_at: new Date().toISOString(),
-    })
-  }
+  // Persisted to the shared pending-updates row (app/lib/pendingUpdates.ts) —
+  // same list Tracker and GC Call View read/write, so an edit made here shows
+  // up on their "Pending Updates" panel too, and vice versa.
+  const persistPmUpdates = persistPendingUpdates
 
   useEffect(() => {
-    const loadUpdates = async () => {
-      const { data } = await supabase
-        .from('pm_updates_cache')
-        .select('updates')
-        .eq('id', `cm-updates-${new Date().toISOString().slice(0, 10)}`)
-        .single()
-      if (data?.updates) {
-        try {
-          setPmUpdates(JSON.parse(data.updates))
-        } catch (e) {
-          console.error('Error loading PM updates:', e)
-        }
-      }
-    }
-    loadUpdates()
+    loadPendingUpdates().then(setPmUpdates).catch(e => console.error('Error loading PM updates:', e))
   }, [])
 
-  // Dedup on hop+field before appending — same pattern as
-  // app/tracker/page.tsx's saveEdit: a second edit/comment for the same
-  // HOP+field today replaces the pending entry instead of stacking a
-  // duplicate. The full note history itself (hop_call_notes, below) is
-  // untouched by this — only what's queued as "still needs to go in the
-  // tracker" collapses to the latest one.
+  // Dedup on hop+field before appending (source: 'cm' tags where this entry
+  // came from) — a second edit/comment for the same HOP+field today replaces
+  // the pending entry instead of stacking a duplicate. The full note history
+  // itself (hop_call_notes, below) is untouched by this — only what's queued
+  // as "still needs to go in the tracker" collapses to the latest one.
   const upsertPmUpdate = (next: { hop: string; field: string; oldValue: string; newValue: string; timestamp: string }) => {
     setPmUpdates(prev => {
-      const updated = [...prev.filter(u => !(u.hop === next.hop && u.field === next.field)), { ...next, completed: false }]
+      const updated = upsertPendingUpdate(prev, { ...next, source: 'cm' })
       persistPmUpdates(updated)
       return updated
     })
@@ -1163,13 +1129,14 @@ export default function CMViewPage() {
           </div>
         </div>
 
-        {/* PM Daily Updates Panel — same shape as app/tracker/page.tsx's
-            Pending Updates panel: unified table for milestone edits AND
-            CX note comments, no separate copy/clear-for-comments flow. */}
+        {/* PM Daily Updates Panel — consolidated list shared with Tracker
+            and GC Call View (app/lib/pendingUpdates.ts): unified table for
+            milestone edits AND CX note comments, tagged with which view each
+            entry came from, no separate copy/clear-for-comments flow. */}
         {showPmUpdates && pmUpdates.length > 0 && (
           <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h2 className="text-amber-900 font-bold text-base">📋 PM Daily Updates — Update These in Your Tracker</h2>
+              <h2 className="text-amber-900 font-bold text-base">📋 PM Daily Updates — All Views Combined</h2>
               <div className="flex gap-2 items-center flex-wrap">
                 <input
                   type="text"
@@ -1189,6 +1156,7 @@ export default function CMViewPage() {
                 <thead>
                   <tr className="text-amber-700 text-xs">
                     <th className="text-left p-2">Done</th>
+                    <th className="text-left p-2">From</th>
                     <th className="text-left p-2">HOP</th>
                     <th className="text-left p-2">Field</th>
                     <th className="text-left p-2">Old Value</th>
@@ -1207,11 +1175,16 @@ export default function CMViewPage() {
                       ? a.field.localeCompare(b.field)
                       : a.hop.localeCompare(b.hop))
                     .map((u) => (
-                    <tr key={`${u.hop}-${u.field}-${u.timestamp}`} className={`border-t border-amber-200 ${u.completed ? 'opacity-40' : ''}`}>
+                    <tr key={`${u.source}-${u.hop}-${u.field}-${u.timestamp}`} className={`border-t border-amber-200 ${u.completed ? 'opacity-40' : ''}`}>
                       <td className="p-2">
                         <input type="checkbox" checked={u.completed || false}
                           onChange={() => toggleUpdateCompleted(u.hop, u.field, u.timestamp)}
                           className="w-4 h-4 cursor-pointer accent-green-600" />
+                      </td>
+                      <td className="p-2">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${SOURCE_BADGE_CLASSES[u.source]}`}>
+                          {SOURCE_LABELS[u.source]}
+                        </span>
                       </td>
                       <td className={`p-2 font-semibold ${u.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}>{u.hop}</td>
                       <td className={`p-2 ${u.completed ? 'line-through text-gray-500' : 'text-amber-800'}`}>{u.field}</td>

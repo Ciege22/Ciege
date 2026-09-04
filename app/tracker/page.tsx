@@ -7,6 +7,7 @@ import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { parseDateAny } from '../lib/grTracker'
 import { ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import BackToDashboard from '../components/BackToDashboard'
+import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 
 const NAVY = '#124191'
 const AMBER = '#FFF3CD'
@@ -35,16 +36,11 @@ interface TrackerRowData {
   cells: unknown[]
 }
 
-interface TrackerChange {
-  rowKey: string
-  hop: string
-  field: string
-  oldValue: string
-  newValue: string
-  timestamp: string
-  user: string
-  completed?: boolean
-}
+// Consolidated with CM View and GC Call View's pending-updates list
+// (app/lib/pendingUpdates.ts) — Tracker edits carry a `source: 'tracker'`
+// tag and use the same PendingUpdate shape (rowKey/user are Tracker-only
+// fields on that shared type).
+type TrackerChange = PendingUpdate
 
 interface TrackerView {
   name: string
@@ -741,16 +737,10 @@ export default function TrackerGridPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, viewsLoaded, headers.length, views.length])
 
-  // Load today's pending changes.
+  // Load today's pending changes — the shared list, also written to by CM
+  // View and GC Call View (app/lib/pendingUpdates.ts).
   useEffect(() => {
-    const load = async () => {
-      const todayKey = new Date().toISOString().slice(0, 10)
-      const { data } = await supabase.from('pm_updates_cache').select('updates').eq('id', `tracker-changes-${todayKey}`).single()
-      if (data?.updates) {
-        try { setPendingChanges(JSON.parse(data.updates)) } catch {}
-      }
-    }
-    load()
+    loadPendingUpdates().then(setPendingChanges).catch(() => {})
   }, [])
 
   // Debounce the search box — 300ms after the last keystroke the query commits
@@ -882,24 +872,20 @@ export default function TrackerGridPage() {
     }
   }
 
-  const persistChanges = async (changes: TrackerChange[]) => {
-    const todayKey = new Date().toISOString().slice(0, 10)
-    await supabase.from('pm_updates_cache').upsert({
-      id: `tracker-changes-${todayKey}`,
-      updates: JSON.stringify(changes),
-      updated_at: new Date().toISOString(),
-    })
-  }
+  // Persisted to the shared pending-updates row (app/lib/pendingUpdates.ts) —
+  // same list CM View and GC Call View read/write, so an edit made here
+  // shows up on their "Pending Updates" panel too, and vice versa.
+  const persistChanges = persistPendingUpdates
 
   const saveEdit = (rowKey: string, hop: string, field: string, originalValue: string, newValue: string) => {
     setEditingCell(null)
     if (newValue === originalValue) return
-    const change: TrackerChange = {
-      rowKey, hop, field, oldValue: originalValue, newValue,
+    const change: Omit<TrackerChange, 'completed'> = {
+      source: 'tracker', rowKey, hop, field, oldValue: originalValue, newValue,
       timestamp: new Date().toISOString(), user: 'CJ',
     }
     setPendingChanges(prev => {
-      const next = [...prev.filter(c => !(c.rowKey === rowKey && c.field === field)), change]
+      const next = upsertPendingUpdate(prev, change)
       persistChanges(next)
       return next
     })
@@ -911,9 +897,12 @@ export default function TrackerGridPage() {
     setShowPendingPanel(false)
   }
 
-  const toggleChangeCompleted = (rowKey: string, field: string, timestamp: string) => {
+  // Matches on hop (not rowKey) — same convention as CM/GC view's
+  // toggleUpdateCompleted, since this list now also holds their entries,
+  // which have no rowKey.
+  const toggleChangeCompleted = (hop: string, field: string, timestamp: string) => {
     setPendingChanges(prev => {
-      const next = prev.map(c => (c.rowKey === rowKey && c.field === field && c.timestamp === timestamp ? { ...c, completed: !c.completed } : c))
+      const next = prev.map(c => (c.hop === hop && c.field === field && c.timestamp === timestamp ? { ...c, completed: !c.completed } : c))
       persistChanges(next)
       return next
     })
@@ -1570,7 +1559,7 @@ export default function TrackerGridPage() {
       {showPendingPanel && pendingChanges.length > 0 && (
         <div className="mb-4 bg-amber-50 border border-amber-300 rounded-xl p-4">
           <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <h2 className="text-amber-900 font-bold text-base">📋 Pending Updates — Update These in Your Tracker</h2>
+            <h2 className="text-amber-900 font-bold text-base">📋 Pending Updates — All Views Combined</h2>
             <div className="flex gap-2 items-center flex-wrap">
               <input
                 type="text"
@@ -1592,6 +1581,7 @@ export default function TrackerGridPage() {
               <thead>
                 <tr className="text-amber-700 text-xs">
                   <th className="text-left p-2">Done</th>
+                  <th className="text-left p-2">From</th>
                   <th className="text-left p-2">HOP</th>
                   <th className="text-left p-2">Field</th>
                   <th className="text-left p-2">Old Value</th>
@@ -1608,14 +1598,19 @@ export default function TrackerGridPage() {
                   })
                   .sort((a, b) => pendingSortField === 'field' ? a.field.localeCompare(b.field) : a.hop.localeCompare(b.hop))
                   .map(c => (
-                    <tr key={`${c.rowKey}-${c.field}-${c.timestamp}`} className={`border-t border-amber-200 ${c.completed ? 'opacity-40' : ''}`}>
+                    <tr key={`${c.source}-${c.hop}-${c.field}-${c.timestamp}`} className={`border-t border-amber-200 ${c.completed ? 'opacity-40' : ''}`}>
                       <td className="p-2">
                         <input
                           type="checkbox"
                           checked={c.completed || false}
-                          onChange={() => toggleChangeCompleted(c.rowKey, c.field, c.timestamp)}
+                          onChange={() => toggleChangeCompleted(c.hop, c.field, c.timestamp)}
                           className="w-4 h-4 cursor-pointer accent-green-600"
                         />
+                      </td>
+                      <td className="p-2">
+                        <span className={`text-xs font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${SOURCE_BADGE_CLASSES[c.source]}`}>
+                          {SOURCE_LABELS[c.source]}
+                        </span>
                       </td>
                       <td className={`p-2 font-semibold ${c.completed ? 'line-through text-gray-500' : 'text-gray-900'}`}>{c.hop}</td>
                       <td className={`p-2 ${c.completed ? 'line-through text-gray-500' : 'text-amber-800'}`}>{c.field}</td>
