@@ -2,7 +2,7 @@
 
 export const dynamic = 'force-dynamic'
 
-import React, { useState, useCallback, useEffect } from 'react'
+import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
@@ -10,7 +10,7 @@ import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail } from '../lib/settings'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 import { loadChunkedReport } from '../lib/reportChunks'
-import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, DecomRow } from '../lib/decom'
+import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, uniqueDecomGcNames, DecomRow } from '../lib/decom'
 import {
   GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
@@ -1500,8 +1500,8 @@ export default function GCCallPage() {
 
     // Nokia PM options for the filter row — 'ALL' plus every PM actually
     // present in this upload, same derivation as the Dashboard's pmOptions.
-    // gcList itself (which GC tabs to show) is computed at render time
-    // below, since it needs to react to pmFilter changing after upload.
+    // gcList itself (which GC tabs to show) is computed below; its per-GC
+    // badge counts react to pmFilter changing after upload.
     const pmSet = new Set<string>()
     parsed.forEach(h => { if (h.nokiaPm) pmSet.add(h.nokiaPm) })
     setPmOptions(['ALL', ...Array.from(pmSet).sort()])
@@ -1546,31 +1546,47 @@ export default function GCCallPage() {
   // Matches the Nokia PM filter — 'ALL' passes everything.
   const matchesPmFilter = (h: HOP) => pmFilter === 'ALL' || h.nokiaPm?.trim().toUpperCase() === pmFilter.toUpperCase()
 
-  // GC tab list (+ per-GC outstanding count for the tab badge) — dedup
-  // case-insensitively (rows can spell the same GC differently) but keep
-  // canonical display casing so the tab label, selectedGC, and every
-  // gcContactEmails / GC_CM_MAP lookup keyed off it line up with what's
-  // typed in Settings. Recomputed every render (not useState) so both react
-  // immediately to pmFilter as well as to hops. Only lists a GC if they
-  // have at least one non-complete HOP matching the current PM filter — a
-  // GC with nothing outstanding for the selected PM has nothing to call
-  // about, so their tab shouldn't show; gcOutstandingCounts is exactly that
-  // same non-complete, PM-filtered count, per GC, for the "quick view" badge.
-  const { gcList, gcOutstandingCounts, gcActiveCounts } = (() => {
+  // GC tab list — every contractor we know about from any source, so a GC
+  // stays clickable for its Decom / GR / Reports tabs even with zero live
+  // pipeline work. Sources: the tracker (hops — any status, any PM), the
+  // SPO/CR reports roster (GC_CONFIG), the decom report, and the GR tracker.
+  // Deduped case-insensitively, canonicalized to GC_CONFIG casing where known
+  // so selectedGC lines up with GC_CM_MAP / gcContactEmails / the reports-tab
+  // cfg lookup. Deliberately NOT filtered by the Nokia PM selector — hiding a
+  // GC's tab outright is exactly what made reports unreachable.
+  //
+  // gcOutstandingCounts / gcActiveCounts stay PM-filtered and non-complete:
+  // they're the "what's there to call about" badge and read 0 for a GC
+  // that's in the list only for its reports.
+  const { gcList, gcOutstandingCounts, gcActiveCounts } = useMemo(() => {
     const seenGc = new Map<string, string>() // lowercase key -> canonical display
+    const register = (raw: string | null | undefined) => {
+      const name = raw?.trim()
+      if (!name) return
+      const key = name.toLowerCase()
+      if (!seenGc.has(key)) seenGc.set(key, canonicalGcName(name))
+    }
+
+    hops.forEach(h => register(h.gc))
+    GC_CONFIG.forEach(cfg => register(cfg.gc))
+    uniqueDecomGcNames(parseDecomRows(decomRawRows)).forEach(register)
+    grRows.forEach(r => register(r.gc))
+
     const counts = new Map<string, number>() // lowercase key -> outstanding count
     const activeCounts = new Map<string, number>() // lowercase key -> active (in-progress) count
     hops.forEach(h => {
       if (h.complete || !matchesPmFilter(h)) return
-      const raw = h.gc?.trim()
-      if (!raw) return
-      const key = raw.toLowerCase()
-      if (!seenGc.has(key)) seenGc.set(key, canonicalGcName(raw))
+      const key = h.gc?.trim().toLowerCase()
+      if (!key) return
       counts.set(key, (counts.get(key) || 0) + 1)
       if (h.inProgress) activeCounts.set(key, (activeCounts.get(key) || 0) + 1)
     })
+
     return { gcList: Array.from(seenGc.values()).sort(), gcOutstandingCounts: counts, gcActiveCounts: activeCounts }
-  })()
+    // matchesPmFilter is re-created each render but only reads pmFilter, so
+    // depending on pmFilter directly (not the fn) keeps this honest + stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hops, decomRawRows, grRows, pmFilter])
 
   const gcHops      = hops.filter(h => h.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase() && matchesPmFilter(h))
   const active      = gcHops.filter(h => h.inProgress).sort((a, b) => {
