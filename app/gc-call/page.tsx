@@ -1014,6 +1014,10 @@ export default function GCCallPage() {
   // gcList (below, computed at render time) and gcHops both narrow to this.
   const [pmFilter, setPmFilter] = useState<string>('ALL')
   const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
+  // Which slice of the GC tab strip to show: 'active' = GCs with an
+  // outstanding (non-complete, PM-filtered) pipeline — the original list;
+  // 'inactive' = the rest (reachable for Decom/GR/Reports only); 'all' = both.
+  const [gcScope, setGcScope] = useState<'active' | 'inactive' | 'all'>('active')
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
@@ -1588,6 +1592,18 @@ export default function GCCallPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hops, decomRawRows, grRows, pmFilter])
 
+  // "Active pipeline" = has ≥1 outstanding HOP for the current PM filter,
+  // i.e. an entry in gcOutstandingCounts. The gcScope buttons slice gcList
+  // into that set / its complement / the whole thing.
+  const gcHasActivePipeline = (gc: string) => (gcOutstandingCounts.get(gc.toLowerCase()) ?? 0) > 0
+  const activeGcCount   = gcList.filter(gcHasActivePipeline).length
+  const inactiveGcCount = gcList.length - activeGcCount
+  const visibleGcList = gcScope === 'all'
+    ? gcList
+    : gcScope === 'active'
+      ? gcList.filter(gcHasActivePipeline)
+      : gcList.filter(gc => !gcHasActivePipeline(gc))
+
   const gcHops      = hops.filter(h => h.gc?.trim().toLowerCase() === selectedGC?.trim().toLowerCase() && matchesPmFilter(h))
   const active      = gcHops.filter(h => h.inProgress).sort((a, b) => {
     const aTime = a.ms16f ? new Date(a.ms16f).getTime() : Infinity
@@ -1971,9 +1987,33 @@ export default function GCCallPage() {
           </div>
         )}
 
+        {/* GC scope filter — which slice of the tab strip to show */}
+        <div className="flex gap-2 mb-4 flex-wrap items-center">
+          <span className="text-gray-500 text-xs font-semibold">GCs:</span>
+          {([
+            ['active',   `Active Pipeline (${activeGcCount})`],
+            ['inactive', `No Active Pipeline (${inactiveGcCount})`],
+            ['all',      `All (${gcList.length})`],
+          ] as const).map(([val, label]) => (
+            <button key={val} onClick={() => setGcScope(val)}
+              className={`px-4 py-1.5 rounded-lg text-sm font-semibold transition-all ${gcScope === val ? 'bg-blue-600 text-white' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
         {/* GC Selector */}
         <div className="flex gap-3 mb-6 flex-wrap">
-          {gcList.map((gc) => {
+          {visibleGcList.length === 0 && (
+            <p className="text-gray-500 text-sm">
+              {gcScope === 'active'
+                ? 'No GCs with an outstanding pipeline for this Nokia PM filter.'
+                : gcScope === 'inactive'
+                  ? 'Every known GC has an active pipeline right now.'
+                  : 'No GCs found — upload a tracker or reports first.'}
+            </p>
+          )}
+          {visibleGcList.map((gc) => {
             const isSelected = selectedGC?.trim().toLowerCase() === gc?.trim().toLowerCase()
             const outstandingCount = gcOutstandingCounts.get(gc.toLowerCase()) ?? 0
             const activeCount = gcActiveCounts.get(gc.toLowerCase()) ?? 0
