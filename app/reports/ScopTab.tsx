@@ -102,7 +102,7 @@ function View1QuickBase({ dataset }: { dataset: ScopRow[] }) {
   )
 }
 
-function View2Pathwave({ dataset, thresholds }: { dataset: ScopRow[]; thresholds: { green: number; amber: number } }) {
+function View2Pathwave({ dataset }: { dataset: ScopRow[] }) {
   const v = computePathwaveView(dataset)
   const byGcRows = Object.entries(v.byGC)
     .map(([gc, b]) => ({ gc, ...b }))
@@ -154,7 +154,7 @@ function View2Pathwave({ dataset, thresholds }: { dataset: ScopRow[]; thresholds
           </div>
         </div>
 
-        {/* Right: OAD Sites */}
+        {/* Right: OAD Sites — deck layout is exactly HOP / GC / verbatim comment */}
         <div>
           <h4 className="mb-2 text-sm font-semibold text-gray-300">OAD Sites (Awaiting OAD, Not a GC Item)</h4>
           <div className="overflow-x-auto rounded-xl border border-gray-700 bg-gray-900">
@@ -163,7 +163,6 @@ function View2Pathwave({ dataset, thresholds }: { dataset: ScopRow[]; thresholds
                 <tr className="bg-gray-800 text-gray-400">
                   <th className="p-2 text-left">HOP</th>
                   <th className="p-2 text-left">GC</th>
-                  <th className="p-2 text-left">Days</th>
                   <th className="p-2 text-left">One and Done (verbatim)</th>
                 </tr>
               </thead>
@@ -172,11 +171,10 @@ function View2Pathwave({ dataset, thresholds }: { dataset: ScopRow[]; thresholds
                   <tr key={r.hop} className="border-t border-gray-800">
                     <td className="p-2 font-semibold text-white whitespace-nowrap">{r.hop}</td>
                     <td className="p-2 text-gray-300 whitespace-nowrap">{r.gc}</td>
-                    <td className="p-2"><AgingCell days={r.agingDays} thresholds={thresholds} /></td>
                     <td className="p-2 text-gray-400">{r.note || '—'}</td>
                   </tr>
                 ))}
-                {v.oadSites.length === 0 && <tr><td colSpan={4} className="p-4 text-center text-gray-500">No OAD sites</td></tr>}
+                {v.oadSites.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-gray-500">No OAD sites</td></tr>}
               </tbody>
             </table>
           </div>
@@ -416,7 +414,7 @@ export default function ScopTab() {
                 ))}
               </div>
               {viewIdx === 1 && <View1QuickBase dataset={dataset} />}
-              {viewIdx === 2 && <View2Pathwave dataset={dataset} thresholds={thresholds} />}
+              {viewIdx === 2 && <View2Pathwave dataset={dataset} />}
               {viewIdx === 3 && <View3Overall dataset={dataset} />}
             </div>
           )}
