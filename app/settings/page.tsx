@@ -12,6 +12,7 @@ import {
   ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, saveThresholdSettings,
   EmailSettings, loadEmailSettings, saveEmailSettings,
   DisplaySettings, DEFAULT_DISPLAY, loadDisplaySettings, saveDisplaySettings,
+  ScopSettings, DEFAULT_SCOP, loadScopSettings, saveScopSettings, SCOP_PATHWAVE_ITEM_LABELS,
 } from '../lib/settings'
 
 interface SnapshotInfo {
@@ -62,15 +63,21 @@ export default function SettingsPage() {
   const [display, setDisplay] = useState<DisplaySettings>(DEFAULT_DISPLAY)
   const [displaySaved, setDisplaySaved] = useState(false)
 
+  const [scop, setScop] = useState<ScopSettings>(DEFAULT_SCOP)
+  const [scopAliasRows, setScopAliasRows] = useState<{ raw: string; canonical: string }[]>([])
+  const [scopSaved, setScopSaved] = useState(false)
+
   const [trackerInfo, setTrackerInfo] = useState<SnapshotInfo | null>(null)
   const [spoInfo, setSpoInfo] = useState<SnapshotInfo | null>(null)
   const [crInfo, setCrInfo] = useState<SnapshotInfo | null>(null)
 
   useEffect(() => {
     const load = async () => {
-      const [p, t, e, d] = await Promise.all([
-        loadProgramSettings(), loadThresholdSettings(), loadEmailSettings(), loadDisplaySettings(),
+      const [p, t, e, d, sc] = await Promise.all([
+        loadProgramSettings(), loadThresholdSettings(), loadEmailSettings(), loadDisplaySettings(), loadScopSettings(),
       ])
+      setScop(sc)
+      setScopAliasRows(Object.entries(sc.gcAliasMap || {}).map(([raw, canonical]) => ({ raw, canonical })))
 
       // First-run convenience: seed the GC list from the known GC config
       // instead of starting from a blank table.
@@ -130,6 +137,24 @@ export default function SettingsPage() {
     await saveDisplaySettings(display)
     flash(setDisplaySaved)
   }
+
+  const saveScop = async () => {
+    const gcAliasMap = Object.fromEntries(
+      scopAliasRows
+        .filter(r => r.raw.trim() && r.canonical.trim())
+        .map(r => [r.raw.trim().toLowerCase(), r.canonical.trim()])
+    )
+    await saveScopSettings({ ...scop, gcAliasMap })
+    flash(setScopSaved)
+  }
+
+  const toggleScopPathwaveItem = (label: string) =>
+    setScop(s => ({
+      ...s,
+      pathwaveGcOwnedItems: s.pathwaveGcOwnedItems.includes(label)
+        ? s.pathwaveGcOwnedItems.filter(l => l !== label)
+        : [...s.pathwaveGcOwnedItems, label],
+    }))
 
   // Program Settings helpers
   const addPm = () => setProgram(p => ({ ...p, nokiaPMs: [...p.nokiaPMs, ''] }))
@@ -363,6 +388,107 @@ export default function SettingsPage() {
                 </div>
               </div>
               <SaveButton onClick={saveDisplay} saved={displaySaved} />
+            </SectionCard>
+
+            {/* SCOP Settings */}
+            <SectionCard title="SCOP Settings" subtitle="Site Close-Out Package tunables — see docs/scop for the rationale behind each">
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Aging — Amber after (days)</label>
+                  <input type="number" value={scop.agingColorThresholds.green}
+                    onChange={(e) => setScop(s => ({ ...s, agingColorThresholds: { ...s.agingColorThresholds, green: Number(e.target.value) || 0 } }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                  <p className="text-gray-600 text-xs mt-1">Days since Construction Complete before the number turns amber</p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Aging — Red after (days)</label>
+                  <input type="number" value={scop.agingColorThresholds.amber}
+                    onChange={(e) => setScop(s => ({ ...s, agingColorThresholds: { ...s.agingColorThresholds, amber: Number(e.target.value) || 0 } }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Email Priority Threshold (days)</label>
+                  <input type="number" value={scop.emailPriorityThresholdDays}
+                    onChange={(e) => setScop(s => ({ ...s, emailPriorityThresholdDays: Number(e.target.value) || 0 }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                  <p className="text-gray-600 text-xs mt-1">Min aging for a HOP to hit a GC email&apos;s priority callout</p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Max Priority Items Per Email</label>
+                  <input type="number" value={scop.emailPriorityCap}
+                    onChange={(e) => setScop(s => ({ ...s, emailPriorityCap: Number(e.target.value) || 0 }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">OAD Detection Keywords (comma-separated)</label>
+                  <input value={scop.oadKeywords.join(', ')}
+                    onChange={(e) => setScop(s => ({ ...s, oadKeywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean) }))}
+                    placeholder="oad"
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                  <p className="text-gray-600 text-xs mt-1">Substring match against &quot;One and Done&quot; — reclassifies In Progress → OAD</p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Tracker Header Row (blank = auto-detect)</label>
+                  <input type="number" value={scop.headerRowOverride ?? ''}
+                    onChange={(e) => setScop(s => ({ ...s, headerRowOverride: e.target.value.trim() === '' ? null : Number(e.target.value) || null }))}
+                    placeholder="auto"
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                  <p className="text-gray-600 text-xs mt-1">1-based row in the HOPs tab. Auto scans for &quot;HOP&quot; + &quot;General Contractor&quot;. Live file is row 4.</p>
+                </div>
+                <div>
+                  <label className="text-sm text-gray-300 block mb-1">Report As-Of Date Override</label>
+                  <input type="date" value={scop.asOfDateOverride ?? ''}
+                    onChange={(e) => setScop(s => ({ ...s, asOfDateOverride: e.target.value || null }))}
+                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                  <p className="text-gray-600 text-xs mt-1">Overrides &quot;today&quot; for every aging calc. Blank = real today.</p>
+                </div>
+                <div className="flex items-end">
+                  <label className="flex items-center gap-2 text-sm text-gray-300">
+                    <input type="checkbox" checked={scop.quickbaseHasGcOwnedItems}
+                      onChange={(e) => setScop(s => ({ ...s, quickbaseHasGcOwnedItems: e.target.checked }))}
+                      className="w-4 h-4" />
+                    QuickBase has GC-owned items (confirmed false)
+                  </label>
+                </div>
+              </div>
+
+              <div className="mb-6">
+                <p className="text-sm font-semibold text-gray-300 mb-2">Pathwave Items Owned by GC</p>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                  {SCOP_PATHWAVE_ITEM_LABELS.map(label => (
+                    <label key={label} className="flex items-center gap-2 text-xs text-gray-300 bg-gray-800 rounded px-2 py-1.5 border border-gray-700">
+                      <input type="checkbox" checked={scop.pathwaveGcOwnedItems.includes(label)}
+                        onChange={() => toggleScopPathwaveItem(label)} className="w-3.5 h-3.5" />
+                      {label}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-gray-600 text-xs mt-1">Checked = a GC action item on reports and emails. Asset Form + Packing Slip are Nokia-owned by default.</p>
+              </div>
+
+              <div>
+                <p className="text-sm font-semibold text-gray-300 mb-2">GC Name Aliases (raw tracker name → canonical)</p>
+                <div className="flex flex-col gap-2">
+                  {scopAliasRows.map((row, i) => (
+                    <div key={i} className="flex gap-2">
+                      <input value={row.raw} onChange={(e) => setScopAliasRows(r => r.map((x, idx) => idx === i ? { ...x, raw: e.target.value } : x))}
+                        placeholder="wavelink"
+                        className="flex-1 bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                      <span className="self-center text-gray-500">→</span>
+                      <input value={row.canonical} onChange={(e) => setScopAliasRows(r => r.map((x, idx) => idx === i ? { ...x, canonical: e.target.value } : x))}
+                        placeholder="WaveLink"
+                        className="flex-1 bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                      <button onClick={() => setScopAliasRows(r => r.filter((_, idx) => idx !== i))}
+                        className="text-red-400 hover:text-red-300 text-sm px-3">✕</button>
+                    </div>
+                  ))}
+                  <button onClick={() => setScopAliasRows(r => [...r, { raw: '', canonical: '' }])}
+                    className="self-start text-blue-400 hover:text-blue-300 text-xs font-semibold mt-1">+ Add Alias</button>
+                </div>
+                <p className="text-gray-600 text-xs mt-1">Layered on top of the GC_CONFIG roster. Seeded with the WaveLink / Viking collisions.</p>
+              </div>
+
+              <SaveButton onClick={saveScop} saved={scopSaved} />
             </SectionCard>
 
             {/* Data Management */}

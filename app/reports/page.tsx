@@ -17,6 +17,7 @@ import {
   countDroppedOffWithoutCxComplete, uniqueDecomGcNames, buildDecomCmEmailMailto, resolveGc,
 } from '../lib/decom'
 import { EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
+import ScopTab from './ScopTab'
 
 interface ReportSnapshot {
   filename: string
@@ -718,7 +719,7 @@ export default function ReportsPage() {
   const [crInfo, setCrInfo] = useState<ReportSnapshot | null>(null)
   const [decomInfo, setDecomInfo] = useState<ReportSnapshot | null>(null)
   const [uploading, setUploading] = useState<string | null>(null)
-  const [activeTab, setActiveTab] = useState<'spo-cr-decom' | 'decom-tracker'>('spo-cr-decom')
+  const [activeTab, setActiveTab] = useState<'spo-cr-decom' | 'decom-tracker' | 'scop'>('spo-cr-decom')
   const [generatingSlides, setGeneratingSlides] = useState(false)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
   const today = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
@@ -903,6 +904,11 @@ export default function ReportsPage() {
             onClick={() => setActiveTab('decom-tracker')}
             className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'decom-tracker' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
             ♻️ Decom Tracker
+          </button>
+          <button
+            onClick={() => setActiveTab('scop')}
+            className={`px-5 py-2 rounded-lg text-sm font-semibold transition-all ${activeTab === 'scop' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
+            📦 SCOP
           </button>
           <button
             onClick={() => router.push('/gr-tracker')}
@@ -1103,6 +1109,8 @@ export default function ReportsPage() {
         )}
           </>
         )}
+
+        {activeTab === 'scop' && <ScopTab />}
 
         {activeTab === 'spo-cr-decom' && (
           <>

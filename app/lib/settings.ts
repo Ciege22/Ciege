@@ -42,6 +42,37 @@ export interface DisplaySettings {
   defaultSortOrder: string
 }
 
+// SCOP (Site Close-Out Package) tunables. Additive — see
+// docs/scop/scop_settings_schema.js. The GC alias map and GC contact list
+// are deliberately NOT here; SCOP layers gcAliasMap on top of GC_CONFIG and
+// reuses EmailSettings.gcContactEmails / ccList, since a GC is the same GC
+// program-wide.
+export interface ScopSettings {
+  // Days since Construction Complete before the aging number turns amber,
+  // then red. `< green` = green, `green..<amber` = amber, `>= amber` = red.
+  agingColorThresholds: { green: number; amber: number }
+  // Min aging for a HOP to appear in a GC email's "Top Priority" callout.
+  emailPriorityThresholdDays: number
+  // Max HOPs shown in that callout (oldest first).
+  emailPriorityCap: number
+  // Case-insensitive substrings against `One and Done` that reclassify a HOP
+  // from In Progress into the separate OAD bucket.
+  oadKeywords: string[]
+  // 1-based header-row number in the uploaded tracker's HOPs tab. null = auto
+  // (scan for a row containing both "HOP" and "General Contractor").
+  headerRowOverride: number | null
+  // Overrides "today" for every aging calc. 'YYYY-MM-DD' or null (= real today).
+  asOfDateOverride: string | null
+  // Extra raw-name -> canonical-name entries, layered on top of GC_CONFIG's
+  // roster. Keyed lowercase. Seeded with the known casing collisions.
+  gcAliasMap: Record<string, string>
+  // Which of the 8 Pathwave checklist item labels count as GC action items.
+  pathwaveGcOwnedItems: string[]
+  // Confirmed false — all QuickBase items are Nokia-owned. A settings flip,
+  // not a redeploy, if that business rule ever changes.
+  quickbaseHasGcOwnedItems: boolean
+}
+
 // ─────────────────────────────────────────────
 // DEFAULTS — match the values that were hardcoded before this settings
 // page existed, so nothing changes in behavior until someone edits them.
@@ -127,6 +158,29 @@ export const DEFAULT_DISPLAY: DisplaySettings = {
   defaultSortOrder: 'trigger',
 }
 
+// SCOP checklist item labels — kept here so DEFAULT_SCOP and the settings UI
+// can reference the full 8-item Pathwave set without importing app/lib/scop.ts
+// (which pulls in the whole calc engine).
+export const SCOP_PATHWAVE_ITEM_LABELS = [
+  'Install Photos', 'Decom Photos NQR', 'Install Photos NQR',
+  'Red-Line CD', 'Decom Asset Form', 'POD', 'Asset Form', 'Packing Slip',
+]
+
+export const DEFAULT_SCOP: ScopSettings = {
+  agingColorThresholds: { green: 30, amber: 60 },
+  emailPriorityThresholdDays: 60,
+  emailPriorityCap: 5,
+  oadKeywords: ['oad'],
+  headerRowOverride: null,
+  asOfDateOverride: null,
+  gcAliasMap: { wavelink: 'WaveLink', 'viking/capital tower': 'Viking' },
+  pathwaveGcOwnedItems: [
+    'Install Photos', 'Decom Photos NQR', 'Install Photos NQR',
+    'Red-Line CD', 'Decom Asset Form', 'POD',
+  ],
+  quickbaseHasGcOwnedItems: false,
+}
+
 // ─────────────────────────────────────────────
 // LOAD / SAVE — mirrors the existing pm_updates_cache upsert/select
 // pattern used elsewhere in the app (id / updates / updated_at columns).
@@ -167,3 +221,6 @@ export const saveEmailSettings = (v: EmailSettings) => saveSection('email', v)
 
 export const loadDisplaySettings = () => loadSection('display', DEFAULT_DISPLAY)
 export const saveDisplaySettings = (v: DisplaySettings) => saveSection('display', v)
+
+export const loadScopSettings = () => loadSection('scop', DEFAULT_SCOP)
+export const saveScopSettings = (v: ScopSettings) => saveSection('scop', v)
