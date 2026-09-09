@@ -7,7 +7,8 @@ import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail } from '../lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, ScopSettings, DEFAULT_SCOP, loadScopSettings } from '../lib/settings'
+import ScopGcTab from './ScopGcTab'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 import { loadChunkedReport } from '../lib/reportChunks'
 import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, uniqueDecomGcNames, DecomRow } from '../lib/decom'
@@ -1027,12 +1028,14 @@ export default function GCCallPage() {
   const [pmSearch, setPmSearch] = useState('')
   const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
-  const [activeTab, setActiveTab] = useState<'pipeline' | 'gr' | 'decom' | 'reports'>('pipeline')
+  const [activeTab, setActiveTab] = useState<'pipeline' | 'gr' | 'decom' | 'reports' | 'scop'>('pipeline')
   const [grRows, setGrRows] = useState<GrRow[]>([])
   const [grLoaded, setGrLoaded] = useState(false)
   const [spoRawRows, setSpoRawRows] = useState<unknown[][]>([])
   const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
   const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
+  const [scopStoreRows, setScopStoreRows] = useState<unknown[][]>([])
+  const [scopSettings, setScopSettings] = useState<ScopSettings>(DEFAULT_SCOP)
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
   const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
@@ -1044,10 +1047,11 @@ export default function GCCallPage() {
 
   useEffect(() => {
     const loadSettings = async () => {
-      const [t, e, p] = await Promise.all([loadThresholdSettings(), loadEmailSettings(), loadProgramSettings()])
+      const [t, e, p, sc] = await Promise.all([loadThresholdSettings(), loadEmailSettings(), loadProgramSettings(), loadScopSettings()])
       setThresholds(t)
       setEmailSettings(e)
       setProgram(p)
+      setScopSettings(sc)
     }
     loadSettings()
   }, [])
@@ -1111,6 +1115,9 @@ export default function GCCallPage() {
 
       const decomReport = await loadChunkedReport('decom')
       if (decomReport) setDecomRawRows(decomReport.rows)
+
+      const scopReport = await loadChunkedReport('scop')
+      if (scopReport) setScopStoreRows(scopReport.rows)
     }
     loadReports()
   }, [])
@@ -2071,6 +2078,7 @@ export default function GCCallPage() {
                 { key: 'pipeline', label: 'Pipeline' },
                 { key: 'gr', label: '💰 GR / Invoicing' },
                 { key: 'decom', label: 'Decom' },
+                { key: 'scop', label: '📦 SCOP' },
                 { key: 'reports', label: 'Reports' },
               ] as const).map(t => (
                 <button key={t.key} onClick={() => setActiveTab(t.key)}
@@ -2240,6 +2248,15 @@ export default function GCCallPage() {
                 selectedGC={selectedGC}
                 decomRawRows={decomRawRows}
                 trackerRawRows={trackerRawRows}
+                emailSettings={emailSettings}
+              />
+            )}
+
+            {activeTab === 'scop' && (
+              <ScopGcTab
+                selectedGC={selectedGC}
+                storeRows={scopStoreRows}
+                scopSettings={scopSettings}
                 emailSettings={emailSettings}
               />
             )}
