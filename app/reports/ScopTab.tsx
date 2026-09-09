@@ -15,6 +15,7 @@ import {
   pathwaveGcItems, QUICKBASE_ALL_ITEMS, agingColor, ScopGcReport,
 } from '../lib/scop'
 import { buildScopMasterWorkbook, buildScopGcReportWorkbook, downloadWorkbook } from '../lib/scopReport'
+import { buildScopDeck } from '../lib/scopDeck'
 
 // Deck design tokens (spec §4) — no red in card/section colors; red is only
 // the aging number in tables.
@@ -386,11 +387,24 @@ export default function ScopTab() {
                 <span className="ml-2 text-amber-400">· as-of {fmtDate(calc.asOfDate)} (override)</span>
               )}
             </p>
-            <button
-              onClick={() => downloadWorkbook(buildScopMasterWorkbook(dataset, calc), `SCOP_Master_Report_${today}.xlsx`)}
-              className="rounded-lg bg-green-700 px-3 py-1.5 text-xs font-semibold hover:bg-green-600">
-              ⬇️ Export Master Report (.xlsx)
-            </button>
+            <div className="flex flex-wrap gap-2">
+              <button
+                onClick={() => downloadWorkbook(buildScopMasterWorkbook(dataset, calc), `SCOP_Master_Report_${today}.xlsx`)}
+                className="rounded-lg bg-green-700 px-3 py-1.5 text-xs font-semibold hover:bg-green-600">
+                ⬇️ Export Master Report (.xlsx)
+              </button>
+              <button
+                onClick={() => buildScopDeck({
+                  totalNokiaHops: dataset.length,
+                  constructionComplete: ov.trackedTotal,
+                  notYetConstructed: dataset.length - ov.trackedTotal,
+                  qbView: qbv, pwView: pw, overallView: ov,
+                  generatedDate: calc.asOfDate,
+                }, `SCOP_Status_Deck_${today}.pptx`)}
+                className="rounded-lg bg-purple-700 px-3 py-1.5 text-xs font-semibold hover:bg-purple-600">
+                ⬇️ Export Status Deck (.pptx)
+              </button>
+            </div>
           </div>
 
           {/* sub-tabs */}

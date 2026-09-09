@@ -38,8 +38,9 @@ function sheetFromAoA(aoa: (string | number)[][], colWidths?: number[]): XLSX.Wo
 
 // Simple-list tabs (Outstanding, Pathwave Complete, QuickBase Complete, Fully Complete)
 const SIMPLE_HEADERS = ['HOP', 'Path ID', 'GC', 'CM', 'Near Site A', 'Far Site B']
-function simpleListAoA(rows: ScopRow[]): (string | number)[][] {
+function simpleListAoA(title: string, rows: ScopRow[]): (string | number)[][] {
   return [
+    [title], [],
     SIMPLE_HEADERS,
     ...rows.map(r => [r.hop, r.pathId, r.gc ?? '', r.cm, r.nearSiteA, r.farSiteB]),
   ]
@@ -47,8 +48,9 @@ function simpleListAoA(rows: ScopRow[]): (string | number)[][] {
 
 // Itemized tabs (Pathwave Pending, QuickBase Pending)
 const ITEMIZED_HEADERS = ['HOP', 'Path ID', 'GC', 'CM', 'Near Site A', 'Far Site B', 'Site', 'Days Since Complete', 'Missing Items']
-function itemizedAoA(rows: ReturnType<typeof buildItemizedMissingItems>): (string | number)[][] {
+function itemizedAoA(title: string, subtitle: string, rows: ReturnType<typeof buildItemizedMissingItems>): (string | number)[][] {
   return [
+    [title], [subtitle], [],
     ITEMIZED_HEADERS,
     ...rows.map(r => [
       r.hop, r.pathId, r.gc ?? '', r.cm, r.nearSiteA, r.farSiteB,
@@ -58,8 +60,10 @@ function itemizedAoA(rows: ReturnType<typeof buildItemizedMissingItems>): (strin
 }
 
 /**
- * The 9-tab Master SCOP Report. `dataset` is the full classified set (all
- * Nokia rows, not just GC-facing). Cross-foots to the spec §10 baseline.
+ * The 9-tab Master SCOP Report — tab order, column sets, titles and the
+ * Filter Cheat Sheet mirror docs/scop/build_scop_master_report.py (the tested
+ * openpyxl reference). Cross-foots to the spec §10 baseline. Extra cross-foot
+ * OK/MISMATCH rows are appended to the Summary tab as a build-check aid.
  */
 export function buildScopMasterWorkbook(dataset: ScopRow[], s: ScopCalcSettings): XLSX.WorkBook {
   const wb = XLSX.utils.book_new()
@@ -70,102 +74,102 @@ export function buildScopMasterWorkbook(dataset: ScopRow[], s: ScopCalcSettings)
 
   // ── Tab 1: Summary ────────────────────────────────────────────────────────
   const summaryAoA: (string | number)[][] = [
-    [`SCOP Master Report — as of ${todayStr}`],
+    ['SCOP Master Report — Summary'],
+    [`Generated ${todayStr}`],
     [],
     ['Metric', 'Count'],
     ['Total Nokia HOPs', dataset.length],
     ['Construction Complete (tracked)', ov.trackedTotal],
-    ['Pending HOP Completion', pw.pendingHopCompletion],
-    [],
-    ['PATHWAVE', ''],
-    ['Complete & Approved', pw.complete],
-    ['In Progress — GC Action', pw.inProgress],
-    ['OAD — Tracked Separately', pw.oad],
-    ['Pathwave Pending (In Progress + OAD, View 3)', ov.pathwavePending],
-    [],
-    ['QUICKBASE', ''],
-    ['Complete', qb.complete],
-    ['Pending', qb.pending],
-    ['% Complete (of tracked)', `${qb.percentComplete}%`],
-    [],
-    ['OVERALL', ''],
-    ['Fully Complete (both, within tracked)', ov.fullyComplete],
-    ['Not Yet Fully Complete (within tracked)', ov.notFullyComplete],
+    ['Outstanding (not yet construction complete)', dataset.length - ov.trackedTotal],
+    ['Pathwave — Complete', pw.complete],
+    ['Pathwave — In Progress (true GC action, excl. OAD)', pw.inProgress],
+    ['Pathwave — OAD (tracked separately)', pw.oad],
+    ['QuickBase — Complete', qb.complete],
+    ['QuickBase — Pending', qb.pending],
+    ['Fully Complete (both Pathwave + QuickBase)', ov.fullyComplete],
     [],
     ['Cross-foot check', ''],
-    ['Pathwave 4-way = Total?', pw.complete + pw.inProgress + pw.oad + pw.pendingHopCompletion === dataset.length ? 'OK' : 'MISMATCH'],
-    ['QuickBase C+P = Tracked?', qb.complete + qb.pending === ov.trackedTotal ? 'OK' : 'MISMATCH'],
-    ['Pathwave C+Pending = Tracked?', ov.pathwaveComplete + ov.pathwavePending === ov.trackedTotal ? 'OK' : 'MISMATCH'],
+    ['Pathwave 4-way = Total', pw.complete + pw.inProgress + pw.oad + pw.pendingHopCompletion === dataset.length ? 'OK' : 'MISMATCH'],
+    ['QuickBase Complete + Pending = Tracked', qb.complete + qb.pending === ov.trackedTotal ? 'OK' : 'MISMATCH'],
+    ['Pathwave Complete + Pending = Tracked', ov.pathwaveComplete + ov.pathwavePending === ov.trackedTotal ? 'OK' : 'MISMATCH'],
   ]
-  XLSX.utils.book_append_sheet(wb, sheetFromAoA(summaryAoA, [42, 12]), 'Summary')
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(summaryAoA, [46, 14]), 'Summary')
 
   // ── Tab 2: Outstanding List ──────────────────────────────────────────────
   const outstanding = dataset.filter(r => !r.isConstructionComplete)
-  XLSX.utils.book_append_sheet(wb, sheetFromAoA(simpleListAoA(outstanding)), 'Outstanding List')
+  XLSX.utils.book_append_sheet(
+    wb, sheetFromAoA(simpleListAoA('Outstanding — Not Yet Construction Complete', outstanding)), 'Outstanding List',
+  )
 
   // ── Tab 3: Pathwave Pending (itemized, excludes OAD) ──────────────────────
   const pathwaveInProgress = dataset.filter(r => r.pathwaveStatus === 'IN_PROGRESS')
   const pathwavePendingItemized = buildItemizedMissingItems(pathwaveInProgress, pathwaveGcItems(s))
-  XLSX.utils.book_append_sheet(wb, sheetFromAoA(itemizedAoA(pathwavePendingItemized)), 'Pathwave Pending')
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(itemizedAoA(
+    'Pathwave — Pending Items (GC-Owned, Action Needed)',
+    'Sorted oldest-first (highest days since construction complete) — clean up the top rows first',
+    pathwavePendingItemized,
+  )), 'Pathwave Pending')
 
   // ── Tab 4: Pathwave Complete ─────────────────────────────────────────────
-  XLSX.utils.book_append_sheet(
-    wb, sheetFromAoA(simpleListAoA(dataset.filter(r => r.pathwaveStatus === 'COMPLETE'))), 'Pathwave Complete',
-  )
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(simpleListAoA(
+    'Pathwave — Complete (Pending Viaero Approval)',
+    dataset.filter(r => r.pathwaveStatus === 'COMPLETE'),
+  )), 'Pathwave Complete')
 
   // ── Tab 4a: Pathwave OAD Sites ───────────────────────────────────────────
-  const oadAoA: (string | number)[][] = [
-    ['HOP', 'Path ID', 'GC', 'CM', 'Near Site A', 'Far Site B', 'Days Since Complete', 'Note (One and Done, verbatim)'],
-    ...pw.oadSites.map(r => [r.hop, r.pathId, r.gc ?? '', r.cm, '', '', r.agingDays ?? '', r.note]),
-  ]
-  // oadSites doesn't carry Near/Far — pull them from the dataset by HOP.
+  const oadHeaders = ['HOP', 'Path ID', 'GC', 'CM', 'Near Site A', 'Far Site B', 'Days Since Complete', 'Note']
   const siteByHop = new Map(dataset.map(r => [r.hop, r]))
-  for (let i = 1; i < oadAoA.length; i++) {
-    const src = siteByHop.get(String(oadAoA[i][0]))
-    if (src) { oadAoA[i][4] = src.nearSiteA; oadAoA[i][5] = src.farSiteB }
-  }
-  XLSX.utils.book_append_sheet(wb, sheetFromAoA(oadAoA, [28, 16, 14, 14, 22, 22, 16, 48]), 'Pathwave OAD Sites')
+  const oadAoA: (string | number)[][] = [
+    ['Pathwave — OAD Sites (Awaiting OAD, Not a GC Checklist Item)'],
+    ['Sorted oldest-first. These sites are blocked on OAD, not on GC-submitted checklist items.'],
+    [],
+    oadHeaders,
+    ...pw.oadSites.map(r => {
+      const src = siteByHop.get(r.hop)
+      return [r.hop, r.pathId, r.gc ?? '', r.cm, src?.nearSiteA ?? '', src?.farSiteB ?? '', r.agingDays ?? '', r.note]
+    }),
+  ]
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(oadAoA, [28, 16, 14, 12, 22, 22, 16, 44]), 'Pathwave OAD Sites')
 
-  // ── Tab 5: QuickBase Pending (Nokia-internal, all 10 items, no OAD carve-out)
+  // ── Tab 5: QuickBase Pending (Nokia-internal, all QuickBase items, no OAD carve-out)
   const qbPending = dataset.filter(r => r.quickbaseStatus === 'PENDING')
   const qbPendingItemized = buildItemizedMissingItems(qbPending, QUICKBASE_ALL_ITEMS)
-  const qbSheet = sheetFromAoA([
-    ['QuickBase — Pending Items (Nokia-Internal, NOT a GC Action Item — do not send to a GC)'],
-    [],
-    ...itemizedAoA(qbPendingItemized),
-  ])
-  XLSX.utils.book_append_sheet(wb, qbSheet, 'QuickBase Pending')
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(itemizedAoA(
+    'QuickBase — Pending Items (Nokia-Internal, NOT a GC Action Item)',
+    'All QuickBase items are Nokia-owned. This list is for internal engineering tracking only — never send to a GC. Sorted oldest-first.',
+    qbPendingItemized,
+  )), 'QuickBase Pending')
 
   // ── Tab 6: QuickBase Complete ───────────────────────────────────────────
-  XLSX.utils.book_append_sheet(
-    wb, sheetFromAoA(simpleListAoA(dataset.filter(r => r.quickbaseStatus === 'COMPLETE'))), 'QuickBase Complete',
-  )
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(simpleListAoA(
+    'QuickBase — Complete', dataset.filter(r => r.quickbaseStatus === 'COMPLETE'),
+  )), 'QuickBase Complete')
 
   // ── Tab 7: Fully Complete ───────────────────────────────────────────────
-  XLSX.utils.book_append_sheet(
-    wb, sheetFromAoA(simpleListAoA(dataset.filter(r => r.fullyComplete))), 'Fully Complete',
-  )
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(simpleListAoA(
+    'Fully Complete — Both Pathwave & QuickBase Done (Ready for Viaero Approval)',
+    dataset.filter(r => r.fullyComplete),
+  )), 'Fully Complete')
 
   // ── Tab 8: Filter Cheat Sheet ──────────────────────────────────────────
+  // Wording mirrors the openpyxl reference. No cell value starts with "=".
   const cheat: (string | number)[][] = [
-    ['SCOP Filter Cheat Sheet — how each list above is derived'],
+    ['Filter Cheat Sheet — How to Rebuild These Lists Manually'],
     [],
-    ['List', 'Column', 'Condition'],
-    ['Scope', 'Service provider', 'Exact value "Nokia" (case-insensitive, trimmed). Resolve by NAME not letter — position drifts.'],
-    ['Cancelled excluded', 'any checklist column', 'Row dropped if any checklist cell contains "CXLD".'],
-    ['Master gate', 'Construction Complete Actual', 'Has a real calendar date (parsed; a bare 00:00:00 / pre-1990 value counts as blank).'],
-    ['Pending HOP Completion', 'Construction Complete Actual', 'No valid date.'],
-    ['Pathwave Complete', 'One and Done', 'Value starts with "complete" (case-insensitive).'],
-    ['Pathwave OAD', 'One and Done', 'Construction complete, not "complete", and text contains "oad" (substring, case-insensitive).'],
-    ['Pathwave In Progress', 'One and Done', 'Construction complete, not "complete", not OAD.'],
-    ['QuickBase Complete', 'Nokia Quickbase Deliverable Status', 'Value starts with "complete" (case-insensitive).'],
-    ['QuickBase Pending', 'Nokia Quickbase Deliverable Status', 'Construction complete, value does not start with "complete". OAD carve-out does NOT apply here.'],
-    ['Fully Complete', 'both status fields', 'Construction complete AND Pathwave Complete AND QuickBase Complete.'],
-    ['Days Since Complete', 'Construction Complete Actual', '(as-of date) minus the date, in whole days. Sort itemized lists oldest-first.'],
-    ['GC-owned Pathwave items', 'n/a', 'Install Photos, Decom Photos NQR, Install Photos NQR, Red-Line CD, Decom Asset Form, POD. Asset Form + Packing Slip are Nokia-owned.'],
-    ['GC-owned QuickBase items', 'n/a', 'None — all QuickBase items are Nokia-owned. QuickBase never appears on a GC-facing report or email.'],
+    ['List', 'Filter On', 'Condition'],
+    ['Scope (which HOPs are yours)', 'Column "Service provider" (position may shift — filter by column NAME, not letter)', 'Exact value "Nokia" (case-insensitive)'],
+    ['Outstanding (not built yet)', 'Column P — Construction Complete Actual', 'Blank / no valid date'],
+    ['Construction-complete (tracked universe)', 'Column P — Construction Complete Actual', 'Has a valid date'],
+    ['Pathwave — OAD (separate from Pending)', 'Column S — One and Done', 'Contains "OAD" anywhere, case-insensitive AND Column P has a date. Check BEFORE "Pending" below.'],
+    ['Pathwave — Pending (true GC action)', 'Column S — One and Done', 'Does NOT start with "Complete" AND does NOT contain "OAD" AND Column P has a date'],
+    ['Pathwave — Complete', 'Column S — One and Done', 'Starts with "Complete" AND Column P has a date'],
+    ['QuickBase — Pending (Nokia-internal only)', 'Column BT — Nokia Quickbase Deliverable Status', 'Does NOT start with "Complete" AND Column P has a date. ALL QuickBase items are Nokia-owned — never GC-facing.'],
+    ['QuickBase — Complete', 'Column BT — Nokia Quickbase Deliverable Status', 'Starts with "Complete" AND Column P has a date'],
+    ['Fully Complete (approvals-ready)', 'Columns S + BT together', 'Both start with Complete AND Column P has a date'],
+    ['Pathwave GC action items (weekly report)', 'Hard-coded item list', '6 of 8 Pathwave items: excludes Asset Form & Packing Slip (Nokia-owned).'],
+    ['QuickBase GC action items', 'N/A', 'NONE. All QuickBase items are Nokia-owned. Never appears on a GC report or email.'],
   ]
-  XLSX.utils.book_append_sheet(wb, sheetFromAoA(cheat, [22, 30, 90]), 'Filter Cheat Sheet')
+  XLSX.utils.book_append_sheet(wb, sheetFromAoA(cheat, [32, 40, 56]), 'Filter Cheat Sheet')
 
   return wb
 }
