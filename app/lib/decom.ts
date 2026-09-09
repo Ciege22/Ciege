@@ -129,9 +129,19 @@ export function parseDropOff(raw: unknown): { date: Date | null; comment: string
   return { date: null, comment: str }
 }
 
-function parseYesNo(val: unknown): boolean {
+// "POD In Pathwave" / "POD In QuickBase": "Yes" means the signed POD is on
+// file. "NA" / "N/A" means no POD is required for this site at all — there's
+// no equipment to decom, so there's nothing for Pathwave/QuickBase to sign
+// off (confirmed by CJ on a GC call). Treat NA the same as done, so the site
+// stops showing a POD gap and stops aging against the GC. Blank or "No" is
+// still a genuine gap.
+const POD_NA_VALUES = new Set(['na', 'n/a', 'n\\a', 'n.a.', 'not applicable'])
+function isPodNa(val: unknown): boolean {
+  return POD_NA_VALUES.has(String(val || '').trim().toLowerCase())
+}
+function parsePodDone(val: unknown): boolean {
   const s = String(val || '').trim().toLowerCase()
-  return s === 'yes' || s === 'y' || s === 'true'
+  return s === 'yes' || s === 'y' || s === 'true' || POD_NA_VALUES.has(s)
 }
 
 // GC matching reuses the existing GC_CONFIG alias table (same one SPO/CR
@@ -247,8 +257,13 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     const dropOffDate = yearOk(dropOffParsed.date) ? dropOffParsed.date : null
     const comment = dropOffParsed.comment
 
-    const podPathwave = parseYesNo(row[podPathwaveCol])
-    const podQuickBase = parseYesNo(row[podQuickBaseCol])
+    const podPathwave = parsePodDone(row[podPathwaveCol])
+    const podQuickBase = parsePodDone(row[podQuickBaseCol])
+    // "NA" in POD In Pathwave = this site has no decom to do at all (handled
+    // by another vendor, or Viaero waived it) — nothing for the GC to drop
+    // off or POD, so it's closed out, not aging. Confirmed by CJ on a GC
+    // call. Takes precedence over the drop-off / aging branch below.
+    const noDecomRequired = isPodNa(row[podPathwaveCol])
 
     const gc = resolveGc(String(row[gcCol] ?? ''), String(row[cgCol] ?? ''))
 
@@ -256,9 +271,11 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     // rows without CX Complete are excluded above before this runs.
     const aging = daysBetween(cxComplete, today)
 
-    const status: DecomRow['status'] = dropOffDate
-      ? ((podPathwave && podQuickBase) ? 'complete' : 'pod_gap')
-      : (aging >= 7 ? 'outstanding' : 'pending')
+    const status: DecomRow['status'] = noDecomRequired
+      ? 'complete'
+      : dropOffDate
+        ? ((podPathwave && podQuickBase) ? 'complete' : 'pod_gap')
+        : (aging >= 7 ? 'outstanding' : 'pending')
 
     const pathId = String(row[pathIdCol] ?? '').trim()
     const siteName = String(row[siteNameCol] ?? '').trim()
