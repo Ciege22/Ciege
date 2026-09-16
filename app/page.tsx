@@ -230,13 +230,38 @@ function hasValidMs16a(ms16a: string): boolean {
 // HOP name itself. Add to this list as more come up.
 const NEBRASKA_EXTRA_HOPS = new Set(['WY-TORRINGTON_SOUTH-WY-TORRINGTON_DT'])
 
-// Deliberately takes only the two fields it needs (not the full hopDetails
-// row shape, which is declared inline inside the Home component below) —
-// hopDetails structurally satisfies this narrower shape.
-function NebraskaWidget({ hopDetails }: { hopDetails: { hop: string; ms16a: string }[] }) {
+// Shared row shape for hopDetails — named at module scope (rather than
+// inferred inline inside Home, as before) so NebraskaWidget can be typed
+// against the same shape the dashboard's own HOP-list modal renders, instead
+// of the narrower { hop, ms16a } slice it used to take. The modal table
+// already has FC Start / FC End columns (ms15f / ms16f) — reusing it here is
+// what makes "click the widget, see FC Start + Forecasted Completion" free.
+interface HopDetail {
+  hop: string, gc: string, nokiaPm: string,
+  ms15f: string, ms15a: string, ms16f: string, ms16a: string,
+  hasNtp: boolean, ntpWaitingOn: string,
+  hasMat: boolean, hasSpo: boolean, hasCpo: boolean,
+  daysOut: number | null, daysElapsed: number | null,
+  inProgress: boolean, complete: boolean, over18d: boolean,
+  startingThisWeek: boolean, ntpUrgent: boolean,
+  cutSpoNow: boolean, spoNeeded: boolean,
+  materialWatch: boolean, vendorConflict: boolean,
+  currentMonthFc: boolean, currentMonthAct: boolean,
+}
+
+// Clicking the widget opens the same "sites" modal every other dashboard tile
+// uses (title + HOP table with FC Start/FC End/AC Start/AC End/NTP/Mat/SPO
+// columns) — onOpenModal is Home's setModalTitle/setModalHops/setShowModal
+// trio, called directly (not through openModal) so the list stays unfiltered
+// by pmFilter, matching what the widget itself counts.
+function NebraskaWidget({ hopDetails, onOpenModal }: {
+  hopDetails: HopDetail[]
+  onOpenModal: (title: string, hops: HopDetail[]) => void
+}) {
   const neHops = hopDetails.filter(h => h.hop.toUpperCase().includes('NE-') || NEBRASKA_EXTRA_HOPS.has(h.hop))
   const total = neHops.length
-  const remaining = neHops.filter(h => !hasValidMs16a(h.ms16a)).length
+  const remainingHops = neHops.filter(h => !hasValidMs16a(h.ms16a))
+  const remaining = remainingHops.length
   const complete = total - remaining
   const progress = total > 0 ? Math.round((complete / total) * 100) : 0
   const daysRemaining = daysUntilNebraskaDeadline()
@@ -245,8 +270,9 @@ function NebraskaWidget({ hopDetails }: { hopDetails: { hop: string; ms16a: stri
 
   return (
     <div
-      title="Nebraska program deadline: Nov 30, 2026"
-      className="flex items-center gap-4 rounded-xl border px-6 py-4 bg-black/20 backdrop-blur-sm flex-shrink-0"
+      onClick={() => onOpenModal('Nebraska Deadline — Remaining HOPs (FC Start / FC End)', remainingHops)}
+      title="Nebraska program deadline: Nov 30, 2026 — click for the remaining HOPs"
+      className="flex items-center gap-4 rounded-xl border px-6 py-4 bg-black/20 backdrop-blur-sm flex-shrink-0 cursor-pointer hover:bg-black/30 transition-colors"
       style={{ borderColor: color }}
     >
       <MicrowaveDishIcon />
@@ -292,18 +318,7 @@ export default function Home() {
   const [modalTitle, setModalTitle] = useState('')
   const [modalHops, setModalHops] = useState<unknown[]>([])
   const [showModal, setShowModal] = useState(false)
-  const [hopDetails, setHopDetails] = useState<{
-    hop: string, gc: string, nokiaPm: string,
-    ms15f: string, ms15a: string, ms16f: string, ms16a: string,
-    hasNtp: boolean, ntpWaitingOn: string,
-    hasMat: boolean, hasSpo: boolean, hasCpo: boolean,
-    daysOut: number | null, daysElapsed: number | null,
-    inProgress: boolean, complete: boolean, over18d: boolean,
-    startingThisWeek: boolean, ntpUrgent: boolean,
-    cutSpoNow: boolean, spoNeeded: boolean,
-    materialWatch: boolean, vendorConflict: boolean,
-    currentMonthFc: boolean, currentMonthAct: boolean,
-  }[]>([])
+  const [hopDetails, setHopDetails] = useState<HopDetail[]>([])
   const [pmFilter, setPmFilter] = useState<string>('ALL')
   const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
   const [snapshots, setSnapshots] = useState<{hop_count: number, uploaded_at: string}[]>([])
@@ -1325,7 +1340,10 @@ export default function Home() {
                 </div>
 
                 <div className="flex flex-row items-center gap-5">
-                  <NebraskaWidget hopDetails={hopDetails} />
+                  <NebraskaWidget
+                    hopDetails={hopDetails}
+                    onOpenModal={(title, hops) => { setModalTitle(title); setModalHops(hops); setShowModal(true) }}
+                  />
                   <img
                     src="/hylian-crest.png"
                     alt="Hylian Crest"
