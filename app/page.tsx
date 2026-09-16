@@ -288,6 +288,180 @@ function NebraskaWidget({ hopDetails, onOpenModal }: {
   )
 }
 
+// ─── Sites modal — the shared HOP-list popup every dashboard tile (KPI
+// cards, focus items, the Nebraska widget) opens via setModalTitle/
+// setModalHops/setShowModal. Each column header doubles as a sort toggle and
+// carries its own filter control, for "quick isolated views" ad hoc per open
+// — mirrors the Tracker grid's per-column filter/sort concept, just a
+// lighter self-contained version scoped to this one popup instead of a
+// saved-view system.
+type ModalSortDir = 'asc' | 'desc'
+type ModalColKind = 'text' | 'date' | 'bool' | 'spo'
+
+interface ModalCol {
+  key: string
+  label: string
+  kind: ModalColKind
+  get: (h: HopDetail) => string   // display text; also the text/date filter + sort source
+  getBool?: (h: HopDetail) => boolean
+}
+
+const MODAL_COLUMNS: ModalCol[] = [
+  { key: 'hop', label: 'HOP', kind: 'text', get: h => h.hop },
+  { key: 'gc', label: 'GC', kind: 'text', get: h => h.gc },
+  { key: 'nokiaPm', label: 'Nokia PM', kind: 'text', get: h => h.nokiaPm },
+  { key: 'ms15f', label: 'FC Start', kind: 'date', get: h => h.ms15f },
+  { key: 'ms15a', label: 'AC Start', kind: 'date', get: h => h.ms15a },
+  { key: 'ms16f', label: 'FC End', kind: 'date', get: h => h.ms16f },
+  { key: 'ms16a', label: 'AC End', kind: 'date', get: h => h.ms16a },
+  { key: 'hasNtp', label: 'NTP', kind: 'bool', get: h => (h.hasNtp ? 'Yes' : 'No'), getBool: h => h.hasNtp },
+  { key: 'ntpWaitingOn', label: 'NTP Waiting On', kind: 'text', get: h => h.ntpWaitingOn },
+  { key: 'hasMat', label: 'Mat', kind: 'bool', get: h => (h.hasMat ? 'Yes' : 'No'), getBool: h => h.hasMat },
+  { key: 'spo', label: 'SPO', kind: 'spo', get: h => (h.hasSpo ? 'Issued' : h.hasCpo ? 'CPO' : 'Missing') },
+]
+
+function modalDateValue(text: string): number | null {
+  if (!text) return null
+  const t = new Date(text.trim()).getTime()
+  return isNaN(t) ? null : t
+}
+
+function modalSpoRank(h: HopDetail): number {
+  return h.hasSpo ? 2 : h.hasCpo ? 1 : 0
+}
+
+function modalRowMatches(h: HopDetail, col: ModalCol, filterVal: string): boolean {
+  if (!filterVal) return true
+  if (col.kind === 'bool') return filterVal === 'yes' ? !!col.getBool?.(h) : !col.getBool?.(h)
+  if (col.kind === 'spo') {
+    const rank = modalSpoRank(h)
+    return filterVal === 'issued' ? rank === 2 : filterVal === 'cpo' ? rank === 1 : rank === 0
+  }
+  return col.get(h).toLowerCase().includes(filterVal.toLowerCase())
+}
+
+function HopsModal({ title, hops, onClose }: { title: string; hops: HopDetail[]; onClose: () => void }) {
+  const [filters, setFilters] = useState<Record<string, string>>({})
+  const [sortKey, setSortKey] = useState<string | null>(null)
+  const [sortDir, setSortDir] = useState<ModalSortDir>('asc')
+
+  const toggleSort = (key: string) => {
+    if (sortKey !== key) { setSortKey(key); setSortDir('asc'); return }
+    if (sortDir === 'asc') { setSortDir('desc'); return }
+    setSortKey(null)
+  }
+
+  const activeFilterCount = Object.values(filters).filter(Boolean).length
+  const clearAll = () => { setFilters({}); setSortKey(null) }
+
+  const visible = MODAL_COLUMNS.reduce((rows, col) => rows.filter(h => modalRowMatches(h, col, filters[col.key] || '')), hops)
+
+  const sortCol = sortKey ? MODAL_COLUMNS.find(c => c.key === sortKey) : null
+  if (sortCol) {
+    const dirMul = sortDir === 'asc' ? 1 : -1
+    visible.sort((a, b) => {
+      // Blank dates always sort to the end, independent of direction —
+      // "no FC End yet" isn't meaningfully before or after any real date.
+      if (sortCol.kind === 'date') {
+        const da = modalDateValue(sortCol.get(a))
+        const db = modalDateValue(sortCol.get(b))
+        if (da === null && db === null) return 0
+        if (da === null) return 1
+        if (db === null) return -1
+        return (da - db) * dirMul
+      }
+      let cmp: number
+      if (sortCol.kind === 'bool') cmp = Number(sortCol.getBool?.(a)) - Number(sortCol.getBool?.(b))
+      else if (sortCol.kind === 'spo') cmp = modalSpoRank(a) - modalSpoRank(b)
+      else cmp = sortCol.get(a).localeCompare(sortCol.get(b))
+      return cmp * dirMul
+    })
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-6xl max-h-[80vh] flex flex-col mx-4" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+          <h2 className="text-white font-semibold text-lg">
+            {title}{' '}
+            <span className="text-gray-400 text-sm ml-2">
+              ({visible.length === hops.length ? `${hops.length} sites` : `${visible.length} of ${hops.length} sites`})
+            </span>
+          </h2>
+          <div className="flex items-center gap-3">
+            {(activeFilterCount > 0 || sortKey) && (
+              <button onClick={clearAll} className="text-gray-400 hover:text-white text-xs underline">✕ Clear filters/sort</button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          </div>
+        </div>
+        <div className="overflow-auto flex-1">
+          {hops.length === 0 ? (
+            <p className="text-gray-500 text-center py-10">No sites match this filter.</p>
+          ) : (
+            <table className="w-full text-xs text-left">
+              <thead className="sticky top-0 bg-gray-800 text-gray-400 z-10">
+                <tr>
+                  {MODAL_COLUMNS.map(col => (
+                    <th key={col.key} className="px-3 py-2 align-top font-normal">
+                      <button onClick={() => toggleSort(col.key)}
+                        className="flex items-center gap-1 font-semibold text-gray-300 hover:text-white whitespace-nowrap">
+                        {col.label}
+                        {sortKey === col.key && <span className="text-blue-400">{sortDir === 'asc' ? '▲' : '▼'}</span>}
+                      </button>
+                      <div className="mt-1">
+                        {col.kind === 'bool' ? (
+                          <select value={filters[col.key] || ''} onChange={e => setFilters(f => ({ ...f, [col.key]: e.target.value }))}
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-300 text-xs focus:outline-none focus:border-blue-500">
+                            <option value="">All</option>
+                            <option value="yes">✓</option>
+                            <option value="no">✗</option>
+                          </select>
+                        ) : col.kind === 'spo' ? (
+                          <select value={filters[col.key] || ''} onChange={e => setFilters(f => ({ ...f, [col.key]: e.target.value }))}
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-gray-300 text-xs focus:outline-none focus:border-blue-500">
+                            <option value="">All</option>
+                            <option value="issued">✓ Issued</option>
+                            <option value="cpo">CPO</option>
+                            <option value="missing">✗ Missing</option>
+                          </select>
+                        ) : (
+                          <input value={filters[col.key] || ''} onChange={e => setFilters(f => ({ ...f, [col.key]: e.target.value }))}
+                            placeholder="filter…"
+                            className="w-full bg-gray-900 border border-gray-700 rounded px-1.5 py-0.5 text-gray-300 text-xs placeholder-gray-600 focus:outline-none focus:border-blue-500" />
+                        )}
+                      </div>
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {visible.length === 0 ? (
+                  <tr><td colSpan={MODAL_COLUMNS.length} className="px-3 py-10 text-center text-gray-500">No sites match the current filters.</td></tr>
+                ) : visible.map((h, i) => (
+                  <tr key={h.hop + i} className={i % 2 === 0 ? 'bg-gray-900' : 'bg-gray-850'}>
+                    <td className="px-3 py-1.5 font-mono text-white">{h.hop}</td>
+                    <td className="px-3 py-1.5 text-gray-300">{h.gc}</td>
+                    <td className="px-3 py-1.5 text-gray-300">{h.nokiaPm}</td>
+                    <td className="px-3 py-1.5 text-gray-400">{h.ms15f}</td>
+                    <td className="px-3 py-1.5 text-blue-400">{h.ms15a}</td>
+                    <td className="px-3 py-1.5 text-gray-400">{h.ms16f}</td>
+                    <td className="px-3 py-1.5 text-teal-400">{h.ms16a}</td>
+                    <td className="px-3 py-1.5">{h.hasNtp ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+                    <td className="px-3 py-1.5 text-gray-400 max-w-[180px] truncate">{h.ntpWaitingOn}</td>
+                    <td className="px-3 py-1.5">{h.hasMat ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+                    <td className="px-3 py-1.5">{h.hasSpo ? <span className="text-green-400">✓</span> : h.hasCpo ? <span className="text-yellow-400">CPO</span> : <span className="text-red-400">✗</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function Home() {
   const router = useRouter()
   const [snapshotInfo, setSnapshotInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
@@ -316,7 +490,7 @@ export default function Home() {
     currentMonthActComplete: number
   } | null>(null)
   const [modalTitle, setModalTitle] = useState('')
-  const [modalHops, setModalHops] = useState<unknown[]>([])
+  const [modalHops, setModalHops] = useState<HopDetail[]>([])
   const [showModal, setShowModal] = useState(false)
   const [hopDetails, setHopDetails] = useState<HopDetail[]>([])
   const [pmFilter, setPmFilter] = useState<string>('ALL')
@@ -1913,56 +2087,9 @@ export default function Home() {
         </div>
       </div>
 
-      {/* KPI Drill-Down Modal */}
+      {/* KPI Drill-Down Modal — sortable/filterable per column, see HopsModal above */}
       {showModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowModal(false)}>
-          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-5xl max-h-[80vh] flex flex-col mx-4" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
-              <h2 className="text-white font-semibold text-lg">{modalTitle} <span className="text-gray-400 text-sm ml-2">({(modalHops as typeof hopDetails).length} sites)</span></h2>
-              <button onClick={() => setShowModal(false)} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
-            </div>
-            <div className="overflow-auto flex-1">
-              {(modalHops as typeof hopDetails).length === 0 ? (
-                <p className="text-gray-500 text-center py-10">No sites match this filter.</p>
-              ) : (
-                <table className="w-full text-xs text-left">
-                  <thead className="sticky top-0 bg-gray-800 text-gray-400">
-                    <tr>
-                      <th className="px-3 py-2">HOP</th>
-                      <th className="px-3 py-2">GC</th>
-                      <th className="px-3 py-2">Nokia PM</th>
-                      <th className="px-3 py-2">FC Start</th>
-                      <th className="px-3 py-2">AC Start</th>
-                      <th className="px-3 py-2">FC End</th>
-                      <th className="px-3 py-2">AC End</th>
-                      <th className="px-3 py-2">NTP</th>
-                      <th className="px-3 py-2">NTP Waiting On</th>
-                      <th className="px-3 py-2">Mat</th>
-                      <th className="px-3 py-2">SPO</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {(modalHops as typeof hopDetails).map((h, i) => (
-                      <tr key={i} className={i % 2 === 0 ? 'bg-gray-900' : 'bg-gray-850'}>
-                        <td className="px-3 py-1.5 font-mono text-white">{h.hop}</td>
-                        <td className="px-3 py-1.5 text-gray-300">{h.gc}</td>
-                        <td className="px-3 py-1.5 text-gray-300">{h.nokiaPm}</td>
-                        <td className="px-3 py-1.5 text-gray-400">{h.ms15f}</td>
-                        <td className="px-3 py-1.5 text-blue-400">{h.ms15a}</td>
-                        <td className="px-3 py-1.5 text-gray-400">{h.ms16f}</td>
-                        <td className="px-3 py-1.5 text-teal-400">{h.ms16a}</td>
-                        <td className="px-3 py-1.5">{h.hasNtp ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
-                        <td className="px-3 py-1.5 text-gray-400 max-w-[180px] truncate">{h.ntpWaitingOn}</td>
-                        <td className="px-3 py-1.5">{h.hasMat ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
-                        <td className="px-3 py-1.5">{h.hasSpo ? <span className="text-green-400">✓</span> : h.hasCpo ? <span className="text-yellow-400">CPO</span> : <span className="text-red-400">✗</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          </div>
-        </div>
+        <HopsModal title={modalTitle} hops={modalHops} onClose={() => setShowModal(false)} />
       )}
     </div>
   );
