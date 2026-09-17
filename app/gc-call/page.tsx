@@ -359,7 +359,6 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
   const pendingPathwaveRows = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && !r.podPathwave)
   const pendingQuickBaseRows = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && r.podPathwave && !r.podQuickBase)
   const complete = gcRows.filter(r => r.status === 'complete')
-  const outstandingCount = gcRows.filter(r => r.status === 'outstanding').length
   const showQuickBase = showQuickBaseOverride !== null ? showQuickBaseOverride : pendingQuickBaseRows.length <= 5
 
   const gcTrackerHops = parseTrackerHopsForDecom(trackerRawRows)
@@ -464,7 +463,13 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
           )
         }
         <button onClick={generateDecomEmail}
-          disabled={outstandingCount === 0 && podGap.length === 0}
+          // Was gated on outstandingCount (status === 'outstanding' only,
+          // i.e. aging >= 7 days), which didn't match what's actually shown
+          // in the table above (outstandingPending — 'outstanding' OR
+          // 'pending', aging < 7 days included) or what the email itself
+          // lists. A GC with only on-track pending drop-offs (no 7+ day
+          // items, no POD gaps) had a real list but a disabled button.
+          disabled={outstandingPending.length === 0 && podGap.length === 0}
           className="mt-4 bg-blue-600 hover:bg-blue-700 disabled:opacity-40 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
           ✉️ Generate Decom Email — {selectedGC} ({outstandingPending.length} pending drop off · {podGap.length} pending POD)
         </button>
