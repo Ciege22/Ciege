@@ -1394,7 +1394,11 @@ export default function Home() {
                 onClick={() => document.getElementById('dashboard-tracker-upload')?.click()}
               >
                 <input id="dashboard-tracker-upload" type="file" accept=".xlsx" className="hidden"
-                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleTrackerUpload(f) }} />
+                  // Reset the input value after reading — otherwise re-
+                  // selecting a file with the same name (the normal weekly-
+                  // refresh case) fires no change event on some browsers, so
+                  // the re-upload silently does nothing.
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) handleTrackerUpload(f); e.target.value = '' }} />
                 {uploading
                   ? <p className="text-blue-400 text-xs text-center">⏳ Uploading...</p>
                   : snapshotInfo

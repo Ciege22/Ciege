@@ -357,7 +357,11 @@ export default function ScopTab() {
           onClick={() => document.getElementById('scop-upload')?.click()}
         >
           <input id="scop-upload" type="file" accept=".xlsx" className="hidden"
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f) }} />
+            // Reset the input value after reading — otherwise re-selecting a
+            // file with the same name (the normal weekly-refresh case) fires
+            // no change event on some browsers, so the re-upload silently
+            // does nothing.
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = '' }} />
           {uploading
             ? <p className="text-center text-sm text-blue-400">⏳ Processing…</p>
             : info

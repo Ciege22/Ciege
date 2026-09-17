@@ -695,7 +695,12 @@ function UploadBox({ type, info, label, uploading, onUpload }: UploadBoxProps) {
       onClick={() => document.getElementById(`${type}-upload`)?.click()}
     >
       <input id={`${type}-upload`} type="file" accept=".xlsx" className="hidden"
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f, type) }} />
+        // Reset the input's value after reading the file — without this, re-
+        // selecting a file with the same name (the normal case for "here's
+        // this week's tracker" reusing the same filename) fires no `change`
+        // event at all on some browsers, so a re-upload silently does nothing
+        // and the page keeps showing last week's data with no error shown.
+        onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f, type); e.target.value = '' }} />
       {uploading === type
         ? <p className="text-blue-400 text-sm text-center">⏳ Processing...</p>
         : info
