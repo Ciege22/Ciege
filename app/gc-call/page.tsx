@@ -109,10 +109,14 @@ function decomRowToShortSheetRow(r: DecomRow, includeAging: boolean): (string | 
 }
 
 function downloadGcDecomExcel(gcRows: DecomRow[], filename: string) {
-  const pendingDropOff = gcRows.filter(r => !r.dropOffDate)
-  const pendingPathwave = gcRows.filter(r => r.dropOffDate && !r.podPathwave)
+  // status !== 'complete' excludes a "POD Pathwave: NA" site (no decom
+  // required at all, forced complete in parseDecomRows) from every pending
+  // bucket below — otherwise it'd show up in "Pending Decom Drop Off" just
+  // because it has no drop-off date, when really there's nothing to drop off.
+  const pendingDropOff = gcRows.filter(r => r.status !== 'complete' && !r.dropOffDate)
+  const pendingPathwave = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && !r.podPathwave)
   // Pending POD in QuickBase = Pathwave confirmed, QuickBase isn't yet.
-  const pendingQuickBase = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase)
+  const pendingQuickBase = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && r.podPathwave && !r.podQuickBase)
 
   const dropOffHeaders = ['HOP', 'Path ID', 'Site Name', 'CM', 'CX Complete', 'Aging (days)', 'POD Pathwave', 'POD QuickBase', 'Comments']
   const pathwaveHeaders = ['HOP', 'Path ID', 'Site Name', 'CM', 'CX Complete', 'POD Pathwave', 'POD QuickBase', 'Comments']
@@ -349,8 +353,11 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
   // summarizeDecomByGc uses for the Reports page GC breakdown — so this tab's
   // per-row lists line up with those counts instead of double-showing a row
   // that's actually just pending QuickBase under the "pending Pathwave" section.
-  const pendingPathwaveRows = gcRows.filter(r => r.dropOffDate && !r.podPathwave)
-  const pendingQuickBaseRows = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase)
+  // status !== 'complete' excludes a "POD Pathwave: NA" site (no decom
+  // required, forced complete in parseDecomRows) from showing as a pending
+  // POD gap even if it later picks up a real drop-off date.
+  const pendingPathwaveRows = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && !r.podPathwave)
+  const pendingQuickBaseRows = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && r.podPathwave && !r.podQuickBase)
   const complete = gcRows.filter(r => r.status === 'complete')
   const outstandingCount = gcRows.filter(r => r.status === 'outstanding').length
   const showQuickBase = showQuickBaseOverride !== null ? showQuickBaseOverride : pendingQuickBaseRows.length <= 5

@@ -186,9 +186,12 @@ function buildGcDecomReportWorkbook(gcRows: DecomRow[]): XLSX.WorkBook {
   // yet — deliberately narrower than the old `status === 'pod_gap'` filter,
   // which also swept in rows where Pathwave = Yes and only QuickBase was
   // pending, so those showed up here with a misleading "Yes" in this column.
-  const pendingPathwave = gcRows.filter(r => r.dropOffDate && !r.podPathwave)
+  // status !== 'complete' excludes a "POD Pathwave: NA" site — podPathwave is
+  // false for it (NA isn't a "Yes"), but it's already forced complete, so it
+  // must never show as a pending POD gap even with a real drop-off date.
+  const pendingPathwave = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && !r.podPathwave)
   // Pending POD in QuickBase = Pathwave confirmed, QuickBase isn't yet.
-  const pendingQuickBase = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase)
+  const pendingQuickBase = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && r.podPathwave && !r.podQuickBase)
 
   const wb = XLSX.utils.book_new()
 

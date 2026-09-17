@@ -130,18 +130,23 @@ export function parseDropOff(raw: unknown): { date: Date | null; comment: string
 }
 
 // "POD In Pathwave" / "POD In QuickBase": "Yes" means the signed POD is on
-// file. "NA" / "N/A" means no POD is required for this site at all — there's
-// no equipment to decom, so there's nothing for Pathwave/QuickBase to sign
-// off (confirmed by CJ on a GC call). Treat NA the same as done, so the site
-// stops showing a POD gap and stops aging against the GC. Blank or "No" is
-// still a genuine gap.
+// file. "NA" / "N/A" means "not applicable" — no POD is required for this
+// site at all, there's no equipment to decom, so there's nothing for
+// Pathwave/QuickBase to sign off (confirmed by CJ on a GC call). NA takes the
+// site out of the pipeline entirely: it forces the row to `complete` (see
+// noDecomRequired below), the same as done, so the site stops showing a POD
+// gap and stops aging against the GC — but it's explicitly NOT a "Yes", so it
+// must not be counted toward the POD Pathwave / POD QuickBase totals either.
+// Those totals should only reflect sites where a POD was actually confirmed;
+// "not applicable" means the site is outside that count, not a positive hit
+// in it. Blank or "No" is still a genuine gap.
 const POD_NA_VALUES = new Set(['na', 'n/a', 'n\\a', 'n.a.', 'not applicable'])
 function isPodNa(val: unknown): boolean {
   return POD_NA_VALUES.has(String(val || '').trim().toLowerCase())
 }
-function parsePodDone(val: unknown): boolean {
+function parsePodYes(val: unknown): boolean {
   const s = String(val || '').trim().toLowerCase()
-  return s === 'yes' || s === 'y' || s === 'true' || POD_NA_VALUES.has(s)
+  return s === 'yes' || s === 'y' || s === 'true'
 }
 
 // GC matching reuses the existing GC_CONFIG alias table (same one SPO/CR
@@ -257,8 +262,11 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     const dropOffDate = yearOk(dropOffParsed.date) ? dropOffParsed.date : null
     const comment = dropOffParsed.comment
 
-    const podPathwave = parsePodDone(row[podPathwaveCol])
-    const podQuickBase = parsePodDone(row[podQuickBaseCol])
+    // Strict "Yes" only — NA is deliberately not folded in here (see the POD
+    // In Pathwave / POD In QuickBase comment above), so it never inflates the
+    // POD Pathwave / POD QuickBase totals.
+    const podPathwave = parsePodYes(row[podPathwaveCol])
+    const podQuickBase = parsePodYes(row[podQuickBaseCol])
     // "NA" in POD In Pathwave = this site has no decom to do at all (handled
     // by another vendor, or Viaero waived it) — nothing for the GC to drop
     // off or POD, so it's closed out, not aging. Confirmed by CJ on a GC
@@ -336,8 +344,12 @@ export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[], missingS
     const podGap = gcRows.filter(r => r.status === 'pod_gap').length
     const outstanding = gcRows.filter(r => r.status === 'outstanding').length
     const pending = gcRows.filter(r => r.status === 'pending').length
-    const pendingPathwave = gcRows.filter(r => r.dropOffDate && !r.podPathwave).length
-    const pendingQuickBase = gcRows.filter(r => r.dropOffDate && r.podPathwave && !r.podQuickBase).length
+    // status !== 'complete' guards a "POD Pathwave: NA" site — podPathwave is
+    // false for it (NA isn't a "Yes"), but it was already forced complete
+    // (noDecomRequired in parseDecomRows) so it must never show as a pending
+    // POD gap even if it later picks up a real drop-off date.
+    const pendingPathwave = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && !r.podPathwave).length
+    const pendingQuickBase = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && r.podPathwave && !r.podQuickBase).length
     const missing = missingSites.filter(m => m.gc?.trim().toLowerCase() === gc?.trim().toLowerCase()).length
     const agingVals = gcRows
       .filter(r => r.status === 'outstanding' || r.status === 'pending')
