@@ -199,7 +199,7 @@ function MicrowaveDishIcon() {
   )
 }
 
-const NEBRASKA_DEADLINE = new Date(2026, 10, 30) // November 30, 2026
+const NEBRASKA_DEADLINE = new Date(2026, 9, 31) // October 31, 2026
 
 function daysUntilNebraskaDeadline(): number {
   const today = new Date()
@@ -271,14 +271,14 @@ function NebraskaWidget({ hopDetails, onOpenModal }: {
   return (
     <div
       onClick={() => onOpenModal('Nebraska Deadline — Remaining HOPs (FC Start / FC End)', remainingHops)}
-      title="Nebraska program deadline: Nov 30, 2026 — click for the remaining HOPs"
+      title="Nebraska program deadline: Oct 31, 2026 — click for the remaining HOPs"
       className="flex items-center gap-4 rounded-xl border px-6 py-4 bg-black/20 backdrop-blur-sm flex-shrink-0 cursor-pointer hover:bg-black/30 transition-colors"
       style={{ borderColor: color }}
     >
       <MicrowaveDishIcon />
       <div className="leading-tight">
         <p className="text-sm font-bold uppercase tracking-wider" style={{ color }}>Nebraska Deadline</p>
-        <p className="text-sm text-zinc-400">Nov 30, 2026</p>
+        <p className="text-sm text-zinc-400">Oct 31, 2026</p>
         <p className="text-base font-mono tracking-tighter" style={{ color }}>
           {'█'.repeat(filledBars)}{'░'.repeat(10 - filledBars)} {progress}%
         </p>
