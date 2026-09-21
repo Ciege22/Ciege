@@ -1031,9 +1031,6 @@ export default function GCCallPage() {
   // outstanding (non-complete, PM-filtered) pipeline — the original list;
   // 'inactive' = the rest (reachable for Decom/GR/Reports only); 'all' = both.
   const [gcScope, setGcScope] = useState<'active' | 'inactive' | 'all'>('active')
-  // Guards the ?gc= deep-link effect (below, after gcList) from re-applying
-  // on every later gcList recompute.
-  const [deepLinkApplied, setDeepLinkApplied] = useState(false)
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
@@ -1613,33 +1610,6 @@ export default function GCCallPage() {
     // depending on pmFilter directly (not the fn) keeps this honest + stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hops, decomRawRows, grRows, pmFilter])
-
-  // Deep link support — CM View's "GCs Worked With" list opens a GC here via
-  // /gc-call?gc=<name>. Applied once gcList first has entries (plain
-  // window.location parsing, not useSearchParams, so this page doesn't need
-  // a Suspense boundary); deepLinkApplied guards it from firing again on
-  // every later gcList recompute (PM filter changes, a new upload, etc.),
-  // which would otherwise stomp on a selection the user made by hand.
-  useEffect(() => {
-    if (deepLinkApplied || gcList.length === 0) return
-    // Deferred a tick — window.location is an external system read, so this
-    // stays inside a callback rather than a bare synchronous setState call
-    // in the effect body itself.
-    queueMicrotask(() => {
-      const gcParam = new URLSearchParams(window.location.search).get('gc')
-      if (gcParam) {
-        const target = gcParam.trim().toLowerCase()
-        const match = gcList.find(gc => gc.toLowerCase() === target)
-        if (match) {
-          setSelectedGC(match)
-          // Ensure the matched tab is actually visible regardless of which
-          // active/inactive pipeline slice was showing.
-          setGcScope('all')
-        }
-      }
-      setDeepLinkApplied(true)
-    })
-  }, [gcList, deepLinkApplied])
 
   // "Active pipeline" = has ≥1 outstanding HOP for the current PM filter,
   // i.e. an entry in gcOutstandingCounts. The gcScope buttons slice gcList

@@ -3,7 +3,6 @@
 export const dynamic = 'force-dynamic'
 
 import React, { useState, useCallback, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
@@ -440,20 +439,22 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
 }
 
 export default function CMViewPage() {
-  const router = useRouter()
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
   const [fileName, setFileName] = useState('')
   const [selectedCM, setSelectedCM] = useState('')
   // GCs Worked With toggle, under the CM panel header — collapsed by
-  // default, reset closed whenever a different CM is selected. Reset during
-  // render (not via useEffect) — same prev-value-comparison pattern as
-  // app/tracker/page.tsx's gridResetKey.
+  // default. gcFilter narrows the tables below to one GC when a pill is
+  // clicked (click again to clear). Both reset whenever a different CM is
+  // selected. Reset during render (not via useEffect) — same prev-value-
+  // comparison pattern as app/tracker/page.tsx's gridResetKey.
   const [showCmGcs, setShowCmGcs] = useState(false)
+  const [gcFilter, setGcFilter] = useState<string | null>(null)
   const [prevSelectedCMForGcs, setPrevSelectedCMForGcs] = useState(selectedCM)
   if (selectedCM !== prevSelectedCMForGcs) {
     setPrevSelectedCMForGcs(selectedCM)
     setShowCmGcs(false)
+    setGcFilter(null)
   }
   const [workloadMode, setWorkloadMode] = useState<'mine' | 'full'>('mine')
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
@@ -931,6 +932,19 @@ export default function CMViewPage() {
   const thisMonth = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const pipeline  = cmHops.filter(h => !h.inProgress && !h.complete && (h.daysOut === null || h.daysOut > 30)).sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999))
 
+  // Narrows the on-screen section tables to one GC when a "GCs Worked With"
+  // pill is active — a display filter only. generateEmail/downloadAllCMs
+  // below deliberately keep reading active/thisWeek/next2Wks/thisMonth/
+  // pipeline directly (unfiltered), so switching which GC you're looking at
+  // can never silently narrow what "CM Email" sends.
+  const filterByGc = (rows: HOP[]) =>
+    gcFilter ? rows.filter(h => h.gc?.trim().toLowerCase() === gcFilter.toLowerCase()) : rows
+  const displayActive    = filterByGc(active)
+  const displayThisWeek  = filterByGc(thisWeek)
+  const displayNext2Wks  = filterByGc(next2Wks)
+  const displayThisMonth = filterByGc(thisMonth)
+  const displayPipeline  = filterByGc(pipeline)
+
   const generateEmail = () => {
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
     const subj = `Viaero MW Program — CM Call Follow-Up | ${selectedCM} | ${date}`
@@ -1351,33 +1365,44 @@ export default function CMViewPage() {
 
             {/* GCs Worked With — every distinct GC among this CM's current
                 HOPs (My HOPs Only / Full CM Workload aware), styled like the
-                GC View's own tab pills so it reads as "here's their GC tab
-                list" at a glance. Clicking one opens GC Call View with that
-                GC pre-selected via a ?gc= query param, so the workload can
-                be reviewed GC by GC without hand-typing/searching there. */}
+                GC View's own tab pills. Clicking one filters the section
+                tables below to just that GC (click it again, or "✕ Clear
+                filter", to go back to all of them) — a display filter that
+                stays on this page, not a jump to GC Call View. */}
             {loaded && (
               <div className="mb-6">
-                <button onClick={() => setShowCmGcs(v => !v)}
-                  className="flex items-center gap-2 text-sm font-semibold text-gray-300 hover:text-white">
-                  🏗️ GCs Worked With ({cmGcCounts.length})
-                  <span className="text-gray-500 text-xs">{showCmGcs ? '▲' : '▼'}</span>
-                </button>
+                <div className="flex items-center gap-3 flex-wrap">
+                  <button onClick={() => setShowCmGcs(v => !v)}
+                    className="flex items-center gap-2 text-sm font-semibold text-gray-300 hover:text-white">
+                    🏗️ GCs Worked With ({cmGcCounts.length})
+                    <span className="text-gray-500 text-xs">{showCmGcs ? '▲' : '▼'}</span>
+                  </button>
+                  {gcFilter && (
+                    <span className="flex items-center gap-2 text-xs text-amber-400 font-semibold">
+                      Filtered to {gcFilter}
+                      <button onClick={() => setGcFilter(null)} className="text-gray-400 hover:text-white underline">✕ Clear filter</button>
+                    </span>
+                  )}
+                </div>
                 {showCmGcs && (
                   <div className="flex gap-3 mt-3 flex-wrap">
                     {cmGcCounts.length === 0 && (
                       <p className="text-gray-500 text-sm">No GCs found for {selectedCM}.</p>
                     )}
-                    {cmGcCounts.map(({ name, count }) => (
-                      <button key={name}
-                        onClick={() => router.push(`/gc-call?gc=${encodeURIComponent(name)}`)}
-                        title={`Open ${name} in GC Call View (${count} HOP${count === 1 ? '' : 's'} with ${selectedCM})`}
-                        className="flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-all">
-                        {name}
-                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-700 text-gray-300">
-                          {count}
-                        </span>
-                      </button>
-                    ))}
+                    {cmGcCounts.map(({ name, count }) => {
+                      const isActive = gcFilter?.toLowerCase() === name.toLowerCase()
+                      return (
+                        <button key={name}
+                          onClick={() => setGcFilter(prev => prev?.toLowerCase() === name.toLowerCase() ? null : name)}
+                          title={`${isActive ? 'Clear filter — showing' : 'Filter to'} ${name} (${count} HOP${count === 1 ? '' : 's'} with ${selectedCM})`}
+                          className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm transition-all ${isActive ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white'}`}>
+                          {name}
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isActive ? 'bg-white/20 text-white' : 'bg-gray-700 text-gray-300'}`}>
+                            {count}
+                          </span>
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -1388,9 +1413,9 @@ export default function CMViewPage() {
 
                 {/* Active Sites */}
                 <div>
-                  <h3 className="text-lg font-semibold text-white mb-3">🔨 Active Sites ({active.length})</h3>
-                  {active.length === 0
-                    ? <p className="text-gray-500 text-sm">No active sites</p>
+                  <h3 className="text-lg font-semibold text-white mb-3">🔨 Active Sites ({displayActive.length})</h3>
+                  {displayActive.length === 0
+                    ? <p className="text-gray-500 text-sm">{gcFilter ? `No active sites for ${gcFilter}` : 'No active sites'}</p>
                     : (
                       <div className="overflow-x-auto">
                         <table className="w-full text-xs">
@@ -1419,7 +1444,7 @@ export default function CMViewPage() {
                             </tr>
                           </thead>
                           <tbody>
-                            {active.map(h => (
+                            {displayActive.map(h => (
                               <tr key={h.hop} className={`border-t border-gray-800 ${h.statuses.some(s => s.includes('⚠️')) ? 'bg-red-950' : 'bg-gray-900'}`}>
                                 <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
                                 <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
@@ -1499,10 +1524,10 @@ export default function CMViewPage() {
                 </div>
 
                 {/* Pipeline Sections */}
-                <PipelineSection title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
-                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={next2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
-                <PipelineSection title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
-                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={pipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
+                <PipelineSection title="⚡ This Week (0–7 days)" rows={displayThisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
+                <PipelineSection title="🟠 Next 2 Weeks (8–14 days)" rows={displayNext2Wks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
+                <PipelineSection title="🟡 This Month (15–30 days)" rows={displayThisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
+                <PipelineSection title="🔵 Full Pipeline (30d+)" rows={displayPipeline} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
 
               </div>
             )}
