@@ -1201,10 +1201,11 @@ export default function CMViewPage() {
     window.open(`mailto:?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
-  // CM Daily Email — one mailto per CM with at least one site Starting
-  // Today, Completing Today, or currently Active. Computed at render time
-  // (not inside a click handler) so the panel can show every qualifying
-  // CM's button + count as soon as it's opened, same pattern as cmGcCounts.
+  // CM Daily Email — one button per CM, computed at render time (not inside
+  // a click handler) so the panel can show every CM's count as soon as it's
+  // opened, same pattern as cmGcCounts. A CM with nothing today still gets a
+  // row (rendered disabled/greyed — see the button below); its mailto stays
+  // null since "do not generate email" for an all-empty CM.
   //
   // Starting Today / Completing Today match by comparing the formatted
   // FC Start/FC End strings (ms15f/ms16f) directly against today's date in
@@ -1214,91 +1215,93 @@ export default function CMViewPage() {
   // already uses), and its Days Elapsed is exactly h.daysElapsed; a
   // Completing-Today site is also inProgress (started, not yet complete) so
   // it has a valid daysElapsed too, no separate recompute needed.
-  const cmDailyEmails = (() => {
-    const sourceHops = workloadMode === 'full' ? hops : cjHops
-    const cmNames = Array.from(new Set(sourceHops.map(h => h.cm).filter(Boolean))).sort()
+  const generateCMDailyEmail = (cm: string, cmSiteHops: HOP[]) => {
     const todayStr = fmtDate(today)
     const pad = (n: number) => String(n).padStart(2, '0')
     const dateSlash = `${pad(today.getMonth() + 1)}/${pad(today.getDate())}/${today.getFullYear()}`
 
+    const startingToday   = cmSiteHops.filter(h => h.ms15f === todayStr && !h.ms15a)
+    const completingToday = cmSiteHops.filter(h => h.ms16f === todayStr && !h.ms16a)
+    const activeSites     = cmSiteHops.filter(h => h.inProgress)
+    const count = startingToday.length + completingToday.length + activeSites.length
+    if (count === 0) return { count: 0, mailto: null }
+
+    const firstName = cm.trim().split(/\s+/)[0] || cm
+    const subj = `Daily Site Status | ${firstName} | ${dateSlash}`
+
     // Most recent entry in a HOP's (newline-separated) CX Notes cell —
     // assumes entries are appended chronologically, so the last line is the
-    // latest. Rendered right under that HOP's own row, not once per table.
-    const noteLine = (h: HOP) => {
+    // latest. Capped at 150 chars so one long note can't blow up the email.
+    const latestCxNote = (h: HOP): string => {
       const entries = h.cxNotes.split('\n').map(s => s.trim()).filter(Boolean)
-      return entries.length > 0 ? `  💬 Notes: ${entries[entries.length - 1]}\n` : ''
+      if (entries.length === 0) return ''
+      const note = entries[entries.length - 1]
+      return note.length > 150 ? note.slice(0, 150) + '...' : note
     }
 
-    const results: { cm: string; count: number; mailto: string }[] = []
+    // Every non-empty part joined by "---", so the separator only appears
+    // between sections that actually exist (skipped sections don't leave a
+    // stray/doubled "---" behind).
+    const blocks: string[] = [
+      `${firstName},\n\nPlease find below your sites for today. Reply with actuals and any field notes.`,
+    ]
 
-    cmNames.forEach(cm => {
-      const cmSiteHops      = sourceHops.filter(h => h.cm === cm)
-      const startingToday   = cmSiteHops.filter(h => h.ms15f === todayStr && !h.ms15a)
-      const completingToday = cmSiteHops.filter(h => h.ms16f === todayStr && !h.ms16a)
-      const activeSites     = cmSiteHops.filter(h => h.inProgress)
-      const count = startingToday.length + completingToday.length + activeSites.length
-      if (count === 0) return
+    if (startingToday.length > 0) {
+      const entries = startingToday.map(h => {
+        let entry = `★ ${h.hop} ★  |  Path ID: ${h.pathId || '—'}\n`
+        entry += `GC: ${h.gc || '—'}  |  FC Start: ${h.ms15f}\n`
+        entry += `NTP: ${h.hasNtp ? '✓' : '✗'}  |  Material: ${h.hasMat ? '✓' : '✗ Pending'}\n`
+        entry += `Action: Confirm actual start date`
+        if (!h.hasMat) entry += `\n⚠️ Material not received — flag if this blocks start`
+        if (!h.hasNtp) entry += `\n⚠️ NTP pending — flag if this blocks start`
+        return entry
+      })
+      blocks.push(`🚀 STARTING TODAY (${startingToday.length} sites)\n\n${entries.join('\n\n')}`)
+    }
 
-      const firstName = cm.trim().split(/\s+/)[0] || cm
-      const subj = `Viaero/Nokia MW Program — Daily Site Status | ${cm} | ${dateSlash}`
+    if (completingToday.length > 0) {
+      const entries = completingToday.map(h => {
+        let entry = `★ ${h.hop} ★  |  Path ID: ${h.pathId || '—'}\n`
+        entry += `GC: ${h.gc || '—'}  |  FC Complete: ${h.ms16f}\n`
+        entry += `Started: ${h.ms15a || '—'}  |  Days Elapsed: ${h.daysElapsed ?? 0} days\n`
+        entry += `Action: Confirm actual complete date`
+        return entry
+      })
+      blocks.push(`✅ COMPLETING TODAY (${completingToday.length} sites)\n\n${entries.join('\n\n')}`)
+    }
 
-      let body = `${firstName},\n\n`
-      body += `Please find below your sites requiring updates today. Reply with actuals and any field notes so I can update the tracker.\n\n`
+    if (activeSites.length > 0) {
+      const entries = activeSites.map(h => {
+        // Hard 18-day cutoff per spec — deliberately not thresholds.durationAlertDays,
+        // so this stays fixed even if that setting is retuned elsewhere.
+        const overdue = (h.daysElapsed ?? 0) > 18
+        let entry = `★ ${h.hop} ★  |  Path ID: ${h.pathId || '—'}\n`
+        entry += `GC: ${h.gc || '—'}  |  Started: ${h.ms15a || '—'}  |  FC Complete: ${h.ms16f || '—'}\n`
+        entry += `Days Elapsed: ${h.daysElapsed ?? 0} days  |  ${overdue ? '⚠️ OVERDUE' : '✅ On Track'}`
+        const note = latestCxNote(h)
+        if (note) entry += `\n💬 Latest Note: ${note}`
+        return entry
+      })
+      blocks.push(`📍 ACTIVE SITES (${activeSites.length} sites)\n\n${entries.join('\n\n')}`)
+    }
 
-      if (startingToday.length > 0) {
-        body += `🚀 STARTING TODAY (${startingToday.length} sites)\n`
-        body += `Forecasted to start today — please confirm crew is on site and provide actual start date.\n\n`
-        body += `HOP | Path ID | GC | FC Start | NTP | Material | Action\n`
-        startingToday.forEach(h => {
-          const missing: string[] = []
-          if (!h.hasNtp) missing.push('NTP missing')
-          if (!h.hasMat) missing.push('Material missing')
-          const action = missing.length > 0 ? `⚠️ ${missing.join(' & ')}` : 'Confirm actual start date'
-          body += `${h.hop} | ${h.pathId || '—'} | ${h.gc || '—'} | ${h.ms15f} | ${h.hasNtp ? '✓' : '✗'} | ${h.hasMat ? '✓' : '✗'} | ${action}\n`
-          body += noteLine(h)
-        })
-        body += '\n'
-      }
+    blocks.push(`Reply with actual dates and any field notes. Thank you, CJ`)
 
-      if (completingToday.length > 0) {
-        body += `✅ COMPLETING TODAY (${completingToday.length} sites)\n`
-        body += `Forecasted to complete today — please confirm completion and provide actual complete date.\n\n`
-        body += `HOP | Path ID | GC | FC Complete | Started | Days Elapsed | Action\n`
-        completingToday.forEach(h => {
-          body += `${h.hop} | ${h.pathId || '—'} | ${h.gc || '—'} | ${h.ms16f} | ${h.ms15a || '—'} | ${h.daysElapsed !== null ? h.daysElapsed + ' days' : '—'} | Confirm actual complete date\n`
-          body += noteLine(h)
-        })
-        body += '\n'
-      }
+    const body = blocks.join('\n\n---\n\n')
+    const to = lookupContactEmail(emailSettings.cmContactEmails, cm)
+    const cc = emailSettings.ccList.join(',')
+    const mailto = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`
 
-      if (activeSites.length > 0) {
-        body += `📍 ACTIVE SITES (${activeSites.length} sites)\n`
-        body += `Currently in progress — please provide a status update on each.\n\n`
-        body += `HOP | Path ID | GC | Started | FC Complete | Days Elapsed | Status\n`
-        activeSites.forEach(h => {
-          const status = (h.daysElapsed ?? 0) > thresholds.durationAlertDays
-            ? `⚠️ OVERDUE (>${thresholds.durationAlertDays}d)`
-            : '✅ On Track'
-          body += `${h.hop} | ${h.pathId || '—'} | ${h.gc || '—'} | ${h.ms15a || '—'} | ${h.ms16f || '—'} | ${h.daysElapsed ?? 0} days | ${status}\n`
-          body += noteLine(h)
-        })
-        body += '\n'
-      }
+    return { count, mailto }
+  }
 
-      body += `Please reply with:\n`
-      body += `- Actual start/complete dates for today's sites\n`
-      body += `- Any field issues, delays, or blockers\n`
-      body += `- Updated ETA if completion is delayed\n\n`
-      body += `Thank you,\nCJ`
-
-      const to = lookupContactEmail(emailSettings.cmContactEmails, cm)
-      const cc = emailSettings.ccList.join(',')
-      const mailto = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`
-
-      results.push({ cm, count, mailto })
+  const cmDailyEmails = (() => {
+    const sourceHops = workloadMode === 'full' ? hops : cjHops
+    const cmNames = Array.from(new Set(sourceHops.map(h => h.cm).filter(Boolean))).sort()
+    return cmNames.map(cm => {
+      const { count, mailto } = generateCMDailyEmail(cm, sourceHops.filter(h => h.cm === cm))
+      return { cm, count, mailto }
     })
-
-    return results
   })()
 
   return (
@@ -1477,20 +1480,24 @@ export default function CMViewPage() {
               </div>
             </div>
 
-            {/* CM Daily Email — one button per CM with a site starting,
-                completing, or active today (cmDailyEmails, computed above). */}
+            {/* CM Daily Email — one button per CM (cmDailyEmails, computed
+                above). A CM with nothing starting/completing/active today
+                still gets a button, just disabled/greyed — its mailto is
+                null, so no email is generated for it. */}
             {showCmDailyEmails && (
               <div className="mb-6 bg-gray-800/60 border border-gray-700 rounded-xl p-4">
                 <h3 className="text-sm font-semibold text-gray-300 mb-3">
                   ✉️ CM Daily Email — {fmtDate(today)}
                 </h3>
-                {cmDailyEmails.length === 0 ? (
+                {cmDailyEmails.length === 0 || cmDailyEmails.every(c => c.count === 0) ? (
                   <p className="text-gray-500 text-sm">No sites starting or completing today across all CMs</p>
                 ) : (
                   <div className="flex gap-2 flex-wrap">
                     {cmDailyEmails.map(({ cm, count, mailto }) => (
-                      <button key={cm} onClick={() => window.open(mailto)}
-                        className="bg-teal-700 hover:bg-teal-600 text-white px-4 py-2 rounded-lg text-sm font-semibold">
+                      <button key={cm} onClick={() => mailto && window.open(mailto)}
+                        disabled={!mailto}
+                        title={mailto ? undefined : `${cm} has nothing starting, completing, or active today`}
+                        className="bg-teal-700 hover:bg-teal-600 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white px-4 py-2 rounded-lg text-sm font-semibold">
                         ✉️ {cm} ({count} sites today)
                       </button>
                     ))}
