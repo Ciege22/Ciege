@@ -903,15 +903,21 @@ export default function CMViewPage() {
   })()
   const cmHops    = (workloadMode === 'full' ? hops : cjHops)
     .filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
-  // GCs the selected CM is working with — every distinct GC among cmHops
-  // (already scoped by the My HOPs Only / Full CM Workload toggle, same as
-  // everything else on this panel), with a HOP-count badge, most-HOPs-first.
-  // Dedup case-insensitively but keep first-seen display casing, same
-  // approach the GC/CM tab lists use.
+  // GCs the selected CM is working with — every distinct GC among cmHops'
+  // non-complete HOPs (already scoped by the My HOPs Only / Full CM Workload
+  // toggle, same as everything else on this panel), with a HOP-count badge,
+  // most-HOPs-first. Dedup case-insensitively but keep first-seen display
+  // casing, same approach the GC/CM tab lists use.
+  //
+  // !h.complete matters here: active/thisWeek/next2Wks/thisMonth/pipeline
+  // below are exactly the set of non-complete HOPs (same as cmList's own
+  // filter), so counting complete ones here would show a GC with a nonzero
+  // badge that then filters every section down to nothing — there'd be
+  // real HOPs for that GC, just none of them still open.
   const cmGcCounts = (() => {
     const counts = new Map<string, number>() // lowercase key -> count
     const display = new Map<string, string>() // lowercase key -> display casing
-    cmHops.forEach(h => {
+    cmHops.filter(h => !h.complete).forEach(h => {
       const raw = h.gc?.trim()
       if (!raw) return
       const key = raw.toLowerCase()
