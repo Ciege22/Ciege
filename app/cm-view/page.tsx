@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic'
 
 import React, { useState, useCallback, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
@@ -439,10 +440,21 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
 }
 
 export default function CMViewPage() {
+  const router = useRouter()
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
   const [fileName, setFileName] = useState('')
   const [selectedCM, setSelectedCM] = useState('')
+  // GCs Worked With toggle, under the CM panel header — collapsed by
+  // default, reset closed whenever a different CM is selected. Reset during
+  // render (not via useEffect) — same prev-value-comparison pattern as
+  // app/tracker/page.tsx's gridResetKey.
+  const [showCmGcs, setShowCmGcs] = useState(false)
+  const [prevSelectedCMForGcs, setPrevSelectedCMForGcs] = useState(selectedCM)
+  if (selectedCM !== prevSelectedCMForGcs) {
+    setPrevSelectedCMForGcs(selectedCM)
+    setShowCmGcs(false)
+  }
   const [workloadMode, setWorkloadMode] = useState<'mine' | 'full'>('mine')
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
@@ -890,6 +902,25 @@ export default function CMViewPage() {
   })()
   const cmHops    = (workloadMode === 'full' ? hops : cjHops)
     .filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
+  // GCs the selected CM is working with — every distinct GC among cmHops
+  // (already scoped by the My HOPs Only / Full CM Workload toggle, same as
+  // everything else on this panel), with a HOP-count badge, most-HOPs-first.
+  // Dedup case-insensitively but keep first-seen display casing, same
+  // approach the GC/CM tab lists use.
+  const cmGcCounts = (() => {
+    const counts = new Map<string, number>() // lowercase key -> count
+    const display = new Map<string, string>() // lowercase key -> display casing
+    cmHops.forEach(h => {
+      const raw = h.gc?.trim()
+      if (!raw) return
+      const key = raw.toLowerCase()
+      if (!display.has(key)) display.set(key, raw)
+      counts.set(key, (counts.get(key) || 0) + 1)
+    })
+    return Array.from(display.entries())
+      .map(([key, name]) => ({ name, count: counts.get(key) || 0 }))
+      .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+  })()
   const active    = cmHops.filter(h => h.inProgress).sort((a, b) => {
     const aTime = a.ms16f ? new Date(a.ms16f).getTime() : Infinity
     const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
@@ -1317,6 +1348,40 @@ export default function CMViewPage() {
                 </button>
               </div>
             </div>
+
+            {/* GCs Worked With — every distinct GC among this CM's current
+                HOPs (My HOPs Only / Full CM Workload aware), styled like the
+                GC View's own tab pills so it reads as "here's their GC tab
+                list" at a glance. Clicking one opens GC Call View with that
+                GC pre-selected via a ?gc= query param, so the workload can
+                be reviewed GC by GC without hand-typing/searching there. */}
+            {loaded && (
+              <div className="mb-6">
+                <button onClick={() => setShowCmGcs(v => !v)}
+                  className="flex items-center gap-2 text-sm font-semibold text-gray-300 hover:text-white">
+                  🏗️ GCs Worked With ({cmGcCounts.length})
+                  <span className="text-gray-500 text-xs">{showCmGcs ? '▲' : '▼'}</span>
+                </button>
+                {showCmGcs && (
+                  <div className="flex gap-3 mt-3 flex-wrap">
+                    {cmGcCounts.length === 0 && (
+                      <p className="text-gray-500 text-sm">No GCs found for {selectedCM}.</p>
+                    )}
+                    {cmGcCounts.map(({ name, count }) => (
+                      <button key={name}
+                        onClick={() => router.push(`/gc-call?gc=${encodeURIComponent(name)}`)}
+                        title={`Open ${name} in GC Call View (${count} HOP${count === 1 ? '' : 's'} with ${selectedCM})`}
+                        className="flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm bg-gray-800 text-gray-300 hover:bg-gray-700 hover:text-white transition-all">
+                        {name}
+                        <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-700 text-gray-300">
+                          {count}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
             {loaded && (
               <div className="space-y-8">
