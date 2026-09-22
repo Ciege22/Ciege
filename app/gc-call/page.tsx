@@ -9,6 +9,7 @@ import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, ScopSettings, DEFAULT_SCOP, loadScopSettings } from '../lib/settings'
 import ScopGcTab from './ScopGcTab'
+import { CallNoteCell, CallNoteHistoryCell } from './CallNoteCell'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 import { loadChunkedReport } from '../lib/reportChunks'
 import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, uniqueDecomGcNames, DecomRow } from '../lib/decom'
@@ -333,9 +334,13 @@ interface DecomTabProps {
   decomRawRows: unknown[][]
   trackerRawRows: unknown[][]
   emailSettings: EmailSettings
+  sessionNotes: Record<string, string>
+  setSessionNotes: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  saveCallNote: (key: string) => void
+  noteHistory: Record<string, { id: string; hop_name: string; note: string; logged_at: string }[]>
 }
 
-function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: DecomTabProps) {
+function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings, sessionNotes, setSessionNotes, saveCallNote, noteHistory }: DecomTabProps) {
   const [showComplete, setShowComplete] = useState(false)
   const [showMissingOverride, setShowMissingOverride] = useState<boolean | null>(null)
   const [showQuickBaseOverride, setShowQuickBaseOverride] = useState<boolean | null>(null)
@@ -367,8 +372,15 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
     .sort((a, b) => b.daysElapsed - a.daysElapsed)
   const showMissing = showMissingOverride !== null ? showMissingOverride : missingSites.length <= 5
 
+  const decomNoteKey = (r: DecomRow) => `decom:${r.rowKey}`
+
   const generateDecomEmail = () => {
-    const mailto = buildDecomEmailMailto(selectedGC, gcRows, emailSettings)
+    const notesByRowKey: Record<string, string> = {}
+    gcRows.forEach(r => {
+      const hist = noteHistory[decomNoteKey(r)]
+      if (hist?.length) notesByRowKey[r.rowKey] = `${new Date(hist[0].logged_at).toLocaleDateString('en-US')} — ${hist[0].note}`
+    })
+    const mailto = buildDecomEmailMailto(selectedGC, gcRows, emailSettings, notesByRowKey)
     window.open(mailto)
   }
 
@@ -437,6 +449,8 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
                     <th className="text-left p-2">POD Pathwave</th>
                     <th className="text-left p-2">POD QuickBase</th>
                     <th className="text-left p-2">Comments</th>
+                    <th className="text-left p-2">Call Notes</th>
+                    <th className="text-left p-2">Notes History</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -455,6 +469,8 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
                       <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                       <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                       <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
+                      <td className="p-2"><CallNoteCell noteKey={decomNoteKey(r)} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} /></td>
+                      <td className="p-2 max-w-48"><CallNoteHistoryCell noteKey={decomNoteKey(r)} noteHistory={noteHistory} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -496,6 +512,8 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
                     <th className="text-left p-2">POD Pathwave</th>
                     <th className="text-left p-2">POD QuickBase</th>
                     <th className="text-left p-2">Comments</th>
+                    <th className="text-left p-2">Call Notes</th>
+                    <th className="text-left p-2">Notes History</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -509,6 +527,8 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
                       <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                       <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                       <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
+                      <td className="p-2"><CallNoteCell noteKey={decomNoteKey(r)} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} /></td>
+                      <td className="p-2 max-w-48"><CallNoteHistoryCell noteKey={decomNoteKey(r)} noteHistory={noteHistory} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -543,6 +563,8 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
                       <th className="text-left p-2">POD Pathwave</th>
                       <th className="text-left p-2">POD QuickBase</th>
                       <th className="text-left p-2">Comments</th>
+                      <th className="text-left p-2">Call Notes</th>
+                      <th className="text-left p-2">Notes History</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -556,6 +578,8 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings }: D
                         <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                         <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                         <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
+                        <td className="p-2"><CallNoteCell noteKey={decomNoteKey(r)} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} /></td>
+                        <td className="p-2 max-w-48"><CallNoteHistoryCell noteKey={decomNoteKey(r)} noteHistory={noteHistory} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -1208,6 +1232,12 @@ export default function GCCallPage() {
   // to go back into the tracker" list — not a separate comments queue with
   // its own copy/clear buttons. The full history (hop_call_notes, feeding
   // the inline "Notes History" column) is untouched — this is additive.
+  //
+  // Reused (with a "decom:"/"scop:" prefixed key instead of a bare HOP name)
+  // by the Decom and SCOP tabs' per-line call notes — those keys are skipped
+  // here since they aren't real HOP names the Pending Updates panel or the
+  // tracker can act on; hop_call_notes itself doesn't care, it's just a
+  // generic key/note/timestamp table.
   const saveCallNote = async (hop: string) => {
     const note = sessionNotes[hop]
     if (!note?.trim()) return
@@ -1222,7 +1252,9 @@ export default function GCCallPage() {
       setNoteHistory(h => ({ ...h, [hop]: [data as CallNote, ...(h[hop] || [])] }))
       setSessionNotes(s => ({ ...s, [hop]: '' }))
     }
-    upsertPmUpdate({ hop, field: 'CX Notes', oldValue: '—', newValue: note.trim(), timestamp: logged_at })
+    if (!hop.startsWith('decom:') && !hop.startsWith('scop:')) {
+      upsertPmUpdate({ hop, field: 'CX Notes', oldValue: '—', newValue: note.trim(), timestamp: logged_at })
+    }
   }
 
   const processRows = useCallback((rows: unknown[][], _filename: string) => {
@@ -2261,6 +2293,10 @@ export default function GCCallPage() {
                 decomRawRows={decomRawRows}
                 trackerRawRows={trackerRawRows}
                 emailSettings={emailSettings}
+                sessionNotes={sessionNotes}
+                setSessionNotes={setSessionNotes}
+                saveCallNote={saveCallNote}
+                noteHistory={noteHistory}
               />
             )}
 
@@ -2270,6 +2306,10 @@ export default function GCCallPage() {
                 storeRows={scopStoreRows}
                 scopSettings={scopSettings}
                 emailSettings={emailSettings}
+                sessionNotes={sessionNotes}
+                setSessionNotes={setSessionNotes}
+                saveCallNote={saveCallNote}
+                noteHistory={noteHistory}
               />
             )}
 

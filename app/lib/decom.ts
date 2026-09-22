@@ -471,7 +471,7 @@ function classifyAgingTier(days: number | null): AgingTier {
 
 const TIER_ICON: Record<AgingTier, string> = { critical: '🔴', urgent: '🟡', onTrack: '🟢' }
 
-function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: string): string {
+function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: string, notesByRowKey?: Record<string, string>): string {
   const today = new Date()
   const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
   const byAgingDesc = (a: DecomRow, b: DecomRow) => (b.aging ?? -1) - (a.aging ?? -1)
@@ -527,6 +527,7 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
     if (tier === 'critical') body += `⚠️  DROP OFF OVERDUE — IMMEDIATE ACTION REQUIRED\n`
     else if (tier === 'urgent') body += `⏳ Drop Off Due — Action needed soon\n`
     if (r.comment) body += `💬 Note: ${r.comment}\n`
+    if (notesByRowKey?.[r.rowKey]) body += `📞 Call Note: ${notesByRowKey[r.rowKey]}\n`
     body += `\n`
   })
 
@@ -543,6 +544,7 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
     body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}\n`
     if (tier === 'critical') body += `⚠️  POD PATHWAVE OVERDUE — IMMEDIATE ACTION REQUIRED\n`
     else if (tier === 'urgent') body += `⏳ POD Pathwave pending — Action needed soon\n`
+    if (notesByRowKey?.[r.rowKey]) body += `📞 Call Note: ${notesByRowKey[r.rowKey]}\n`
     body += `\n`
   })
 
@@ -559,6 +561,7 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
     body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  POD Pathwave: ✅\n`
     if (tier === 'critical') body += `⚠️  POD QUICKBASE OVERDUE — IMMEDIATE ACTION REQUIRED\n`
     else if (tier === 'urgent') body += `⏳ POD QuickBase pending — Action needed soon\n`
+    if (notesByRowKey?.[r.rowKey]) body += `📞 Call Note: ${notesByRowKey[r.rowKey]}\n`
     body += `\n`
   })
 
@@ -568,7 +571,8 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
 export function buildDecomEmailMailto(
   gc: string,
   gcRows: DecomRow[],
-  emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> }
+  emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> },
+  notesByRowKey?: Record<string, string>
 ): string {
   const today = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -577,7 +581,7 @@ export function buildDecomEmailMailto(
 
   let body = `Dear ${gc} Team,\n\n`
   body += `Please find below your current decom status requiring immediate attention.\n\n`
-  body += buildDecomStatusBody(gcRows, gc.toUpperCase(), dateStr)
+  body += buildDecomStatusBody(gcRows, gc.toUpperCase(), dateStr, notesByRowKey)
   body += `${'═'.repeat(41)}\n`
   body += `Please see the attached Excel for full site detail.\n\n`
   body += `Thank you,\nCJ`

@@ -496,7 +496,7 @@ function mmddyyyy(d: Date): string {
   return `${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()}`
 }
 
-export function buildGCEmailText(report: ScopGcReport, s: ScopCalcSettings): ScopEmailText {
+export function buildGCEmailText(report: ScopGcReport, s: ScopCalcSettings, notesByKey?: Record<string, string>): ScopEmailText {
   const { gc, summary, sections } = report
   const dateStr = mmddyyyy(report.generatedDate)
   const threshold = s.emailPriorityThresholdDays
@@ -519,7 +519,10 @@ export function buildGCEmailText(report: ScopGcReport, s: ScopCalcSettings): Sco
 
   if (priorityItems.length > 0) {
     body += `Top priority (aging ${threshold}+ days since construction complete):\n`
-    body += priorityItems.map(r => `• ${r.hop} — ${r.agingDays} days`).join('\n')
+    body += priorityItems.map(r => {
+      const note = notesByKey?.[`${r.hop}::${r.site}`]
+      return `• ${r.hop} — ${r.agingDays} days${note ? `\n  📞 Call Note: ${note}` : ''}`
+    }).join('\n')
     body += `\n\nThese are the longest-outstanding items — let's prioritize closing these out first.\n\n`
   } else {
     body += `Nothing is over the ${threshold}-day priority threshold yet, but please keep the attached list moving.\n\n`
@@ -538,8 +541,9 @@ export function buildScopGcEmailMailto(
   report: ScopGcReport,
   s: ScopCalcSettings,
   emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> },
+  notesByKey?: Record<string, string>,
 ): string {
-  const { subject, body } = buildGCEmailText(report, s)
+  const { subject, body } = buildGCEmailText(report, s, notesByKey)
   const target = report.gc.trim().toLowerCase()
   const toKey = Object.keys(emailSettings.gcContactEmails).find(k => k.trim().toLowerCase() === target)
   const to = toKey ? emailSettings.gcContactEmails[toKey] : ''

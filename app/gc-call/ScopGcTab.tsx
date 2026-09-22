@@ -1,24 +1,29 @@
 'use client'
 
-import { useMemo } from 'react'
+import { useMemo, type Dispatch, type SetStateAction } from 'react'
 import type { EmailSettings, ScopSettings } from '../lib/settings'
 import {
   resolveScopCalcSettings, keyScopRows, buildScopDataset, buildGCReport,
   buildScopGcEmailMailto, agingColor,
 } from '../lib/scop'
 import { buildScopGcReportWorkbook, downloadWorkbook } from '../lib/scopReport'
+import { CallNoteCell, CallNoteHistoryCell, CallNote } from './CallNoteCell'
 
 // Per-GC SCOP view for the GC Call View — same Pathwave + OAD content as the
 // Reports → SCOP tab's per-GC report, scoped to the selected GC, so it can be
 // reviewed on a call without leaving this page. Reads the SCOP tracker the
 // Reports page uploaded (chunked report_snapshots id "scop").
 export default function ScopGcTab({
-  selectedGC, storeRows, scopSettings, emailSettings,
+  selectedGC, storeRows, scopSettings, emailSettings, sessionNotes, setSessionNotes, saveCallNote, noteHistory,
 }: {
   selectedGC: string
   storeRows: unknown[][]
   scopSettings: ScopSettings
   emailSettings: EmailSettings
+  sessionNotes: Record<string, string>
+  setSessionNotes: Dispatch<SetStateAction<Record<string, string>>>
+  saveCallNote: (key: string) => void
+  noteHistory: Record<string, CallNote[]>
 }) {
   const calc = useMemo(() => resolveScopCalcSettings(scopSettings), [scopSettings])
   const dataset = useMemo(
@@ -59,7 +64,16 @@ export default function ScopGcTab({
     )
   }
 
-  const email = buildScopGcEmailMailto(report, calc, emailSettings)
+  const pathwaveNoteKey = (hop: string, site: string) => `scop:${hop}::${site}`
+  const oadNoteKey = (hop: string) => `scop:${hop}::OAD`
+
+  const notesByKey: Record<string, string> = {}
+  report.sections.pathwave.forEach(r => {
+    const hist = noteHistory[pathwaveNoteKey(r.hop, r.site)]
+    if (hist?.length) notesByKey[`${r.hop}::${r.site}`] = `${new Date(hist[0].logged_at).toLocaleDateString('en-US')} — ${hist[0].note}`
+  })
+
+  const email = buildScopGcEmailMailto(report, calc, emailSettings, notesByKey)
 
   return (
     <div className="space-y-8">
@@ -87,7 +101,7 @@ export default function ScopGcTab({
               <table className="w-full text-xs">
                 <thead>
                   <tr className="bg-gray-800 text-gray-400">
-                    {['HOP', 'Path ID', 'Near Site (A)', 'Far Site (B)', 'Site CM', 'Site', 'Days Since Complete', 'Missing Items'].map(h => (
+                    {['HOP', 'Path ID', 'Near Site (A)', 'Far Site (B)', 'Site CM', 'Site', 'Days Since Complete', 'Missing Items', 'Call Notes', 'Notes History'].map(h => (
                       <th key={h} className="p-2 text-left">{h}</th>
                     ))}
                   </tr>
@@ -103,6 +117,8 @@ export default function ScopGcTab({
                       <td className="p-2 text-gray-300 whitespace-nowrap">{r.site}</td>
                       <td className={`p-2 font-bold ${agingCls(r.agingDays)}`}>{r.agingDays ?? '—'}</td>
                       <td className="p-2 text-gray-400">{r.missingItems}</td>
+                      <td className="p-2"><CallNoteCell noteKey={pathwaveNoteKey(r.hop, r.site)} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} /></td>
+                      <td className="p-2 max-w-48"><CallNoteHistoryCell noteKey={pathwaveNoteKey(r.hop, r.site)} noteHistory={noteHistory} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -121,7 +137,7 @@ export default function ScopGcTab({
             <table className="w-full text-xs">
               <thead>
                 <tr className="bg-gray-800 text-gray-400">
-                  {['HOP', 'Path ID', 'Near Site (A)', 'Far Site (B)', 'Site CM', 'Days Since Complete', 'One and Done (verbatim)'].map(h => (
+                  {['HOP', 'Path ID', 'Near Site (A)', 'Far Site (B)', 'Site CM', 'Days Since Complete', 'One and Done (verbatim)', 'Call Notes', 'Notes History'].map(h => (
                     <th key={h} className="p-2 text-left">{h}</th>
                   ))}
                 </tr>
@@ -136,6 +152,8 @@ export default function ScopGcTab({
                     <td className="p-2 text-gray-300 whitespace-nowrap">{r.cm || '—'}</td>
                     <td className={`p-2 font-bold ${agingCls(r.agingDays)}`}>{r.agingDays ?? '—'}</td>
                     <td className="p-2 text-gray-400">{r.note || '—'}</td>
+                    <td className="p-2"><CallNoteCell noteKey={oadNoteKey(r.hop)} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} /></td>
+                    <td className="p-2 max-w-48"><CallNoteHistoryCell noteKey={oadNoteKey(r.hop)} noteHistory={noteHistory} /></td>
                   </tr>
                 ))}
               </tbody>
