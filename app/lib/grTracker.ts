@@ -297,7 +297,13 @@ export function buildGrRows(
 
     const grDateRaw = parseDateAny(row[SPO_COL.grDate])
     const status = computeStatus(grDateRaw, triggerMetFlag)
-    const pendingReason = status === 'Awaiting Trigger' ? pendingReasonFor(sog.tier, decomScopStatus) : ''
+    // trackerDateMap only holds HOPs currently on the DON 444 list (see
+    // buildTrackerDateMap) — a HOP with no entry there wasn't dropped, it was
+    // pulled from the build plan entirely, which outranks any tier-specific
+    // "what's blocking it" reason.
+    const pendingReason = status !== 'Awaiting Trigger' ? ''
+      : !dates ? 'Removed from Build Plan'
+      : pendingReasonFor(sog.tier, decomScopStatus)
 
     // DECOM_SCOP has no single tracker date to show — it's gated on a status
     // (both trackers complete), not a milestone date — so triggerDate stays
