@@ -277,6 +277,7 @@ export default function GrTrackerPage() {
                     <th className="text-left p-2">SPO Value</th>
                     <th className="text-left p-2">Trigger Date</th>
                     <th className="text-left p-2">GR Status</th>
+                    <th className="text-left p-2">Pending Reason</th>
                     <th className="text-left p-2">GR Date</th>
                   </tr>
                 </thead>
@@ -295,11 +296,12 @@ export default function GrTrackerPage() {
                       <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{fmtMoney(r.spoValue)}</td>
                       <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{r.triggerDate || '—'}</td>
                       <td className="p-2"><StatusChip status={r.status} /></td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-400'}`}>{r.pendingReason || '—'}</td>
                       <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{r.grDate || '—'}</td>
                     </tr>
                   ))}
                   {displayRows.length === 0 && (
-                    <tr><td colSpan={9} className="p-6 text-center text-gray-500">No rows match the current filters</td></tr>
+                    <tr><td colSpan={10} className="p-6 text-center text-gray-500">No rows match the current filters</td></tr>
                   )}
                 </tbody>
               </table>

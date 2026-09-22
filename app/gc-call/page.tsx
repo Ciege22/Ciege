@@ -246,6 +246,7 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded, emailSettings }: GrInvoi
               <th className="text-left p-2">SPO Value</th>
               <th className="text-left p-2">Trigger Date</th>
               <th className="text-left p-2">GR Status</th>
+              <th className="text-left p-2">Pending Reason</th>
               <th className="text-left p-2">GR Date</th>
             </tr>
           </thead>
@@ -261,11 +262,12 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded, emailSettings }: GrInvoi
                 <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
                 <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>
                 <td className="p-2">{statusChip(r.status)}</td>
+                <td className="p-2 whitespace-nowrap text-gray-400">{r.pendingReason || '—'}</td>
                 <td className="p-2 whitespace-nowrap">{r.grDate || '—'}</td>
               </tr>
             ))}
             {displayRows.length === 0 && (
-              <tr><td colSpan={8} className="p-6 text-center text-gray-500">No rows match the current filter</td></tr>
+              <tr><td colSpan={9} className="p-6 text-center text-gray-500">No rows match the current filter</td></tr>
             )}
           </tbody>
         </table>

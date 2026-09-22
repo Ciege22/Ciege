@@ -48,6 +48,7 @@ export interface GrRow {
   tierLabel: string
   cjActionable: boolean
   isDecomScop: boolean
+  pendingReason: string   // blank once GR Done — see pendingReasonFor()
 }
 
 export interface TrackerDates {
@@ -162,27 +163,34 @@ export function buildTrackerDateMap(rows: unknown[][]): Map<string, TrackerDates
 }
 
 // Base PO trigger gate. CR rows never call this — they have no trigger gate (see buildGrRows).
-function isTriggerMet(trigger: GrTrigger, dates: TrackerDates | undefined, decomScopComplete: boolean): boolean {
+function isTriggerMet(trigger: GrTrigger, dates: TrackerDates | undefined, decomScopStatus: DecomScopStatus | undefined): boolean {
   if (!trigger) return false
-  if (trigger === 'DECOM_SCOP') return decomScopComplete
+  if (trigger === 'DECOM_SCOP') return !!decomScopStatus?.decomComplete && !!decomScopStatus?.scopComplete
   if (!dates) return false
   if (trigger === 'MS15A') return !!dates.ms15a
   if (trigger === 'MS16A') return !!dates.ms16a
   return false
 }
 
-// Per-HOP "Decom AND SCOP both fully complete" map for the 20%/30% GR tiers,
-// keyed the same way buildTrackerDateMap keys tracker HOPs (normalized to the
-// SPO report's 'to'-separated HOP format). A HOP counts as decom-complete only
-// when EVERY physical site row for it (a HOP can span two sites) is
-// 'complete'; scop completeness reads ScopRow.fullyComplete directly (one row
-// per HOP already). A HOP absent from either tracker defaults to false —
-// "not tracked yet" is not the same as "complete".
+export interface DecomScopStatus {
+  decomComplete: boolean
+  scopComplete: boolean
+}
+
+// Per-HOP Decom/SCOP completion status for the 20%/30% GR tiers, keyed the
+// same way buildTrackerDateMap keys tracker HOPs (normalized to the SPO
+// report's 'to'-separated HOP format). Kept as two separate flags (not one
+// merged boolean) so pendingReasonFor() below can say which one is actually
+// still blocking. A HOP counts as decom-complete only when EVERY physical
+// site row for it (a HOP can span two sites) is 'complete'; scop completeness
+// reads ScopRow.fullyComplete directly (one row per HOP already). A HOP
+// absent from either tracker defaults to false — "not tracked yet" isn't
+// the same as "complete".
 export function buildDecomScopCompleteMap(
   decomRawRows: unknown[][],
   scopRawRows: unknown[][],
   scopSettings: ScopSettings = DEFAULT_SCOP,
-): Map<string, boolean> {
+): Map<string, DecomScopStatus> {
   const decomByHop = new Map<string, boolean>()
   parseDecomRows(decomRawRows).forEach(r => {
     if (!r.hop) return
@@ -201,11 +209,45 @@ export function buildDecomScopCompleteMap(
     })
   }
 
-  const out = new Map<string, boolean>()
+  const out = new Map<string, DecomScopStatus>()
   new Set([...decomByHop.keys(), ...scopByHop.keys()]).forEach(key => {
-    out.set(key, (decomByHop.get(key) ?? false) && (scopByHop.get(key) ?? false))
+    out.set(key, {
+      decomComplete: decomByHop.get(key) ?? false,
+      scopComplete: scopByHop.get(key) ?? false,
+    })
   })
   return out
+}
+
+// "Why is this GR pending" — one line per SOG tier, per the payment-category
+// reference table. Blank once GR'd. Applies to the CURRENT gating step for
+// that tier: while the trigger itself isn't met yet, names what's actually
+// blocking it (which is what the reference table describes); once the
+// trigger IS met, the tier-specific reason no longer applies (that milestone
+// already happened) so it falls back to a generic "awaiting processing" line
+// — except CR, which has no trigger gate at all and is ALWAYS in that
+// "ready, needs a human" state until GR'd, matching the table's CR row.
+function pendingReasonFor(
+  tier: GrTier,
+  triggerMet: boolean,
+  decomScopStatus: DecomScopStatus | undefined,
+): string {
+  if (tier === 'CR') return 'Pending CR Team Confirmation'
+  if (tier === null) return 'Pending — Unclassified SOG Tier'
+  if (triggerMet) return 'Pending GR Processing'
+  switch (tier) {
+    case 'init20': return 'Pending Start/MSS Install Confirmation'
+    case '60':
+    case '70': return 'Pending CX Completion'
+    case '20':
+    case '30': {
+      const decomDone = decomScopStatus?.decomComplete ?? false
+      const scopDone = decomScopStatus?.scopComplete ?? false
+      if (!decomDone && !scopDone) return 'Pending Decom + SCOP Complete'
+      return !decomDone ? 'Pending Decom Complete' : 'Pending SCOP Complete'
+    }
+    default: return 'Pending GR Processing'
+  }
 }
 
 // Classifies a raw SPO report row into Base PO / CR / Error+empty (excluded).
@@ -231,7 +273,7 @@ function computeStatus(grDate: Date | null, isTriggerMet: boolean): GrStatus {
 export function buildGrRows(
   spoRows: unknown[][],
   trackerDateMap: Map<string, TrackerDates>,
-  decomScopCompleteMap: Map<string, boolean> = new Map(),
+  decomScopCompleteMap: Map<string, DecomScopStatus> = new Map(),
 ): GrRow[] {
   const out: GrRow[] = []
   spoRows.forEach(row => {
@@ -258,11 +300,12 @@ export function buildGrRows(
     // normalized when it was built, so we match against the raw SPO name here.
     const key = matchKey(nameRaw)
     const dates = trackerDateMap.get(key)
-    const decomScopComplete = decomScopCompleteMap.get(key) ?? false
-    const triggerMetFlag = rowType === 'cr' ? true : isTriggerMet(sog.trigger, dates, decomScopComplete)
+    const decomScopStatus = decomScopCompleteMap.get(key)
+    const triggerMetFlag = rowType === 'cr' ? true : isTriggerMet(sog.trigger, dates, decomScopStatus)
 
     const grDateRaw = parseDateAny(row[SPO_COL.grDate])
     const status = computeStatus(grDateRaw, triggerMetFlag)
+    const pendingReason = status === 'GR Done' ? '' : pendingReasonFor(sog.tier, triggerMetFlag, decomScopStatus)
 
     // DECOM_SCOP has no single tracker date to show — it's gated on a status
     // (both trackers complete), not a milestone date — so triggerDate stays
@@ -295,6 +338,7 @@ export function buildGrRows(
       tierLabel: sog.tierLabel,
       cjActionable: sog.cjActionable,
       isDecomScop: sog.isDecomScop,
+      pendingReason,
     })
   })
   return out
