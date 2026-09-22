@@ -283,19 +283,19 @@ export default function GrTrackerPage() {
                 <tbody>
                   {displayRows.map((r, i) => (
                     <tr key={`${r.hop}-${r.sogName}-${r.spoNumber}-${i}`}
-                      className={`border-t border-gray-800 ${r.isDecomScop ? 'bg-gray-950' : 'bg-gray-900'}`}>
+                      className={`border-t border-gray-800 ${!r.cjActionable ? 'bg-gray-950' : 'bg-gray-900'}`}>
                       <td className="p-2 font-semibold whitespace-nowrap">
-                        {r.isDecomScop && <span className="mr-1">👁</span>}
-                        <span className={r.isDecomScop ? 'text-gray-500' : 'text-white'}>{r.hopDisplay}</span>
+                        {!r.cjActionable && <span className="mr-1">👁</span>}
+                        <span className={!r.cjActionable ? 'text-gray-500' : 'text-white'}>{r.hopDisplay}</span>
                       </td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-600' : 'text-gray-400'}`}>{r.pathId || '—'}</td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.gc}</td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.sogName || 'CR'}</td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.spoNumber || '—'}</td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{fmtMoney(r.spoValue)}</td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.triggerDate || '—'}</td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-600' : 'text-gray-400'}`}>{r.pathId || '—'}</td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{r.gc}</td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{r.sogName || 'CR'}</td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{r.spoNumber || '—'}</td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{fmtMoney(r.spoValue)}</td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{r.triggerDate || '—'}</td>
                       <td className="p-2"><StatusChip status={r.status} /></td>
-                      <td className={`p-2 whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-gray-300'}`}>{r.grDate || '—'}</td>
+                      <td className={`p-2 whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-gray-300'}`}>{r.grDate || '—'}</td>
                     </tr>
                   ))}
                   {displayRows.length === 0 && (

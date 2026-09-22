@@ -1,6 +1,9 @@
 import { supabase, loadTrackerSnapshot } from './supabase'
 import { GC_CONFIG, matches } from './gcConfig'
-import { lookupContactEmail } from './settings'
+import { lookupContactEmail, DEFAULT_SCOP, type ScopSettings } from './settings'
+import { parseDecomRows } from './decom'
+import { buildScopDataset, keyScopRows, resolveScopCalcSettings } from './scop'
+import { loadChunkedReport } from './reportChunks'
 
 // Raw SPO report rows are stored as arrays with no header row (see app/reports/page.tsx).
 // These are the fixed column positions established by that page's SPO_COL_IDX mapping.
@@ -15,7 +18,7 @@ const SPO_COL = {
 }
 
 export type GrTier = 'init20' | '60' | '70' | '20' | '30' | 'CR' | null
-export type GrTrigger = 'MS15A' | 'MS16A' | null
+export type GrTrigger = 'MS15A' | 'MS16A' | 'DECOM_SCOP' | null
 export type GrStatus = 'GR Done' | 'Ready to Release' | 'Awaiting Trigger'
 
 // Row classification (foundational — everything else derives from this):
@@ -113,10 +116,10 @@ export function classifySog(sogNameRaw: string): {
     return { tier: '70', trigger: 'MS16A', cjActionable: true, tierLabel: '70% — MS16A (CX Complete, old split)', isDecomScop: false }
   }
   if (s.includes('20%') && !s.includes('init')) {
-    return { tier: '20', trigger: null, cjActionable: false, tierLabel: '20% — Decom/SCOP', isDecomScop: true }
+    return { tier: '20', trigger: 'DECOM_SCOP', cjActionable: true, tierLabel: '20% — Decom + SCOP Complete', isDecomScop: true }
   }
   if (s.includes('30%')) {
-    return { tier: '30', trigger: null, cjActionable: false, tierLabel: '30% — Decom/SCOP (old split)', isDecomScop: true }
+    return { tier: '30', trigger: 'DECOM_SCOP', cjActionable: true, tierLabel: '30% — Decom + SCOP Complete (old split)', isDecomScop: true }
   }
   return { tier: null, trigger: null, cjActionable: false, tierLabel: sogNameRaw || 'Unknown', isDecomScop: false }
 }
@@ -159,11 +162,50 @@ export function buildTrackerDateMap(rows: unknown[][]): Map<string, TrackerDates
 }
 
 // Base PO trigger gate. CR rows never call this — they have no trigger gate (see buildGrRows).
-function isTriggerMet(trigger: GrTrigger, dates: TrackerDates | undefined): boolean {
-  if (!trigger || !dates) return false
+function isTriggerMet(trigger: GrTrigger, dates: TrackerDates | undefined, decomScopComplete: boolean): boolean {
+  if (!trigger) return false
+  if (trigger === 'DECOM_SCOP') return decomScopComplete
+  if (!dates) return false
   if (trigger === 'MS15A') return !!dates.ms15a
   if (trigger === 'MS16A') return !!dates.ms16a
   return false
+}
+
+// Per-HOP "Decom AND SCOP both fully complete" map for the 20%/30% GR tiers,
+// keyed the same way buildTrackerDateMap keys tracker HOPs (normalized to the
+// SPO report's 'to'-separated HOP format). A HOP counts as decom-complete only
+// when EVERY physical site row for it (a HOP can span two sites) is
+// 'complete'; scop completeness reads ScopRow.fullyComplete directly (one row
+// per HOP already). A HOP absent from either tracker defaults to false —
+// "not tracked yet" is not the same as "complete".
+export function buildDecomScopCompleteMap(
+  decomRawRows: unknown[][],
+  scopRawRows: unknown[][],
+  scopSettings: ScopSettings = DEFAULT_SCOP,
+): Map<string, boolean> {
+  const decomByHop = new Map<string, boolean>()
+  parseDecomRows(decomRawRows).forEach(r => {
+    if (!r.hop) return
+    const key = matchKey(normalizeTrackerHop(r.hop))
+    const isComplete = r.status === 'complete'
+    const prev = decomByHop.get(key)
+    decomByHop.set(key, prev === undefined ? isComplete : prev && isComplete)
+  })
+
+  const scopByHop = new Map<string, boolean>()
+  if (scopRawRows.length >= 2) {
+    const calc = resolveScopCalcSettings(scopSettings)
+    buildScopDataset(keyScopRows(scopRawRows), calc).forEach(r => {
+      if (!r.hop) return
+      scopByHop.set(matchKey(normalizeTrackerHop(r.hop)), r.fullyComplete)
+    })
+  }
+
+  const out = new Map<string, boolean>()
+  new Set([...decomByHop.keys(), ...scopByHop.keys()]).forEach(key => {
+    out.set(key, (decomByHop.get(key) ?? false) && (scopByHop.get(key) ?? false))
+  })
+  return out
 }
 
 // Classifies a raw SPO report row into Base PO / CR / Error+empty (excluded).
@@ -183,7 +225,14 @@ function computeStatus(grDate: Date | null, isTriggerMet: boolean): GrStatus {
 }
 
 // Joins SPO report rows against the tracker date map to build the unified GR row set.
-export function buildGrRows(spoRows: unknown[][], trackerDateMap: Map<string, TrackerDates>): GrRow[] {
+// decomScopCompleteMap gates the 20%/30% (DECOM_SCOP trigger) tiers — see
+// buildDecomScopCompleteMap. Defaults to empty so existing callers that don't
+// pass one just get those tiers always "not yet met" instead of erroring.
+export function buildGrRows(
+  spoRows: unknown[][],
+  trackerDateMap: Map<string, TrackerDates>,
+  decomScopCompleteMap: Map<string, boolean> = new Map(),
+): GrRow[] {
   const out: GrRow[] = []
   spoRows.forEach(row => {
     const nameRaw = String(row[SPO_COL.name] || '').trim()
@@ -209,11 +258,15 @@ export function buildGrRows(spoRows: unknown[][], trackerDateMap: Map<string, Tr
     // normalized when it was built, so we match against the raw SPO name here.
     const key = matchKey(nameRaw)
     const dates = trackerDateMap.get(key)
-    const triggerMetFlag = rowType === 'cr' ? true : isTriggerMet(sog.trigger, dates)
+    const decomScopComplete = decomScopCompleteMap.get(key) ?? false
+    const triggerMetFlag = rowType === 'cr' ? true : isTriggerMet(sog.trigger, dates, decomScopComplete)
 
     const grDateRaw = parseDateAny(row[SPO_COL.grDate])
     const status = computeStatus(grDateRaw, triggerMetFlag)
 
+    // DECOM_SCOP has no single tracker date to show — it's gated on a status
+    // (both trackers complete), not a milestone date — so triggerDate stays
+    // blank for that tier same as an unmet MS15A/MS16A trigger would.
     const triggerDateRaw = sog.trigger === 'MS15A' ? (dates?.ms15a ?? null)
       : sog.trigger === 'MS16A' ? (dates?.ms16a ?? null)
       : null
@@ -327,19 +380,25 @@ export function groupGrRows(rows: GrRow[]): GrGroups {
     ready: rows.filter(r => r.cjActionable && r.status === 'Ready to Release'),
     awaiting: rows.filter(r => r.cjActionable && r.status === 'Awaiting Trigger'),
     done: rows.filter(r => r.status === 'GR Done'),
-    awareness: rows.filter(r => r.isDecomScop),
+    // 20%/30% (Decom/SCOP) tiers are now CJ-actionable (DECOM_SCOP trigger),
+    // so "awareness" is no longer about tier — it's whatever tier didn't
+    // classify at all (classifySog's null fallback), shown but not acted on.
+    awareness: rows.filter(r => !r.cjActionable),
   }
 }
 
 // Loads the SPO report + latest tracker snapshot from Supabase and joins them.
 export async function loadGrRows(): Promise<GrRow[]> {
-  const [spoResult, trackerSnap] = await Promise.all([
+  const [spoResult, trackerSnap, decomReport, scopReport] = await Promise.all([
     supabase.from('report_snapshots').select('data').eq('id', 'spo').single(),
     loadTrackerSnapshot(),
+    loadChunkedReport('decom'),
+    loadChunkedReport('scop'),
   ])
   const spoRows: unknown[][] = spoResult.data?.data ? JSON.parse(spoResult.data.data) : []
   const trackerDateMap = trackerSnap ? buildTrackerDateMap(trackerSnap.data) : new Map<string, TrackerDates>()
-  return buildGrRows(spoRows, trackerDateMap)
+  const decomScopCompleteMap = buildDecomScopCompleteMap(decomReport?.rows ?? [], scopReport?.rows ?? [])
+  return buildGrRows(spoRows, trackerDateMap, decomScopCompleteMap)
 }
 
 // ─────────────────────────────────────────────

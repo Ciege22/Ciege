@@ -2078,7 +2078,7 @@ export default function Home() {
                           )}
                           {grAwareness.length > 0 && (
                             <p className="text-gray-600 text-xs mt-3">
-                              👁 Awaiting Other PM (Decom/SCOP): {grAwareness.length} HOPs · {fmtMoneyShort(grAwareness.reduce((s, r) => s + r.spoValue, 0))} total · awareness only
+                              👁 Unclassified SOG Tier: {grAwareness.length} HOPs · {fmtMoneyShort(grAwareness.reduce((s, r) => s + r.spoValue, 0))} total · awareness only
                             </p>
                           )}
                         </div>

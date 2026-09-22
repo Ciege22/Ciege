@@ -251,9 +251,9 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded, emailSettings }: GrInvoi
           </thead>
           <tbody>
             {displayRows.map(r => (
-              <tr key={`${r.hop}-${r.sogName}-${r.spoNumber}`} className={`border-t border-gray-800 ${r.isDecomScop ? 'text-gray-600' : 'text-gray-200'}`}>
-                <td className={`p-2 font-semibold whitespace-nowrap ${r.isDecomScop ? 'text-gray-500' : 'text-white'}`}>
-                  {r.isDecomScop && <span className="mr-1">👁</span>}{r.hopDisplay}
+              <tr key={`${r.hop}-${r.sogName}-${r.spoNumber}`} className={`border-t border-gray-800 ${!r.cjActionable ? 'text-gray-600' : 'text-gray-200'}`}>
+                <td className={`p-2 font-semibold whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-white'}`}>
+                  {!r.cjActionable && <span className="mr-1">👁</span>}{r.hopDisplay}
                 </td>
                 <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
                 <td className="p-2 whitespace-nowrap">{r.sogName || 'CR'}</td>
