@@ -379,8 +379,10 @@ export interface GrBreakdown {
   totalCRs: number
   basePOValueGRd: number
   basePOValuePending: number
+  basePOValueNotYet: number
   crValueGRd: number
   crValuePending: number
+  crValueNotYet: number
 }
 
 export function computeGrBreakdown(rows: GrRow[]): GrBreakdown {
@@ -391,12 +393,14 @@ export function computeGrBreakdown(rows: GrRow[]): GrBreakdown {
     totalCRs: cr.length,
     basePOValueGRd: base.filter(r => !!r.grDate).reduce((s, r) => s + r.spoValue, 0),
     basePOValuePending: base.filter(r => !r.grDate && r.triggerMet).reduce((s, r) => s + r.spoValue, 0),
+    basePOValueNotYet: base.filter(r => !r.grDate && !r.triggerMet).reduce((s, r) => s + r.spoValue, 0),
     crValueGRd: cr.filter(r => !!r.grDate).reduce((s, r) => s + r.spoValue, 0),
     crValuePending: cr.filter(r => !r.grDate && r.triggerMet).reduce((s, r) => s + r.spoValue, 0),
+    crValueNotYet: cr.filter(r => !r.grDate && !r.triggerMet).reduce((s, r) => s + r.spoValue, 0),
   }
 }
 
-export type GrTileFilter = 'totalBasePOs' | 'totalCRs' | 'basePOGRd' | 'basePOPending' | 'crGRd' | 'crPending' | null
+export type GrTileFilter = 'totalBasePOs' | 'totalCRs' | 'basePOGRd' | 'basePOPending' | 'basePONotYet' | 'crGRd' | 'crPending' | 'crNotYet' | null
 
 export function rowsForTileFilter(rows: GrRow[], filter: GrTileFilter): GrRow[] {
   switch (filter) {
@@ -404,8 +408,10 @@ export function rowsForTileFilter(rows: GrRow[], filter: GrTileFilter): GrRow[] 
     case 'totalCRs': return rows.filter(r => r.rowType === 'cr')
     case 'basePOGRd': return rows.filter(r => r.rowType === 'base' && !!r.grDate)
     case 'basePOPending': return rows.filter(r => r.rowType === 'base' && !r.grDate && r.triggerMet)
+    case 'basePONotYet': return rows.filter(r => r.rowType === 'base' && !r.grDate && !r.triggerMet)
     case 'crGRd': return rows.filter(r => r.rowType === 'cr' && !!r.grDate)
     case 'crPending': return rows.filter(r => r.rowType === 'cr' && !r.grDate && r.triggerMet)
+    case 'crNotYet': return rows.filter(r => r.rowType === 'cr' && !r.grDate && !r.triggerMet)
     default: return rows
   }
 }

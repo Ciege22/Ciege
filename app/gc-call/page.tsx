@@ -203,20 +203,30 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded, emailSettings }: GrInvoi
           onClick={() => selectTile('totalCRs')} />
       </div>
 
-      {/* KPI Tiles — Row 2: Value */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* KPI Tiles — Row 2: Base PO Value */}
+      <div className="grid grid-cols-3 gap-3">
         <GrTile emoji="✅" label="Base PO Value GR'd" value={fmtMoneyShort(breakdown.basePOValueGRd)} sub="GR Date populated"
           color="border-green-700" valueColor="text-green-400" active={tileFilter === 'basePOGRd'}
           onClick={() => selectTile('basePOGRd')} />
         <GrTile emoji="⏳" label="Base PO Value Pending" value={fmtMoneyShort(breakdown.basePOValuePending)} sub="trigger met, GR Date blank"
           color="border-orange-700" valueColor="text-orange-400" active={tileFilter === 'basePOPending'}
           onClick={() => selectTile('basePOPending')} />
+        <GrTile emoji="⚪" label="Base PO Value Not Yet" value={fmtMoneyShort(breakdown.basePOValueNotYet)} sub="trigger not met"
+          color="border-gray-700" valueColor="text-gray-300" active={tileFilter === 'basePONotYet'}
+          onClick={() => selectTile('basePONotYet')} />
+      </div>
+
+      {/* KPI Tiles — Row 3: CR Value */}
+      <div className="grid grid-cols-3 gap-3">
         <GrTile emoji="✅" label="CR Value GR'd" value={fmtMoneyShort(breakdown.crValueGRd)} sub="GR Date populated"
           color="border-green-700" valueColor="text-green-400" active={tileFilter === 'crGRd'}
           onClick={() => selectTile('crGRd')} />
         <GrTile emoji="⏳" label="CR Value Pending" value={fmtMoneyShort(breakdown.crValuePending)} sub="GR Date blank"
           color="border-orange-700" valueColor="text-orange-400" active={tileFilter === 'crPending'}
           onClick={() => selectTile('crPending')} />
+        <GrTile emoji="⚪" label="CR Value Not Yet" value={fmtMoneyShort(breakdown.crValueNotYet)} sub="CR has no trigger gate — always $0"
+          color="border-gray-700" valueColor="text-gray-300" active={tileFilter === 'crNotYet'}
+          onClick={() => selectTile('crNotYet')} />
       </div>
 
       <div className="flex items-center justify-between">

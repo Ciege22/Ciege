@@ -185,20 +185,30 @@ export default function GrTrackerPage() {
                 onClick={() => selectTile('totalCRs')} />
             </div>
 
-            {/* KPI Tiles — Row 2: Value */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+            {/* KPI Tiles — Row 2: Base PO Value */}
+            <div className="grid grid-cols-3 gap-3 mb-3">
               <KpiTile emoji="✅" label="Base PO Value GR'd" value={fmtMoneyShort(breakdown.basePOValueGRd)} sub="GR Date populated"
                 color="border-green-700" valueColor="text-green-400" active={specialFilter === 'basePOGRd'}
                 onClick={() => selectTile('basePOGRd')} />
               <KpiTile emoji="⏳" label="Base PO Value Pending" value={fmtMoneyShort(breakdown.basePOValuePending)} sub="trigger met, GR Date blank"
                 color="border-orange-700" valueColor="text-orange-400" active={specialFilter === 'basePOPending'}
                 onClick={() => selectTile('basePOPending')} />
+              <KpiTile emoji="⚪" label="Base PO Value Not Yet" value={fmtMoneyShort(breakdown.basePOValueNotYet)} sub="trigger not met"
+                color="border-gray-700" valueColor="text-gray-300" active={specialFilter === 'basePONotYet'}
+                onClick={() => selectTile('basePONotYet')} />
+            </div>
+
+            {/* KPI Tiles — Row 3: CR Value */}
+            <div className="grid grid-cols-3 gap-3 mb-6">
               <KpiTile emoji="✅" label="CR Value GR'd" value={fmtMoneyShort(breakdown.crValueGRd)} sub="GR Date populated"
                 color="border-green-700" valueColor="text-green-400" active={specialFilter === 'crGRd'}
                 onClick={() => selectTile('crGRd')} />
               <KpiTile emoji="⏳" label="CR Value Pending" value={fmtMoneyShort(breakdown.crValuePending)} sub="GR Date blank"
                 color="border-orange-700" valueColor="text-orange-400" active={specialFilter === 'crPending'}
                 onClick={() => selectTile('crPending')} />
+              <KpiTile emoji="⚪" label="CR Value Not Yet" value={fmtMoneyShort(breakdown.crValueNotYet)} sub="CR has no trigger gate — always $0"
+                color="border-gray-700" valueColor="text-gray-300" active={specialFilter === 'crNotYet'}
+                onClick={() => selectTile('crNotYet')} />
             </div>
 
             {/* Filter Bar */}
