@@ -361,8 +361,19 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings, ses
   // status !== 'complete' excludes a "POD Pathwave: NA" site (no decom
   // required, forced complete in parseDecomRows) from showing as a pending
   // POD gap even if it later picks up a real drop-off date.
-  const pendingPathwaveRows = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && !r.podPathwave)
-  const pendingQuickBaseRows = gcRows.filter(r => r.status !== 'complete' && r.dropOffDate && r.podPathwave && !r.podQuickBase)
+  // Same "days since drop off" the Decom email's Pathwave/QuickBase priority
+  // sections rank by — dropOffDate to today, not r.aging (that's the pending
+  // drop-off aging clock, which stops once a drop-off date exists).
+  const today = new Date()
+  const daysSinceDropOff = (r: DecomRow) => (r.dropOffDate ? daysBetween(r.dropOffDate, today) : 0)
+  const byDaysSinceDropOffDesc = (a: DecomRow, b: DecomRow) => daysSinceDropOff(b) - daysSinceDropOff(a)
+
+  const pendingPathwaveRows = gcRows
+    .filter(r => r.status !== 'complete' && r.dropOffDate && !r.podPathwave)
+    .sort(byDaysSinceDropOffDesc)
+  const pendingQuickBaseRows = gcRows
+    .filter(r => r.status !== 'complete' && r.dropOffDate && r.podPathwave && !r.podQuickBase)
+    .sort(byDaysSinceDropOffDesc)
   const complete = gcRows.filter(r => r.status === 'complete')
   const showQuickBase = showQuickBaseOverride !== null ? showQuickBaseOverride : pendingQuickBaseRows.length <= 5
 
@@ -509,6 +520,7 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings, ses
                     <th className="text-left p-2">Site Name</th>
                     <th className="text-left p-2">CM</th>
                     <th className="text-left p-2">CX Complete</th>
+                    <th className="text-left p-2">Days Since Drop Off</th>
                     <th className="text-left p-2">POD Pathwave</th>
                     <th className="text-left p-2">POD QuickBase</th>
                     <th className="text-left p-2">Comments</th>
@@ -524,6 +536,7 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings, ses
                       <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{r.cm || '—'}</td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDecomDate(r.cxComplete) || '—'}</td>
+                      <td className="p-2 font-bold text-amber-400 whitespace-nowrap">{daysSinceDropOff(r)}d</td>
                       <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                       <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                       <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
@@ -560,6 +573,7 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings, ses
                       <th className="text-left p-2">Site Name</th>
                       <th className="text-left p-2">CM</th>
                       <th className="text-left p-2">CX Complete</th>
+                      <th className="text-left p-2">Days Since Drop Off</th>
                       <th className="text-left p-2">POD Pathwave</th>
                       <th className="text-left p-2">POD QuickBase</th>
                       <th className="text-left p-2">Comments</th>
@@ -575,6 +589,7 @@ function DecomTab({ selectedGC, decomRawRows, trackerRawRows, emailSettings, ses
                         <td className="p-2 text-gray-300 whitespace-nowrap">{r.siteName || '—'}</td>
                         <td className="p-2 text-gray-300 whitespace-nowrap">{r.cm || '—'}</td>
                         <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDecomDate(r.cxComplete) || '—'}</td>
+                        <td className="p-2 font-bold text-amber-400 whitespace-nowrap">{daysSinceDropOff(r)}d</td>
                         <td className="p-2">{r.podPathwave ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                         <td className="p-2">{r.podQuickBase ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                         <td className="p-2 text-gray-400 text-xs max-w-48 truncate" title={r.comment}>{r.comment || '—'}</td>
