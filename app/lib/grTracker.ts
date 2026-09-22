@@ -219,22 +219,14 @@ export function buildDecomScopCompleteMap(
   return out
 }
 
-// "Why is this GR pending" — one line per SOG tier, per the payment-category
-// reference table. Blank once GR'd. Applies to the CURRENT gating step for
-// that tier: while the trigger itself isn't met yet, names what's actually
-// blocking it (which is what the reference table describes); once the
-// trigger IS met, the tier-specific reason no longer applies (that milestone
-// already happened) so it falls back to a generic "awaiting processing" line
-// — except CR, which has no trigger gate at all and is ALWAYS in that
-// "ready, needs a human" state until GR'd, matching the table's CR row.
-function pendingReasonFor(
-  tier: GrTier,
-  triggerMet: boolean,
-  decomScopStatus: DecomScopStatus | undefined,
-): string {
-  if (tier === 'CR') return 'Pending CR Team Confirmation'
-  if (tier === null) return 'Pending — Unclassified SOG Tier'
-  if (triggerMet) return 'Pending GR Processing'
+// "Why is this GR pending" — only meaningful while status is "Awaiting
+// Trigger" ('Not Yet' in the UI), i.e. something is genuinely blocking it.
+// Once the trigger is met, status flips to "Ready to Release" ('Pending' in
+// the UI) — that just means it's sitting in CJ's own queue to submit, not
+// blocked on anything else, so no reason applies there (or once GR'd).
+// CR rows have no trigger gate at all (see buildGrRows) so they never reach
+// "Awaiting Trigger" — this is never called for them in practice.
+function pendingReasonFor(tier: GrTier, decomScopStatus: DecomScopStatus | undefined): string {
   switch (tier) {
     case 'init20': return 'Pending Start/MSS Install Confirmation'
     case '60':
@@ -246,7 +238,7 @@ function pendingReasonFor(
       if (!decomDone && !scopDone) return 'Pending Decom + SCOP Complete'
       return !decomDone ? 'Pending Decom Complete' : 'Pending SCOP Complete'
     }
-    default: return 'Pending GR Processing'
+    default: return 'Pending — Unclassified SOG Tier'
   }
 }
 
@@ -305,7 +297,7 @@ export function buildGrRows(
 
     const grDateRaw = parseDateAny(row[SPO_COL.grDate])
     const status = computeStatus(grDateRaw, triggerMetFlag)
-    const pendingReason = status === 'GR Done' ? '' : pendingReasonFor(sog.tier, triggerMetFlag, decomScopStatus)
+    const pendingReason = status === 'Awaiting Trigger' ? pendingReasonFor(sog.tier, decomScopStatus) : ''
 
     // DECOM_SCOP has no single tracker date to show — it's gated on a status
     // (both trackers complete), not a milestone date — so triggerDate stays
