@@ -2088,12 +2088,6 @@ export default function GCCallPage() {
                 title={`${outstandingCount} outstanding HOP${outstandingCount === 1 ? '' : 's'} · ${activeCount} active site${activeCount === 1 ? '' : 's'}`}
                 className={`flex items-center gap-2 px-6 py-3 rounded-lg font-semibold text-sm transition-all ${isSelected ? 'bg-blue-600 text-white shadow-lg scale-105' : 'bg-gray-800 text-gray-300 hover:bg-gray-700'}`}>
                 {gc}
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isSelected ? 'bg-white/20 text-white' : 'bg-gray-700 text-gray-300'}`}>
-                  {outstandingCount}
-                </span>
-                <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${isSelected ? 'bg-green-400/30 text-white' : 'bg-green-900 text-green-300'}`}>
-                  🔨 {activeCount}
-                </span>
               </button>
             )
           })}
@@ -2106,6 +2100,14 @@ export default function GCCallPage() {
               <div>
                 <h2 className="text-2xl font-bold">{selectedGC}</h2>
                 <p className="text-gray-400 mt-1">
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-gray-700 text-gray-300">
+                    {gcOutstandingCounts.get(selectedGC.toLowerCase()) ?? 0} outstanding
+                  </span>
+                  {' '}
+                  <span className="text-xs font-bold px-2 py-0.5 rounded-full bg-green-900 text-green-300">
+                    🔨 {gcActiveCounts.get(selectedGC.toLowerCase()) ?? 0} active
+                  </span>
+                  {' · '}
                   Site CM: <span className="text-blue-400 font-semibold">{GC_CM_MAP[selectedGC] || 'See Contacts'}</span>
                   {loaded && (
                     <span className="text-gray-500">
