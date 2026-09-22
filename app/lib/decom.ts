@@ -471,7 +471,11 @@ function classifyAgingTier(days: number | null): AgingTier {
 
 const TIER_ICON: Record<AgingTier, string> = { critical: '🔴', urgent: '🟡', onTrack: '🟢' }
 
-function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: string, notesByRowKey?: Record<string, string>): string {
+// includeQuickBase: false drops the "Pending POD QuickBase" itemized section
+// — the GC-facing email doesn't own QuickBase submission, so calling it out
+// as an action item there is misleading. The internal CM digest still shows
+// it (Nokia CMs do care about full program status).
+function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: string, notesByRowKey?: Record<string, string>, includeQuickBase = true): string {
   const today = new Date()
   const pct = (n: number, total: number) => (total > 0 ? Math.round((n / total) * 100) : 0)
   const byAgingDesc = (a: DecomRow, b: DecomRow) => (b.aging ?? -1) - (a.aging ?? -1)
@@ -548,22 +552,24 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
     body += `\n`
   })
 
-  body += thinDiv
-  body += `★★★ TOP PRIORITY — PENDING POD QUICKBASE ★★★\n`
-  body += thinDiv
-  body += `\n`
-  top5QuickBase.forEach(r => {
-    const daysSince = r.dropOffDate ? daysBetween(r.dropOffDate, today) : 0
-    const tier = classifyAgingTier(daysSince)
-    const label = tier === 'onTrack' ? `ON TRACK — ${daysSince} DAYS SINCE DROP OFF` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${daysSince} DAYS SINCE DROP OFF`
-    body += `${TIER_ICON[tier]} ${label}\n`
-    body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
-    body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  POD Pathwave: ✅\n`
-    if (tier === 'critical') body += `⚠️  POD QUICKBASE OVERDUE — IMMEDIATE ACTION REQUIRED\n`
-    else if (tier === 'urgent') body += `⏳ POD QuickBase pending — Action needed soon\n`
-    if (notesByRowKey?.[r.rowKey]) body += `📞 Call Note: ${notesByRowKey[r.rowKey]}\n`
+  if (includeQuickBase) {
+    body += thinDiv
+    body += `★★★ TOP PRIORITY — PENDING POD QUICKBASE ★★★\n`
+    body += thinDiv
     body += `\n`
-  })
+    top5QuickBase.forEach(r => {
+      const daysSince = r.dropOffDate ? daysBetween(r.dropOffDate, today) : 0
+      const tier = classifyAgingTier(daysSince)
+      const label = tier === 'onTrack' ? `ON TRACK — ${daysSince} DAYS SINCE DROP OFF` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${daysSince} DAYS SINCE DROP OFF`
+      body += `${TIER_ICON[tier]} ${label}\n`
+      body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+      body += `Site: ${r.siteName || '—'}  |  Drop Off: ${fmtDecomDate(r.dropOffDate) || '—'}  |  POD Pathwave: ✅\n`
+      if (tier === 'critical') body += `⚠️  POD QUICKBASE OVERDUE — IMMEDIATE ACTION REQUIRED\n`
+      else if (tier === 'urgent') body += `⏳ POD QuickBase pending — Action needed soon\n`
+      if (notesByRowKey?.[r.rowKey]) body += `📞 Call Note: ${notesByRowKey[r.rowKey]}\n`
+      body += `\n`
+    })
+  }
 
   return body
 }
@@ -581,7 +587,7 @@ export function buildDecomEmailMailto(
 
   let body = `Dear ${gc} Team,\n\n`
   body += `Please find below your current decom status requiring immediate attention.\n\n`
-  body += buildDecomStatusBody(gcRows, gc.toUpperCase(), dateStr, notesByRowKey)
+  body += buildDecomStatusBody(gcRows, gc.toUpperCase(), dateStr, notesByRowKey, false)
   body += `${'═'.repeat(41)}\n`
   body += `Please see the attached Excel for full site detail.\n\n`
   body += `Thank you,\nCJ`
