@@ -80,7 +80,23 @@ interface GridColumn {
   // here and it's what GC Call View shows next time that page loads, and
   // vice versa.
   isCrew: boolean
+  // Per-row scratch note field, spliced in immediately before the real
+  // "CX Notes:" column — not a sheet column, and unlike a normal cell edit
+  // it doesn't overwrite anything: it's a running log (reuses the same
+  // hop_call_notes table Pipeline/Decom/SCOP call notes use, keyed
+  // `tracker-cx:{rowKey}`) so a comment jotted here while reviewing the
+  // grid still stages a "CX Comment" entry on the Pending Updates panel —
+  // that's what makes it into the master tracker later, without silently
+  // clobbering whatever's already in the real CX Notes cell.
+  isCxComments: boolean
   width: number
+}
+
+interface CallNote {
+  id: string
+  hop_name: string
+  note: string
+  logged_at: string
 }
 
 // Three starter views, auto-created on first load if no saved views exist yet.
@@ -138,6 +154,9 @@ const BLOCKERS_COL_NAME = 'Blockers'
 // N being that GC's configured crew count (crewCountForGc) — mirrored here
 // exactly so a HOP's crew assignment reads the same either place.
 const CREW_COL_NAME = 'Crew'
+
+const CX_COMMENTS_COL_NAME = 'CX Comments'
+const CX_COMMENTS_KEY_PREFIX = 'tracker-cx:'
 
 // Parses the full tracker snapshot with NO column subsetting — every column
 // survives — and NO dedup-by-HOP either: a HOP can span two physical site
@@ -616,6 +635,16 @@ export default function TrackerGridPage() {
   const [pendingSortField, setPendingSortField] = useState<'hop' | 'field'>('hop')
   const [editingCell, setEditingCell] = useState<{ rowKey: string; field: string } | null>(null)
 
+  // CX Comments column state — history keyed by `tracker-cx:{rowKey}` (see
+  // CX_COMMENTS_KEY_PREFIX), drafts keyed by bare rowKey. Loaded once like
+  // GC Call View's noteHistory; saveCxComment both appends to this history
+  // (hop_call_notes, so it survives page reloads) and stages a "CX Comment"
+  // pending update, same two-writes pattern saveEdit/saveCallNote use
+  // elsewhere for anything meant to land in the master tracker.
+  const [cxCommentHistory, setCxCommentHistory] = useState<Record<string, CallNote[]>>({})
+  const [cxCommentDrafts, setCxCommentDrafts] = useState<Record<string, string>>({})
+  const [cxCommentsModalRowKey, setCxCommentsModalRowKey] = useState<string | null>(null)
+
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // --- Smart search bar. `searchInput` is the raw box value; `searchQuery` is
@@ -741,6 +770,29 @@ export default function TrackerGridPage() {
   // View and GC Call View (app/lib/pendingUpdates.ts).
   useEffect(() => {
     loadPendingUpdates().then(setPendingChanges).catch(() => {})
+  }, [])
+
+  // Load CX Comments history — same hop_call_notes table GC Call View reads
+  // unfiltered and groups client-side; here grouped by the tracker-cx:-
+  // prefixed key instead of a bare HOP.
+  useEffect(() => {
+    const loadCxComments = async () => {
+      const { data, error } = await supabase
+        .from('hop_call_notes')
+        .select('id, hop_name, note, logged_at')
+        .like('hop_name', `${CX_COMMENTS_KEY_PREFIX}%`)
+        .order('logged_at', { ascending: false })
+      if (error) { console.error('Error loading CX comment history:', error); return }
+      if (data) {
+        const historyMap: Record<string, CallNote[]> = {}
+        data.forEach((row: CallNote) => {
+          if (!historyMap[row.hop_name]) historyMap[row.hop_name] = []
+          historyMap[row.hop_name].push(row)
+        })
+        setCxCommentHistory(historyMap)
+      }
+    }
+    loadCxComments()
   }, [])
 
   // Debounce the search box — 300ms after the last keystroke the query commits
@@ -895,6 +947,39 @@ export default function TrackerGridPage() {
     setPendingChanges([])
     persistChanges([])
     setShowPendingPanel(false)
+  }
+
+  // Saves a CX Comments draft: appends to hop_call_notes (the running
+  // history, keyed tracker-cx:{rowKey}) AND stages a "CX Comment" pending
+  // update via the same upsertPendingUpdate/rowKey+field dedup saveEdit
+  // uses — a second comment on the same row today replaces the pending
+  // entry rather than stacking a duplicate, same as every other call-note
+  // feature in this app. Field is 'CX Comment' (not 'CX Notes:') so it
+  // never collides with an actual edit to the real CX Notes cell.
+  const saveCxComment = async (row: TrackerRowData) => {
+    const note = cxCommentDrafts[row.rowKey]
+    if (!note?.trim()) return
+    const key = `${CX_COMMENTS_KEY_PREFIX}${row.rowKey}`
+    const logged_at = new Date().toISOString()
+    const { data, error } = await supabase
+      .from('hop_call_notes')
+      .insert({ hop_name: key, note: note.trim(), logged_at })
+      .select()
+      .single()
+    if (error) { console.error('Error saving CX comment:', error); return }
+    if (data) {
+      setCxCommentHistory(h => ({ ...h, [key]: [data as CallNote, ...(h[key] || [])] }))
+      setCxCommentDrafts(s => ({ ...s, [row.rowKey]: '' }))
+    }
+    const change: Omit<TrackerChange, 'completed'> = {
+      source: 'tracker', rowKey: row.rowKey, hop: row.hop, field: 'CX Comment',
+      oldValue: '—', newValue: note.trim(), timestamp: logged_at, user: 'CJ',
+    }
+    setPendingChanges(prev => {
+      const next = upsertPendingUpdate(prev, change)
+      persistChanges(next)
+      return next
+    })
   }
 
   // Matches on hop (not rowKey) — same convention as CM/GC view's
@@ -1077,18 +1162,30 @@ export default function TrackerGridPage() {
       const isHop = i === hopColIdx
       const isDate = isDateColumn(name)
       const defaultWidth = isHop ? 220 : (isDate ? 150 : 130)
-      return { index: i, name, isHop, isDate, isBlockers: false, isCrew: false, width: columnWidths[name] ?? defaultWidth }
+      return { index: i, name, isHop, isDate, isBlockers: false, isCrew: false, isCxComments: false, width: columnWidths[name] ?? defaultWidth }
     })
     if (real.length === 0) return real
     const crewCol: GridColumn = {
-      index: -1, name: CREW_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: true,
+      index: -1, name: CREW_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: true, isCxComments: false,
       width: columnWidths[CREW_COL_NAME] ?? 110,
     }
     const blockersCol: GridColumn = {
-      index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true, isCrew: false,
+      index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true, isCrew: false, isCxComments: false,
       width: columnWidths[BLOCKERS_COL_NAME] ?? 260,
     }
-    return [real[0], crewCol, blockersCol, ...real.slice(1)]
+    const withComputed = [real[0], crewCol, blockersCol, ...real.slice(1)]
+
+    // CX Comments — spliced in right before the real "CX Notes:" column so
+    // it reads as "here's a draft comment for what should go in CX Notes".
+    // Skipped entirely if this tracker export doesn't have a CX Notes
+    // column at all (nothing to sit in front of).
+    const cxNotesIdx = withComputed.findIndex(c => c.name === 'CX Notes:')
+    if (cxNotesIdx === -1) return withComputed
+    const cxCommentsCol: GridColumn = {
+      index: -1, name: CX_COMMENTS_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: false, isCxComments: true,
+      width: columnWidths[CX_COMMENTS_COL_NAME] ?? 220,
+    }
+    return [...withComputed.slice(0, cxNotesIdx), cxCommentsCol, ...withComputed.slice(cxNotesIdx)]
   }, [headers, columnWidths])
 
   // Resolves the raw-sheet columns Blockers reads from — done once per
@@ -1245,11 +1342,12 @@ export default function TrackerGridPage() {
   const cellText = useCallback((row: TrackerRowData, col: GridColumn): string => {
     if (col.isBlockers) return blockersText(row)
     if (col.isCrew) return crewAssignments[row.hop] || ''
+    if (col.isCxComments) return (cxCommentHistory[`${CX_COMMENTS_KEY_PREFIX}${row.rowKey}`] || [])[0]?.note || ''
     const change = changeMap.get(`${row.rowKey}|${col.name}`)
     if (change) return change.newValue ?? ''
     if (col.isHop) return row.hop
     return cellDisplayValue(row.cells[col.index], col.isDate).text
-  }, [changeMap, blockersText, crewAssignments])
+  }, [changeMap, blockersText, crewAssignments, cxCommentHistory])
 
   // --- Search filter. Scoped to every column in the sheet — NOT filteredColumns
   // (the current view's visible set) — so search behaves the same regardless
@@ -1919,6 +2017,45 @@ export default function TrackerGridPage() {
                           </td>
                         )
                       }
+                      if (col.isCxComments) {
+                        const key = `${CX_COMMENTS_KEY_PREFIX}${row.rowKey}`
+                        const history = cxCommentHistory[key] || []
+                        return (
+                          <td
+                            key={col.name}
+                            style={{ backgroundColor: rowBg, height: ROW_HEIGHT }}
+                            className="px-1 py-1 border-r border-b border-gray-200"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="text"
+                                placeholder="Add comment…"
+                                value={cxCommentDrafts[row.rowKey] || ''}
+                                onChange={(e) => setCxCommentDrafts(prev => ({ ...prev, [row.rowKey]: e.target.value }))}
+                                onKeyDown={(e) => { if (e.key === 'Enter') saveCxComment(row) }}
+                                className="w-full text-xs rounded px-1.5 py-1 border border-gray-300 focus:outline-none focus:border-blue-500"
+                              />
+                              <button
+                                onClick={() => saveCxComment(row)}
+                                title="Save comment"
+                                className="shrink-0 text-xs bg-blue-600 hover:bg-blue-700 text-white rounded px-1.5 py-1 font-semibold"
+                              >
+                                💾
+                              </button>
+                              {history.length > 0 && (
+                                <button
+                                  onClick={() => setCxCommentsModalRowKey(row.rowKey)}
+                                  title="View comment history"
+                                  className="shrink-0 text-xs bg-gray-200 hover:bg-gray-300 text-gray-700 rounded px-1.5 py-1 font-semibold"
+                                >
+                                  💬{history.length}
+                                </button>
+                              )}
+                            </div>
+                          </td>
+                        )
+                      }
                       const raw = row.cells[col.index]
                       const { text: displayValue, treatAsDate } = cellDisplayValue(raw, col.isDate)
                       const change = changeMap.get(`${row.rowKey}|${col.name}`)
@@ -1990,6 +2127,52 @@ export default function TrackerGridPage() {
           }}
         />
       )}
+
+      {cxCommentsModalRowKey && (() => {
+        const modalRow = trackerRows.find(r => r.rowKey === cxCommentsModalRowKey)
+        if (!modalRow) return null
+        const key = `${CX_COMMENTS_KEY_PREFIX}${cxCommentsModalRowKey}`
+        const history = cxCommentHistory[key] || []
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-start justify-center pt-20 px-4"
+            onClick={() => setCxCommentsModalRowKey(null)}>
+            <div className="bg-white rounded-xl border border-gray-300 w-full max-w-lg max-h-96 overflow-hidden shadow-2xl"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between p-4 border-b border-gray-200" style={{ backgroundColor: NAVY }}>
+                <h2 className="text-base font-bold text-white">💬 CX Comments — {modalRow.hop}</h2>
+                <button onClick={() => setCxCommentsModalRowKey(null)} className="text-white hover:text-gray-200 text-xl font-bold">✕</button>
+              </div>
+              <div className="p-4 overflow-y-auto max-h-64">
+                {history.length === 0
+                  ? <p className="text-sm text-gray-400">No comments yet</p>
+                  : history.map((n, i) => (
+                    <div key={n.id} className={`text-sm py-2 ${i > 0 ? 'border-t border-gray-200' : ''}`}>
+                      <span className="text-gray-400 text-xs">{new Date(n.logged_at).toLocaleString()}</span>
+                      <p className="text-gray-800">{n.note}</p>
+                    </div>
+                  ))
+                }
+              </div>
+              <div className="flex items-center gap-2 p-3 border-t border-gray-200 bg-gray-50">
+                <input
+                  type="text"
+                  placeholder="Add comment…"
+                  value={cxCommentDrafts[modalRow.rowKey] || ''}
+                  onChange={(e) => setCxCommentDrafts(prev => ({ ...prev, [modalRow.rowKey]: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === 'Enter') saveCxComment(modalRow) }}
+                  className="flex-1 text-sm rounded px-2 py-1.5 border border-gray-300 focus:outline-none focus:border-blue-500"
+                />
+                <button
+                  onClick={() => saveCxComment(modalRow)}
+                  className="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 font-semibold"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
     </div>
   )
 }
