@@ -369,6 +369,7 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                       <td className="p-2 text-xs whitespace-nowrap">
                         <span className={
                           h.hasSpo ? 'text-green-400 font-bold' :
+                          h.hasCpo && h.hasSpoRequest ? 'text-blue-400 font-bold' :
                           h.hasCpo ? 'text-yellow-400 font-bold' :
                           h.hasSpoRequest ? 'text-blue-400 font-bold' :
                           'text-red-400 font-bold'
