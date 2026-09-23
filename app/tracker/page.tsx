@@ -874,29 +874,41 @@ export default function TrackerGridPage() {
     })
   }, [])
 
-  // Snap back to top-left whenever anything that changes what rows or
-  // columns are showing takes effect — search, a column filter, the sort, or
-  // switching views/entering the column editor. The real scrollbar doesn't
-  // move on its own when the row or column set shrinks or shuffles, so
-  // without this the grid can sit scrolled past content that no longer
-  // exists there and show nothing (or the wrong columns) even though it
-  // filtered/switched correctly. Matches Excel, which also jumps to the top
-  // of a freshly filtered/sorted range.
-  const gridResetKey = `${activeViewName}|${editorMode}|${searchQuery}|${JSON.stringify(columnFilters)}|${JSON.stringify(sortOrder)}`
-  const [prevGridResetKey, setPrevGridResetKey] = useState(gridResetKey)
-  if (gridResetKey !== prevGridResetKey) {
-    setPrevGridResetKey(gridResetKey)
+  // Snap back to top whenever the ROW set changes shape — search, a column
+  // value filter, or the sort. The real scrollbar doesn't move on its own
+  // when the row set shrinks or reorders, so without this the grid can sit
+  // scrolled past content that no longer exists there and show nothing.
+  // Matches Excel, which also jumps to the top of a freshly filtered/sorted
+  // range. Split from the horizontal (column-layout) reset below — a filter
+  // or sort never changes which columns exist or their order, so there's no
+  // reason it should also throw away how far right you'd scrolled to reach
+  // whatever column you were filtering/sorting on in the first place.
+  const rowResetKey = `${activeViewName}|${editorMode}|${searchQuery}|${JSON.stringify(columnFilters)}|${JSON.stringify(sortOrder)}`
+  const [prevRowResetKey, setPrevRowResetKey] = useState(rowResetKey)
+  if (rowResetKey !== prevRowResetKey) {
+    setPrevRowResetKey(rowResetKey)
     setScrollTop(0)
-    setScrollLeft(0)
   }
-  // The React-state half of the reset happens above (during render, per
-  // React's own pattern for resetting state on a dependency change) — this
-  // effect only syncs the real DOM scroll position to match, which is a
-  // legitimate external-system update for an effect to make.
   useEffect(() => {
     const el = scrollContainerRef.current
-    if (el) { el.scrollTop = 0; el.scrollLeft = 0 }
-  }, [gridResetKey])
+    if (el) el.scrollTop = 0
+  }, [rowResetKey])
+
+  // Snap back to the far-left column only when the actual column LAYOUT
+  // changes — switching views (a different view can hide/show/reorder
+  // columns) or toggling the column editor. This is the only case where the
+  // horizontal scroll position could legitimately be pointing at a column
+  // that's no longer there.
+  const columnResetKey = `${activeViewName}|${editorMode}`
+  const [prevColumnResetKey, setPrevColumnResetKey] = useState(columnResetKey)
+  if (columnResetKey !== prevColumnResetKey) {
+    setPrevColumnResetKey(columnResetKey)
+    setScrollLeft(0)
+  }
+  useEffect(() => {
+    const el = scrollContainerRef.current
+    if (el) el.scrollLeft = 0
+  }, [columnResetKey])
 
   // Debounced row selection (single click) — collapses rapid repeated clicks
   // into a single state update instead of one per click.
