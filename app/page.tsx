@@ -9,6 +9,7 @@ import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDispl
 import { loadChunkedReport } from './lib/reportChunks'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
+import { computeSpoStatus } from './lib/spoStatus'
 
 // Decom isn't its own page (it lives inside Reports' Decom section and
 // GC Call View's Decom tab), so it isn't listed as a separate nav card here
@@ -240,11 +241,11 @@ interface HopDetail {
   hop: string, gc: string, nokiaPm: string,
   ms15f: string, ms15a: string, ms16f: string, ms16a: string,
   hasNtp: boolean, ntpWaitingOn: string,
-  hasMat: boolean, hasSpo: boolean, hasCpo: boolean,
+  hasMat: boolean, hasSpo: boolean, hasCpo: boolean, hasSpoRequest: boolean,
   daysOut: number | null, daysElapsed: number | null,
   inProgress: boolean, complete: boolean, over18d: boolean,
   startingThisWeek: boolean, ntpUrgent: boolean,
-  cutSpoNow: boolean, spoNeeded: boolean,
+  cutSpoNow: boolean, spoRequested: boolean, spoPendingRequest: boolean,
   materialWatch: boolean, vendorConflict: boolean,
   currentMonthFc: boolean, currentMonthAct: boolean,
 }
@@ -317,7 +318,7 @@ const MODAL_COLUMNS: ModalCol[] = [
   { key: 'hasNtp', label: 'NTP', kind: 'bool', get: h => (h.hasNtp ? 'Yes' : 'No'), getBool: h => h.hasNtp },
   { key: 'ntpWaitingOn', label: 'NTP Waiting On', kind: 'text', get: h => h.ntpWaitingOn },
   { key: 'hasMat', label: 'Mat', kind: 'bool', get: h => (h.hasMat ? 'Yes' : 'No'), getBool: h => h.hasMat },
-  { key: 'spo', label: 'SPO', kind: 'spo', get: h => (h.hasSpo ? 'Issued' : h.hasCpo ? 'CPO' : 'Missing') },
+  { key: 'spo', label: 'SPO', kind: 'spo', get: h => (h.hasSpo ? 'Issued' : h.hasCpo ? 'CPO' : h.spoRequested ? 'Requested' : 'Missing') },
 ]
 
 function modalDateValue(text: string): number | null {
@@ -326,8 +327,11 @@ function modalDateValue(text: string): number | null {
   return isNaN(t) ? null : t
 }
 
+// 0=nothing yet, 1=requested (CX SPO Request logged), 2=CPO ready, 3=issued —
+// ordering for sort only, the three non-issued states are otherwise parallel
+// paths, not a strict sequence (see computeSpoStatus in lib/spoStatus.ts).
 function modalSpoRank(h: HopDetail): number {
-  return h.hasSpo ? 2 : h.hasCpo ? 1 : 0
+  return h.hasSpo ? 3 : h.hasCpo ? 2 : h.spoRequested ? 1 : 0
 }
 
 function modalRowMatches(h: HopDetail, col: ModalCol, filterVal: string): boolean {
@@ -335,7 +339,10 @@ function modalRowMatches(h: HopDetail, col: ModalCol, filterVal: string): boolea
   if (col.kind === 'bool') return filterVal === 'yes' ? !!col.getBool?.(h) : !col.getBool?.(h)
   if (col.kind === 'spo') {
     const rank = modalSpoRank(h)
-    return filterVal === 'issued' ? rank === 2 : filterVal === 'cpo' ? rank === 1 : rank === 0
+    if (filterVal === 'issued') return rank === 3
+    if (filterVal === 'cpo') return rank === 2
+    if (filterVal === 'requested') return rank === 1
+    return rank === 0 // 'missing'
   }
   return col.get(h).toLowerCase().includes(filterVal.toLowerCase())
 }
@@ -423,6 +430,7 @@ function HopsModal({ title, hops, onClose }: { title: string; hops: HopDetail[];
                             <option value="">All</option>
                             <option value="issued">✓ Issued</option>
                             <option value="cpo">CPO</option>
+                            <option value="requested">📨 Requested</option>
                             <option value="missing">✗ Missing</option>
                           </select>
                         ) : (
@@ -450,7 +458,7 @@ function HopsModal({ title, hops, onClose }: { title: string; hops: HopDetail[];
                     <td className="px-3 py-1.5">{h.hasNtp ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
                     <td className="px-3 py-1.5 text-gray-400 max-w-[180px] truncate">{h.ntpWaitingOn}</td>
                     <td className="px-3 py-1.5">{h.hasMat ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
-                    <td className="px-3 py-1.5">{h.hasSpo ? <span className="text-green-400">✓</span> : h.hasCpo ? <span className="text-yellow-400">CPO</span> : <span className="text-red-400">✗</span>}</td>
+                    <td className="px-3 py-1.5">{h.hasSpo ? <span className="text-green-400">✓</span> : h.hasCpo ? <span className="text-yellow-400">CPO</span> : h.spoRequested ? <span className="text-blue-400">📨</span> : <span className="text-red-400">✗</span>}</td>
                   </tr>
                 ))}
               </tbody>
@@ -481,7 +489,8 @@ export default function Home() {
     over18d: number
     startingThisWeek: number
     ntpUrgent: number
-    spoNeeded: number
+    spoRequested: number
+    spoPendingRequest: number
     openActions: number
     cutSpoNow: number
     materialWatch: number
@@ -573,6 +582,7 @@ export default function Home() {
     const ntpCol      = col('NTP A')
     const matCol      = headers.findIndex(h => String(h).trim().replace(/\s+/g, ' ').startsWith('Material Received A'))
     const spoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const spoRequestCol = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo request')
     const cpoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
     const itwSCol     = col('ITW Schedule Start')
     const itwECol     = col('ITW Schedule Complete')
@@ -642,7 +652,7 @@ export default function Home() {
 
     let totalHops = 0, ntpComplete = 0, materialsReceived = 0
     let startsToDate = 0, completesToDate = 0, activeNow = 0, over18d = 0
-    let startingThisWeek = 0, ntpUrgent = 0, spoNeeded = 0
+    let startingThisWeek = 0, ntpUrgent = 0, spoRequested = 0, spoPendingRequest = 0
     let cutSpoNow = 0, materialWatch = 0, vendorConflicts = 0
     let currentMonthFcComplete = 0, currentMonthActComplete = 0
 
@@ -664,11 +674,13 @@ export default function Home() {
       const ms16f   = parseD(row[ms16fCol])
       const ms16a   = parseD(row[ms16aCol])
       const spoDate = parseD(row[spoCol])
+      const spoRequestDate = parseD(row[spoRequestCol])
       const cpoVal  = String(row[cpoCol] || '').trim()
 
       const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
       const hasMat     = !!(matDate && !isNaN(matDate.getTime()) && matDate.getFullYear() >= 2020) || !!ms16a
       const hasSpo     = !!spoDate
+      const hasSpoRequest = !!spoRequestDate
       const hasCpo     = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
       const started    = !!ms15a
       const complete   = !!ms16a
@@ -685,8 +697,10 @@ export default function Home() {
       if (!started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7) startingThisWeek++
       if (!hasNtp && !complete && daysOut !== null && daysOut <= thresholds.ntpUrgentDays) ntpUrgent++
       if (!hasSpo && !complete) {
-        if (hasCpo) cutSpoNow++
-        else spoNeeded++
+        const spoStatus = computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status
+        if (spoStatus === 'cpo_ready') cutSpoNow++
+        else if (spoStatus === 'requested') spoRequested++
+        else spoPendingRequest++
       }
       if (!hasMat && !complete && daysOut !== null && daysOut <= thresholds.materialWatchDays) materialWatch++
 
@@ -718,11 +732,11 @@ export default function Home() {
       hop: string, gc: string, nokiaPm: string,
       ms15f: string, ms15a: string, ms16f: string, ms16a: string,
       hasNtp: boolean, ntpWaitingOn: string,
-      hasMat: boolean, hasSpo: boolean, hasCpo: boolean,
+      hasMat: boolean, hasSpo: boolean, hasCpo: boolean, hasSpoRequest: boolean,
       daysOut: number | null, daysElapsed: number | null,
       inProgress: boolean, complete: boolean, over18d: boolean,
       startingThisWeek: boolean, ntpUrgent: boolean,
-      cutSpoNow: boolean, spoNeeded: boolean,
+      cutSpoNow: boolean, spoRequested: boolean, spoPendingRequest: boolean,
       materialWatch: boolean, vendorConflict: boolean,
       currentMonthFc: boolean, currentMonthAct: boolean,
     }[] = []
@@ -735,10 +749,12 @@ export default function Home() {
       const ms16f   = parseD(row[ms16fCol])
       const ms16a   = parseD(row[ms16aCol])
       const spoDate = parseD(row[spoCol])
+      const spoRequestDate = parseD(row[spoRequestCol])
       const cpoVal  = String(row[cpoCol] || '').trim()
       const hasNtp  = !!(ntpDate && ntpDate.getFullYear() >= 2025)
       const hasMat  = !!(matDate && !isNaN(matDate.getTime()) && matDate.getFullYear() >= 2020) || !!ms16a
       const hasSpo  = !!spoDate
+      const hasSpoRequest = !!spoRequestDate
       const hasCpo  = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
       const started    = !!ms15a
       const complete   = !!ms16a
@@ -762,13 +778,14 @@ export default function Home() {
         ms15f: fmtD(ms15f), ms15a: fmtD(ms15a),
         ms16f: fmtD(ms16f), ms16a: fmtD(ms16a),
         hasNtp, ntpWaitingOn: String(row[ntpWaitCol] || '').trim(),
-        hasMat, hasSpo, hasCpo,
+        hasMat, hasSpo, hasCpo, hasSpoRequest,
         daysOut, daysElapsed, inProgress, complete,
         over18d: inProgress && (daysElapsed??0) > thresholds.durationAlertDays,
         startingThisWeek: !started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7,
         ntpUrgent: !hasNtp && !complete && daysOut !== null && daysOut <= thresholds.ntpUrgentDays,
-        cutSpoNow: !hasSpo && !complete && hasCpo,
-        spoNeeded: !hasSpo && !complete && !hasCpo,
+        cutSpoNow: !hasSpo && !complete && computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status === 'cpo_ready',
+        spoRequested: !hasSpo && !complete && computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status === 'requested',
+        spoPendingRequest: !hasSpo && !complete && computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status === 'needed',
         materialWatch: !hasMat && !complete && daysOut !== null && daysOut <= thresholds.materialWatchDays,
         vendorConflict: hasConflict2 && !complete,
         currentMonthFc: !!(ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear),
@@ -780,7 +797,7 @@ export default function Home() {
 
     setKpis({
       totalHops, ntpComplete, materialsReceived, startsToDate, completesToDate,
-      activeNow, over18d, startingThisWeek, ntpUrgent, spoNeeded,
+      activeNow, over18d, startingThisWeek, ntpUrgent, spoRequested, spoPendingRequest,
       openActions: 0, cutSpoNow, materialWatch, vendorConflicts,
       currentMonthFcComplete, currentMonthActComplete
     })
@@ -1270,7 +1287,8 @@ export default function Home() {
     over18d: filteredDetails.filter(h => h.over18d).length,
     startingThisWeek: filteredDetails.filter(h => h.startingThisWeek).length,
     ntpUrgent: filteredDetails.filter(h => h.ntpUrgent).length,
-    spoNeeded: filteredDetails.filter(h => h.spoNeeded).length,
+    spoRequested: filteredDetails.filter(h => h.spoRequested).length,
+    spoPendingRequest: filteredDetails.filter(h => h.spoPendingRequest).length,
     cutSpoNow: filteredDetails.filter(h => h.cutSpoNow).length,
     materialWatch: filteredDetails.filter(h => h.materialWatch).length,
     vendorConflicts: filteredDetails.filter(h => h.vendorConflict).length,
@@ -1569,13 +1587,14 @@ export default function Home() {
                 </div>
 
                 {/* Row 2 — Needs Action Today */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
                   {[
                     { label: 'Active Sites', value: filteredKpis!.activeNow, color: 'text-blue-400', sub: 'crews on site now', filter: (h: typeof hopDetails[0]) => h.inProgress },
                     { label: 'Over 18 Days', value: filteredKpis!.over18d, color: filteredKpis!.over18d > 0 ? 'text-red-400' : 'text-green-400', sub: 'past target duration', filter: (h: typeof hopDetails[0]) => h.over18d },
                     { label: 'Starting This Week', value: filteredKpis!.startingThisWeek, color: 'text-orange-400', sub: '0–7 days out', filter: (h: typeof hopDetails[0]) => h.startingThisWeek },
                     { label: 'NTP Urgent', value: filteredKpis!.ntpUrgent, color: filteredKpis!.ntpUrgent > 0 ? 'text-red-400' : 'text-green-400', sub: 'missing NTP ≤14d', filter: (h: typeof hopDetails[0]) => h.ntpUrgent },
-                    { label: 'SPO Needed', value: filteredKpis!.spoNeeded, color: filteredKpis!.spoNeeded > 0 ? 'text-red-400' : 'text-green-400', sub: 'no CPO yet', filter: (h: typeof hopDetails[0]) => h.spoNeeded },
+                    { label: 'SPO Requested', value: filteredKpis!.spoRequested, color: filteredKpis!.spoRequested > 0 ? 'text-blue-400' : 'text-green-400', sub: 'requested, pending SPO creation', filter: (h: typeof hopDetails[0]) => h.spoRequested },
+                    { label: 'Pending SPO Request', value: filteredKpis!.spoPendingRequest, color: filteredKpis!.spoPendingRequest > 0 ? 'text-red-400' : 'text-green-400', sub: 'no CPO, not requested', filter: (h: typeof hopDetails[0]) => h.spoPendingRequest },
                   ].map(({ label, value, color, sub, filter }) => (
                     <div key={label} onClick={() => openModal(label, filter)}
                       className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
@@ -1859,6 +1878,8 @@ export default function Home() {
                                     {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
                                     {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
                                     {h.cutSpoNow && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO</span>}
+                                    {h.spoRequested && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 SPO Requested</span>}
+                                    {h.spoPendingRequest && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">SPO Not Requested</span>}
                                     {h.ntpWaitingOn && <span className="text-gray-500 text-xs">Waiting: {h.ntpWaitingOn.slice(0,40)}</span>}
                                   </div>
                                   {history.length > 0 && (

@@ -5,6 +5,7 @@ export const dynamic = 'force-dynamic'
 import { useState, useEffect, useCallback } from 'react'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
+import { computeSpoStatus, SpoStatus } from '../lib/spoStatus'
 
 interface HOP {
   hop: string
@@ -23,7 +24,8 @@ interface HOP {
   hasMat: boolean
   hasSpo: boolean
   hasCpo: boolean
-  spoStatus: string
+  hasSpoRequest: boolean
+  spoStatus: SpoStatus
   ntpOwner: string
   ntpWaitingOn: string
   matForecast: string
@@ -141,7 +143,8 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
           {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
           {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
           {h.spoStatus === 'cpo_ready' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO Now</span>}
-          {h.spoStatus === 'missing_cpo' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">SPO — Chase CPO</span>}
+          {h.spoStatus === 'requested' && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 SPO Requested</span>}
+          {h.spoStatus === 'needed' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">SPO — Pending Request</span>}
           {h.vendorWindow.includes('🔴') && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">Vendor ⚠️</span>}
           {h.over18d && <span className="bg-red-800 text-red-200 text-xs px-2 py-0.5 rounded-full">⚠️ Over 18d</span>}
           {hopOpenActions.length > 0 && (
@@ -167,11 +170,13 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
             <div><span className="text-gray-500">SPO:</span> <span className={
               h.spoStatus === 'issued' ? 'text-green-400' :
               h.spoStatus === 'cpo_ready' ? 'text-yellow-300 font-bold' :
+              h.spoStatus === 'requested' ? 'text-blue-400' :
               'text-red-400'
             }>{
               h.spoStatus === 'issued' ? '✓ Issued' :
               h.spoStatus === 'cpo_ready' ? '⚡ CPO Available — Cut SPO Now' :
-              '✗ No CPO — Chase CPO'
+              h.spoStatus === 'requested' ? '📨 Requested — Pending SPO Creation' :
+              '✗ Pending SPO Request'
             }</span></div>
             {!h.hasNtp && h.ntpWaitingOn && <div className="col-span-2"><span className="text-gray-500">NTP Waiting On:</span> <span className="text-yellow-300">{h.ntpWaitingOn}</span></div>}
             {!h.hasMat && h.matForecast && <div><span className="text-gray-500">Mat Forecast:</span> <span className="text-yellow-300">{h.matForecast}</span></div>}
@@ -426,6 +431,7 @@ export default function WeeklyFocusPage() {
     const ntpCol      = col('NTP A')
     const matCol      = headers.findIndex(h => String(h).trim().replace(/\s+$/, '') === 'Material Received A'.trim())
     const spoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const spoRequestCol = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo request')
     const cpoCol      = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
     const matFcCol    = col('Material Forecast +4ish')
     const wpCol       = col('Work Package Approved in QB')
@@ -467,9 +473,11 @@ export default function WeeklyFocusPage() {
       const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
       const spoDate    = parseDateAny(row[spoCol])
       const hasSpo     = !!spoDate
+      const spoRequestDate = parseDateAny(row[spoRequestCol])
+      const hasSpoRequest = !!spoRequestDate
       const cpoVal     = String(row[cpoCol] || '').trim()
       const hasCpo     = cpoVal.length > 0 && cpoVal.toLowerCase() !== 'nan'
-      const spoStatus  = hasSpo ? 'issued' : hasCpo ? 'cpo_ready' : 'missing_cpo'
+      const spoStatus  = computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status
       const wpApproved = !!wpDate
       const gcPickup   = !!pickupD
       const started    = !!ms15a
@@ -504,7 +512,7 @@ export default function WeeklyFocusPage() {
         ms16a:       fmtDate(ms16a),
         mss:         fmtDate(mssDate),
         powerUp:     fmtDate(powerDate),
-        hasNtp, hasMat, hasSpo, hasCpo, spoStatus, wpApproved, gcPickup,
+        hasNtp, hasMat, hasSpo, hasCpo, hasSpoRequest, spoStatus, wpApproved, gcPickup,
         ntpOwner:    String(row[ntpOwnCol] || '').trim(),
         ntpWaitingOn: String(row[ntpWaitCol] || '').trim(),
         matForecast: fmtDate(parseDateAny(row[matFcCol])),
@@ -583,7 +591,8 @@ export default function WeeklyFocusPage() {
     over18: active.filter(h => h.over18d),
     thisweek: [...needsAttention, ...thisWeekReady],
     ntpurgent: ntpUrgent,
-    sponeeded: filteredHops.filter(h => h.spoStatus === 'missing_cpo' && !h.complete),
+    sponeeded: filteredHops.filter(h => h.spoStatus === 'needed' && !h.complete),
+    sporequested: filteredHops.filter(h => h.spoStatus === 'requested' && !h.complete),
     cutspo: filteredHops.filter(h => h.spoStatus === 'cpo_ready' && !h.complete),
     matwatch: filteredHops.filter(h => !h.hasMat && !h.complete && h.daysOut !== null && h.daysOut <= 14),
     ready: filteredHops.filter(h => h.hasNtp && h.hasMat && !h.inProgress && !h.complete),
@@ -594,7 +603,8 @@ export default function WeeklyFocusPage() {
     { key: 'over18', label: 'Over 18 Days', color: 'text-red-400' },
     { key: 'thisweek', label: 'Starting This Week', color: 'text-orange-400' },
     { key: 'ntpurgent', label: 'NTP Urgent ≤14d', color: 'text-yellow-400' },
-    { key: 'sponeeded', label: 'SPO Needed', color: 'text-red-400' },
+    { key: 'sponeeded', label: 'Pending SPO Request', color: 'text-red-400' },
+    { key: 'sporequested', label: 'SPO Requested', color: 'text-blue-400' },
     { key: 'cutspo', label: 'Cut SPO Now', color: 'text-yellow-400' },
     { key: 'matwatch', label: 'Material Watch', color: 'text-orange-400' },
     { key: 'ready', label: 'Ready to Start', color: 'text-green-400' },
@@ -785,7 +795,8 @@ export default function WeeklyFocusPage() {
                         {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
                         {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
                         {h.spoStatus === 'cpo_ready' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO</span>}
-                        {h.spoStatus === 'missing_cpo' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">🔴 Chase CPO</span>}
+                        {h.spoStatus === 'requested' && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 Requested</span>}
+                        {h.spoStatus === 'needed' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">🔴 Pending Request</span>}
                         {h.daysOut !== null && !h.inProgress && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>}
                         {openHopActs.length > 0 && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">{openHopActs.length} open</span>}
                       </div>

@@ -8,6 +8,7 @@ import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail } from '../lib/settings'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
+import { computeSpoStatus } from '../lib/spoStatus'
 
 interface HOP {
   hop: string
@@ -43,6 +44,7 @@ interface HOP {
   ms16fEdited: string
   hasSpo: boolean
   hasCpo: boolean
+  hasSpoRequest: boolean
   vendorWindow: string
   blockers: string[]
   daysOut: number | null
@@ -368,9 +370,10 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                         <span className={
                           h.hasSpo ? 'text-green-400 font-bold' :
                           h.hasCpo ? 'text-yellow-400 font-bold' :
+                          h.hasSpoRequest ? 'text-blue-400 font-bold' :
                           'text-red-400 font-bold'
                         }>
-                          {h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'}
+                          {computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel}
                         </span>
                       </td>
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.steelFrom || '—'}</td>
@@ -689,6 +692,7 @@ export default function CMViewPage() {
     const cxNotesCol   = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'CX Notes:')
     const pathIdCol = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
     const spoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const spoRequestCol = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo request')
     const cpoCol       = headers.findIndex(h => String(h).trim().toLowerCase() === 'service cpo received')
     const itwSCol     = col('ITW Schedule Start')
     const itwECol     = col('ITW Schedule Complete')
@@ -831,6 +835,7 @@ export default function CMViewPage() {
         cxNotes:      String(row[cxNotesCol] || '').trim(),
         ms16fEdited:  '',
         hasSpo: spoCol !== -1 ? !!parseDateAny(row[spoCol]) : false,
+        hasSpoRequest: spoRequestCol !== -1 ? !!parseDateAny(row[spoRequestCol]) : false,
         hasCpo: (() => {
           if (cpoCol === -1) return false
           const v = String(row[cpoCol] || '').trim()
@@ -1046,7 +1051,7 @@ export default function CMViewPage() {
           rows.push([`--- ${label} (${sectionHops.length}) ---`])
           rows.push(headers)
           sectionHops.forEach(h => {
-            const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+            const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
             const elapsed = isActive && h.daysElapsed !== null ? `${h.daysElapsed}d` : ''
             const daysOut = !isActive && h.daysOut !== null ? `${h.daysOut}d` : ''
             const status = isActive
@@ -1136,7 +1141,7 @@ export default function CMViewPage() {
           const status = (h.daysElapsed ?? 0) > thresholds.durationAlertDays
             ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
             : `✅ On track — ${h.daysElapsed}d elapsed`
-          const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+          const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
           const latestNote = (noteHistory[h.hop] || []).length > 0
             ? `  💬 Latest Note: ${new Date(noteHistory[h.hop][0].logged_at).toLocaleDateString('en-US', {month:'numeric',day:'numeric'})} — ${noteHistory[h.hop][0].note}`
             : ''
@@ -1155,7 +1160,7 @@ export default function CMViewPage() {
       if (upcoming.length > 0) {
         body += `★★ Starting Within 2 Weeks (${upcoming.length}) ★★\n\n`
         upcoming.forEach(h => {
-          const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+          const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
           const steelNote = h.steelFrom === 'ITW'
             ? `ITW — confirm ITW delivery schedule`
             : h.steelFrom || '—'

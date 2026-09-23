@@ -10,6 +10,7 @@ import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, ScopSettings, DEFAULT_SCOP, loadScopSettings } from '../lib/settings'
 import ScopGcTab from './ScopGcTab'
 import { CallNoteCell, CallNoteHistoryCell } from './CallNoteCell'
+import { computeSpoStatus } from '../lib/spoStatus'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 import { loadChunkedReport } from '../lib/reportChunks'
 import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, uniqueDecomGcNames, DecomRow } from '../lib/decom'
@@ -687,6 +688,7 @@ interface HOP {
   gcPickupDate: string
   hasSpo: boolean
   hasCpo: boolean
+  hasSpoRequest: boolean
   spoIssued: string
   steelFrom: string
   itwStart: string
@@ -964,7 +966,9 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
                       <td className="p-2">
                         {h.hasSpo
                           ? <span className="text-green-400 font-bold text-sm" title={h.spoIssued}>✓</span>
-                          : <span className="text-red-400 font-bold text-sm">✗</span>
+                          : h.hasSpoRequest
+                            ? <span className="text-blue-400 font-bold text-sm" title="Requested — pending SPO creation">📨</span>
+                            : <span className="text-red-400 font-bold text-sm">✗</span>
                         }
                       </td>
                       <td className="p-2">{h.hasNtp ? <span className="text-green-400 font-bold text-sm">✓</span> : <span className="text-red-400 font-bold text-sm">✗</span>}</td>
@@ -1320,6 +1324,7 @@ export default function GCCallPage() {
     const wpCol     = col('Work Package Approved in QB')
     const pickupCol = col('GC Material Pick-up (A)')
     const spoCol    = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo issued')
+    const spoRequestCol = headers.findIndex(h => String(h).trim().toLowerCase() === 'cx spo request')
       // Steel From (Nokia/ITW) is at a known position — find by exact index match
       const steelCol = (() => {
         // First try exact match with newline
@@ -1427,6 +1432,7 @@ export default function GCCallPage() {
       const wpDate  = parseDateAny(row[wpCol])
       const pickupD = parseDateAny(row[pickupCol])
       const spoDate  = parseDateAny(row[spoCol]) || (row2 ? parseDateAny(row2[spoCol]) : null)
+      const spoRequestDate = parseDateAny(row[spoRequestCol]) || (row2 ? parseDateAny(row2[spoRequestCol]) : null)
       const steelFrom = (() => {
         const idx = headers.findIndex(h => String(h).trim() === 'Steel From')
         if (idx === -1) return ''
@@ -1546,6 +1552,7 @@ export default function GCCallPage() {
         gcPickupDate: fmtDate(pickupD),
         hasSpo:       !!(spoDate && spoDate.getFullYear() >= 2020),
         hasCpo:       false,
+        hasSpoRequest: !!(spoRequestDate && spoRequestDate.getFullYear() >= 2020),
         spoIssued:    spoDate ? fmtDate(spoDate) : '',
         steelFrom:    steelFrom,
         itwStart:     fmtDate(itwS),
@@ -1757,7 +1764,7 @@ export default function GCCallPage() {
         const status = (h.daysElapsed ?? 0) > thresholds.durationAlertDays
           ? `⚠️ OVER TARGET — ${h.daysElapsed}d elapsed — confirm completion date with crew`
           : `✅ On track — ${h.daysElapsed}d elapsed`
-        const spoStatusActive = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const spoStatusActive = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
         body += `★ ${h.hop} ★`
         if (h.pathId) body += `  |  Path ID: ${h.pathId}`
         body += '\n'
@@ -1779,7 +1786,7 @@ export default function GCCallPage() {
       body += `★★★  STARTING WITHIN 2 WEEKS (${upcoming.length})  ★★★\n`
       body += `${starDiv}\n\n`
       upcoming.forEach(h => {
-        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
         const steelNote = h.steelFrom === 'ITW'
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
@@ -1815,7 +1822,7 @@ export default function GCCallPage() {
       body += `★★★  THIS MONTH — 15 TO 30 DAYS (${thisMonth.length})  ★★★\n`
       body += `${starDiv}\n\n`
       thisMonth.forEach(h => {
-        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
         const steelNote = h.steelFrom === 'ITW'
           ? `ITW — confirm ITW delivery schedule`
           : h.steelFrom || '—'
@@ -1884,7 +1891,7 @@ export default function GCCallPage() {
         ['HOP', 'CM', 'Days Elapsed', 'AC Start', 'FC End', 'AC End', 'MSS', 'Power-Up', 'SPO', 'Vendor Window', 'Notes']
       ]
       active.forEach(h => {
-        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
         const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
         activeRows.push([
           h.hop, h.cm || '—',
@@ -1906,7 +1913,7 @@ export default function GCCallPage() {
       ]
       const allPipeline = [...thisWeek, ...next2Weeks, ...thisMonth, ...pullIns]
       allPipeline.forEach(h => {
-        const spoStatus = h.hasSpo ? '✓ Issued' : h.hasCpo ? '⚡ Cut Now' : '🔴 Chase CPO'
+        const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
         const pullIn = h.pullInReady ? '✅ Ready' : h.pullInStatus.includes('⚠️') ? '⚠️ Risky' : '🔴 Cannot'
         const latestNote = (noteHistory[h.hop] || []).slice(0, 1).map(n => `${new Date(n.logged_at).toLocaleDateString()}: ${n.note}`).join('')
         pipelineRows.push([
@@ -2237,7 +2244,9 @@ export default function GCCallPage() {
                                 <td className="p-2">
                                   {h.hasSpo
                                     ? <span className="text-green-400 font-bold text-sm" title={h.spoIssued}>✓</span>
-                                    : <span className="text-red-400 font-bold text-sm">✗</span>
+                                    : h.hasSpoRequest
+                                      ? <span className="text-blue-400 font-bold text-sm" title="Requested — pending SPO creation">📨</span>
+                                      : <span className="text-red-400 font-bold text-sm">✗</span>
                                   }
                                 </td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>

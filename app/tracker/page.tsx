@@ -1099,7 +1099,8 @@ export default function TrackerGridPage() {
     const matA = headers.findIndex(h => h.replace(/\s+/g, ' ').startsWith('Material Received A'))
     const matForecast = headers.findIndex(h => h === 'Material Forecast +4ish')
     const spo = headers.findIndex(h => h.toLowerCase() === 'cx spo issued')
-    return { ntpA, ntpWaiting, matA, matForecast, spo }
+    const spoRequest = headers.findIndex(h => h.toLowerCase() === 'cx spo request')
+    return { ntpA, ntpWaiting, matA, matForecast, spo, spoRequest }
   }, [headers])
 
   // General Contractor's own column index — Crew's dropdown option count
@@ -1196,7 +1197,7 @@ export default function TrackerGridPage() {
   // any pending in-grid edit to those same source columns (same changeMap
   // lookup cellText uses) rather than only the original sheet value.
   const blockersText = useCallback((row: TrackerRowData): string => {
-    const { ntpA, ntpWaiting, matA, matForecast, spo } = blockerSourceCols
+    const { ntpA, ntpWaiting, matA, matForecast, spo, spoRequest } = blockerSourceCols
     const rawFor = (idx: number) => {
       if (idx < 0) return undefined
       const change = changeMap.get(`${row.rowKey}|${headers[idx]}`)
@@ -1219,7 +1220,10 @@ export default function TrackerGridPage() {
     }
 
     const spoDate = spo >= 0 ? parseDateAny(rawFor(spo)) : null
-    if (!spoDate) parts.push('🔴 SPO not issued')
+    if (!spoDate) {
+      const spoRequestDate = spoRequest >= 0 ? parseDateAny(rawFor(spoRequest)) : null
+      parts.push(spoRequestDate ? '📨 SPO requested — pending creation' : '🔴 SPO not requested')
+    }
 
     return parts.join(' | ') || '✅ No blockers'
   }, [blockerSourceCols, changeMap, headers])
