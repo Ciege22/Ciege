@@ -557,12 +557,6 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
 
       {isDateCol && (
         <div className="border border-gray-200 rounded max-h-56 overflow-y-auto mb-2">
-          {shownBlanks.map(v => (
-            <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
-              <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
-              <span className="truncate">(blank)</span>
-            </label>
-          ))}
           {shownOtherText.map(v => (
             <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
               <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
@@ -625,6 +619,12 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
               </div>
             )
           })}
+          {shownBlanks.map(v => (
+            <label key={v} className="flex items-center gap-2 px-2 py-1 hover:bg-gray-50 cursor-pointer">
+              <input type="checkbox" checked={checked.has(v)} onChange={() => toggle(v)} />
+              <span className="truncate">(blank)</span>
+            </label>
+          ))}
           {yearEntries.length === 0 && shownBlanks.length === 0 && shownOtherText.length === 0 && <div className="px-2 py-2 text-gray-400">No matching values</div>}
         </div>
       )}
@@ -1481,12 +1481,17 @@ export default function TrackerGridPage() {
     if (!activeFilterCol) return []
     const set = new Set<string>()
     for (const row of rowsForActiveChecklist) set.add(cellText(row, activeFilterCol))
+    // Blank always sorts last, independent of the value sort below — same
+    // "blanks at the bottom" rule the grid's own column sort follows (see
+    // compareRowsOnColumn/isBlankOnColumn).
+    const hasBlank = set.delete('')
     const arr = Array.from(set)
     if (activeFilterCol.isDate) {
       arr.sort((a, b) => (parseDateAny(a)?.getTime() ?? -Infinity) - (parseDateAny(b)?.getTime() ?? -Infinity))
     } else {
       arr.sort((a, b) => a.localeCompare(b))
     }
+    if (hasBlank) arr.push('')
     return arr
   }, [activeFilterCol, rowsForActiveChecklist, cellText])
 
@@ -1515,6 +1520,15 @@ export default function TrackerGridPage() {
     return cellText(a, col).localeCompare(cellText(b, col))
   }, [dateSortValue, cellText])
 
+  // Blank always sorts to the bottom of the grid on this column, whichever
+  // direction the sort runs — checked ahead of compareRowsOnColumn (below)
+  // instead of folded into it, since flipping the sign for a descending sort
+  // would otherwise flip blank-last into blank-first too.
+  const isBlankOnColumn = useCallback((row: TrackerRowData, col: GridColumn): boolean => {
+    if (col.isDate) return dateSortValue(row, col) === null
+    return cellText(row, col) === ''
+  }, [dateSortValue, cellText])
+
   const displayRows = useMemo(() => {
     const valueSpecs = Object.entries(columnFilters)
       .filter(([, f]) => f.selectedValues !== null)
@@ -1534,6 +1548,11 @@ export default function TrackerGridPage() {
     if (levels.length > 0) {
       rows = [...rows].sort((a, b) => {
         for (const { col, dir } of levels) {
+          const blankA = isBlankOnColumn(a, col)
+          const blankB = isBlankOnColumn(b, col)
+          if (blankA && blankB) continue // tie on this level — fall through to the next sort key
+          if (blankA) return 1
+          if (blankB) return -1
           const cmp = compareRowsOnColumn(a, b, col)
           if (cmp !== 0) return dir === 'asc' ? cmp : -cmp
         }
@@ -1541,7 +1560,7 @@ export default function TrackerGridPage() {
       })
     }
     return rows
-  }, [searchedRows, columnFilters, sortOrder, colMap, cellText, compareRowsOnColumn])
+  }, [searchedRows, columnFilters, sortOrder, colMap, cellText, compareRowsOnColumn, isBlankOnColumn])
 
   // Vertical virtualization — same idea, over the filtered/sorted HOP row list.
   const { visibleRows, topSpacerHeight, bottomSpacerHeight } = useMemo(() => {
