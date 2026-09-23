@@ -265,6 +265,13 @@ interface CellProps {
   onStartEdit: () => void
   onCommit: (newValue: string) => void
   onCancel: () => void
+  // Only wired up for the MS15 Fc Start cell (10-day build-time button, see
+  // its render call site) — a one-click "also set MS16 Fc End" action shown
+  // next to the picker while editing, not an always-on rule that
+  // recalculates anything on its own. label is what the button reads;
+  // onClick receives the currently-drafted date (so picking a new date then
+  // clicking it uses that unsaved value, not whatever was already saved).
+  quickFill?: { label: string; onClick: (draftValue: string) => void }
 }
 
 function frozenTdStyle(stickyLeft: number | undefined, editing: boolean): React.CSSProperties {
@@ -321,7 +328,7 @@ function EditableCell({ displayValue, isChanged, isEditing, rowBg, stickyLeft, o
   )
 }
 
-function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, stickyLeft, onStartEdit, onCommit, onCancel }: CellProps) {
+function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, stickyLeft, onStartEdit, onCommit, onCancel, quickFill }: CellProps) {
   const [draft, setDraft] = useState(displayValue)
   const [wasEditing, setWasEditing] = useState(isEditing)
   if (isEditing !== wasEditing) {
@@ -343,18 +350,33 @@ function DatePickerCell({ displayValue, isChanged, isEditing, rowBg, stickyLeft,
 
   return (
     <td className="px-1 py-0.5 border-b border-r border-gray-200 bg-white relative" style={{ zIndex: 40, ...frozenTdStyle(stickyLeft, true), backgroundColor: '#fff' }}>
-      <input
-        autoFocus
-        type="date"
-        value={toDateInputValue(draft)}
-        onChange={(e) => setDraft(fromDateInputValue(e.target.value))}
-        onBlur={() => onCommit(draft)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
-          else if (e.key === 'Escape') { e.preventDefault(); onCancel() }
-        }}
-        className="text-xs px-2 py-1 border-2 border-blue-500 rounded focus:outline-none"
-      />
+      <div className="flex items-center gap-1">
+        <input
+          autoFocus
+          type="date"
+          value={toDateInputValue(draft)}
+          onChange={(e) => setDraft(fromDateInputValue(e.target.value))}
+          onBlur={() => onCommit(draft)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') { e.preventDefault(); e.currentTarget.blur() }
+            else if (e.key === 'Escape') { e.preventDefault(); onCancel() }
+          }}
+          className="text-xs px-2 py-1 border-2 border-blue-500 rounded focus:outline-none"
+        />
+        {quickFill && draft && (
+          // preventDefault on mousedown keeps the date input focused (no
+          // blur-commit race) so this button's onClick is the one and only
+          // thing that fires — it commits MS15F itself, not onBlur.
+          <button
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={() => quickFill.onClick(draft)}
+            title="One-click convenience — sets MS16 Fc End from this date, doesn't touch any other row"
+            className="shrink-0 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded px-2 py-1 font-semibold whitespace-nowrap"
+          >
+            {quickFill.label}
+          </button>
+        )}
+      </div>
     </td>
   )
 }
@@ -1295,6 +1317,29 @@ export default function TrackerGridPage() {
     return map
   }, [pendingChanges])
 
+  // Convenience for the MS15 Fc Start cell's "+10d → Fc End" button (see
+  // CellProps.quickFill and its render call site below) — NOT an always-on
+  // rule: it only runs when that button is clicked, and only touches MS16
+  // Fc End on that one row, never recalculating anything else. Reads MS16
+  // Fc End's current value (honoring any pending edit already staged this
+  // session) the same way the normal cell-render path does, so what shows
+  // up on the Pending Updates panel is an accurate before/after diff.
+  const BUILD_TIME_DAYS = 10
+  const applyTenDayBuildTime = (row: TrackerRowData, ms15fDisplayValue: string, ms15fDraftValue: string) => {
+    saveEdit(row.rowKey, row.hop, 'MS15 Implementation Start F', ms15fDisplayValue, ms15fDraftValue)
+    const ms16fCol = colMap.get('MS16 Implementation Ends F')
+    if (!ms16fCol) return
+    const base = new Date(ms15fDraftValue)
+    if (isNaN(base.getTime())) return
+    base.setDate(base.getDate() + BUILD_TIME_DAYS)
+    const newMs16f = base.toLocaleDateString('en-US')
+    const raw16 = row.cells[ms16fCol.index]
+    const { text: ms16fDisplay } = cellDisplayValue(raw16, ms16fCol.isDate)
+    const change16 = changeMap.get(`${row.rowKey}|${ms16fCol.name}`)
+    const orig16 = change16 ? change16.newValue : ms16fDisplay
+    saveEdit(row.rowKey, row.hop, ms16fCol.name, orig16, newMs16f)
+  }
+
   // Computed Blockers text for one row — reads NTP A / NTP is waiting on /
   // Material Received A / Material Forecast +4ish / CX SPO Issued, honoring
   // any pending in-grid edit to those same source columns (same changeMap
@@ -2075,6 +2120,12 @@ export default function TrackerGridPage() {
                         onStartEdit: () => setEditingCell({ rowKey: row.rowKey, field: col.name }),
                         onCommit: (newValue: string) => saveEdit(row.rowKey, row.hop, col.name, displayValue, newValue),
                         onCancel: () => setEditingCell(null),
+                        ...(col.name === 'MS15 Implementation Start F' ? {
+                          quickFill: {
+                            label: `+${BUILD_TIME_DAYS}d → Fc End`,
+                            onClick: (draftValue: string) => applyTenDayBuildTime(row, displayValue, draftValue),
+                          },
+                        } : {}),
                       }
                       return treatAsDate
                         ? <DatePickerCell key={col.name} {...cellProps} />
