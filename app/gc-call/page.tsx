@@ -1725,25 +1725,14 @@ export default function GCCallPage() {
   const thisMonth   = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
   const pullIns     = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 30 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
   const pullInReady = pullIns.filter(h => h.pullInReady)
-
-  const squawMound = gcHops.find(h => h.hop === 'NE-SQUAW_MOUND-NE-CHADRON')
-  if (squawMound) {
-    const bucket =
-      squawMound.inProgress ? 'active' :
-      squawMound.complete ? 'NONE — complete=true excludes it from every bucket' :
-      squawMound.daysOut === null ? 'NONE — daysOut is null (no parseable MS15F), excludes it from every bucket' :
-      squawMound.daysOut <= 7 ? 'thisWeek' :
-      squawMound.daysOut <= 14 ? 'next2Weeks' :
-      squawMound.daysOut <= 30 ? 'thisMonth' : 'pullIns'
-    console.log('[gc-call] SQUAW_MOUND render-split check:', {
-      ms15f: squawMound.ms15f, ms15a: squawMound.ms15a,
-      ms16f: squawMound.ms16f, ms16a: squawMound.ms16a,
-      daysOut: squawMound.daysOut, inProgress: squawMound.inProgress, complete: squawMound.complete,
-      resolvedBucket: bucket
-    })
-  } else {
-    console.log('[gc-call] SQUAW_MOUND render-split check: not present in gcHops for selectedGC =', selectedGC)
-  }
+  // On DON 444, GC assigned, not started/complete, but MS15 Fc Start is
+  // blank — daysOut is null, so it fell out of every bucket above and never
+  // rendered anywhere in this tab (found via NE-SQUAW_MOUND-NE-CHADRON and
+  // CO-CROOK-CO-SEDGWICK both silently missing from their GC's pipeline).
+  // Surfaced here instead so a blank FC Start can actually get filled in on
+  // the call — same GCEditableDate cell PipelineTable already renders.
+  const noForecastDate = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut === null && matchesCrewFilter(h))
+    .sort((a, b) => a.hop.localeCompare(b.hop))
 
   const generateEmail = () => {
     const cm   = GC_CM_MAP[selectedGC] || 'CM'
@@ -2136,6 +2125,9 @@ export default function GCCallPage() {
                       {next2Weeks.length} next 2 wks{' · '}
                       {thisMonth.length} this month{' · '}
                       <span className="text-green-400">{pullInReady.length} pull-in ready</span>
+                      {noForecastDate.length > 0 && (
+                        <>{' · '}<span className="text-red-400">{noForecastDate.length} missing start date</span></>
+                      )}
                     </span>
                   )}
                 </p>
@@ -2296,6 +2288,9 @@ export default function GCCallPage() {
                 </div>
 
                 {/* Pipeline Sections */}
+                {noForecastDate.length > 0 && (
+                  <PipelineTable title="⚠️ Missing Forecast Start (MS15F)" rows={noForecastDate} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
+                )}
                 <PipelineTable title="⚡ This Week (0–7 days)" rows={thisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
                 <PipelineTable title="🟠 Next 2 Weeks (8–14 days)" rows={next2Weeks} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
                 <PipelineTable title="🟡 This Month (15–30 days)" rows={thisMonth} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} crewAssignments={crewAssignments} maxCrews={maxCrews} showCrewBadge={showCrewBadge} onCrewChange={setCrewForHop} />
