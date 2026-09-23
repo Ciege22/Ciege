@@ -17,6 +17,12 @@ const SELECTED_ROW = '#DCEAFB'
 // Virtualization tuning — fixed row height lets us compute the visible window
 // from scrollTop with simple arithmetic instead of measuring the DOM.
 const ROW_HEIGHT = 36
+// Header row only — taller than ROW_HEIGHT so a full column name can wrap to
+// two lines instead of truncating. Independent of ROW_HEIGHT/virtualization
+// math on purpose: that math is driven by scrollTop/viewportSize, not by
+// this row's height, so the sticky header can be any height without
+// throwing off which body rows render.
+const HEADER_HEIGHT = 56
 const ROW_BUFFER = 10
 const COL_BUFFER = 3
 
@@ -1520,9 +1526,9 @@ export default function TrackerGridPage() {
     const badge = sortBadge(col.name)
     return (
     <>
-      <div className="flex items-center justify-between gap-1">
-        <span className="truncate">{col.name}</span>
-        <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="flex items-start justify-between gap-1">
+        <span className="whitespace-normal break-words leading-tight line-clamp-2" title={col.name}>{col.name}</span>
+        <div className="flex items-center gap-1 flex-shrink-0 pt-0.5">
           {badge && (
             <span
               title="Sort priority — click the ▼ menu to change or clear it"
@@ -1864,7 +1870,7 @@ export default function TrackerGridPage() {
                       // Above the scrolling headers (z 20) so the corner stays clean.
                       zIndex: 30,
                       backgroundColor: NAVY,
-                      height: ROW_HEIGHT,
+                      height: HEADER_HEIGHT,
                       boxShadow: FROZEN_SHADOW,
                     }}
                     className="text-white text-xs font-bold px-2 py-2 text-left border-r border-b border-blue-900"
@@ -1876,7 +1882,7 @@ export default function TrackerGridPage() {
                 {renderedColumns.map(col => (
                   <th
                     key={col.name}
-                    style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY, height: ROW_HEIGHT }}
+                    style={{ position: 'sticky', top: 0, zIndex: 20, backgroundColor: NAVY, height: HEADER_HEIGHT }}
                     className="text-white text-xs font-bold px-2 py-2 text-left border-r border-b border-blue-900"
                   >
                     {headerContent(col)}
