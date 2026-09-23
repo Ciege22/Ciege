@@ -1900,7 +1900,11 @@ export default function GCCallPage() {
       const pipelineRows: (string | number)[][] = [
         ['HOP', 'CM', 'Days Out', 'NTP', 'NTP Waiting On', 'Mat', 'Steel From', 'GC Pickup F', 'GC Pickup A', 'SPO', 'FC Start', 'AC Start', 'Vendor Window', 'Pull-In Status', 'Notes']
       ]
-      const allPipeline = [...thisWeek, ...next2Weeks, ...thisMonth, ...pullIns]
+      // noForecastDate first — these are the ones with no FC Start yet, most
+      // in need of attention, same gap the on-screen "Missing Forecast
+      // Start" section exists to surface (this export builds its own row
+      // set from the section buckets, so it needs the same fix separately).
+      const allPipeline = [...noForecastDate, ...thisWeek, ...next2Weeks, ...thisMonth, ...pullIns]
       allPipeline.forEach(h => {
         const spoStatus = computeSpoStatus(h.hasSpo, h.hasCpo, h.hasSpoRequest).shortLabel
         const pullIn = h.pullInReady ? '✅ Ready' : h.pullInStatus.includes('⚠️') ? '⚠️ Risky' : '🔴 Cannot'
