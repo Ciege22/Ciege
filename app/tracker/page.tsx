@@ -957,15 +957,49 @@ export default function TrackerGridPage() {
   // shows up on their "Pending Updates" panel too, and vice versa.
   const persistChanges = persistPendingUpdates
 
+  // A HOP spans two physical site rows that always start/finish together —
+  // editing one of these four milestone-date columns on either row mirrors
+  // onto the other row automatically, so it never has to be entered twice.
+  // Scoped to just these four; every other column (SPO, GC, notes, etc.)
+  // still only ever edits the row actually touched.
+  const HOP_MIRROR_FIELDS = new Set([
+    'MS15 Implementation Start F', 'MS15 Implementation Start A',
+    'MS16 Implementation Ends F', 'MS16 Implementation Ends A',
+  ])
+
   const saveEdit = (rowKey: string, hop: string, field: string, originalValue: string, newValue: string) => {
     setEditingCell(null)
     if (newValue === originalValue) return
-    const change: Omit<TrackerChange, 'completed'> = {
-      source: 'tracker', rowKey, hop, field, oldValue: originalValue, newValue,
-      timestamp: new Date().toISOString(), user: 'CJ',
-    }
+
     setPendingChanges(prev => {
-      const next = upsertPendingUpdate(prev, change)
+      let next = upsertPendingUpdate(prev, {
+        source: 'tracker', rowKey, hop, field, oldValue: originalValue, newValue,
+        timestamp: new Date().toISOString(), user: 'CJ',
+      })
+
+      if (HOP_MIRROR_FIELDS.has(field)) {
+        const fieldIdx = headers.findIndex(h => h === field)
+        const isDateCol = isDateColumn(field)
+        trackerRows
+          .filter(r => r.hop === hop && r.rowKey !== rowKey)
+          .forEach(sibling => {
+            // Honor whatever's already staged for the sibling this session
+            // (e.g. two quick edits in a row) rather than the raw sheet
+            // value, same as every other "what does this cell currently
+            // show" lookup in this file.
+            const siblingChange = next.find(c => c.rowKey === sibling.rowKey && c.field === field)
+            const siblingOriginal = siblingChange
+              ? siblingChange.newValue
+              : (fieldIdx !== -1 ? cellDisplayValue(sibling.cells[fieldIdx], isDateCol).text : '')
+            if (siblingOriginal === newValue) return
+            next = upsertPendingUpdate(next, {
+              source: 'tracker', rowKey: sibling.rowKey, hop: sibling.hop, field,
+              oldValue: siblingOriginal, newValue,
+              timestamp: new Date().toISOString(), user: 'CJ',
+            })
+          })
+      }
+
       persistChanges(next)
       return next
     })
