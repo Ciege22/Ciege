@@ -970,7 +970,7 @@ export default function CMViewPage() {
     const subj = `Viaero MW Program — Forecast Schedule | ${selectedCM} | ${date}`
 
     let body = `Hey CM Team,\n\n`
-    body += `Attached is your forecast schedule of active and upcoming HOP activity, broken out by GC.\n\n`
+    body += `Attached is the forecast schedule showing active and upcoming HOP activity for the next few weeks — please refer to the tab with your name.\n\n`
     body += `Please review and let us know if you have any questions.\n\n`
     body += `Respectfully,\nCJ\nNokia Program Manager — Viaero MW Construction Program\nCC: Thomas M. — Lead CM`
 
