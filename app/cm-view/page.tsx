@@ -961,56 +961,17 @@ export default function CMViewPage() {
   const displayThisMonth = filterByGc(thisMonth)
   const displayPipeline  = filterByGc(pipeline)
 
+  // Short "here's your spreadsheet" note — CJ attaches the actual forecast
+  // export manually, so this deliberately doesn't rebuild the site-by-site
+  // list the way CM Pipeline Email / CM Daily Email do. Scoped to just this
+  // button; the other two CM emails are untouched.
   const generateEmail = () => {
     const date = today.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
-    const subj = `Viaero MW Program — CM Call Follow-Up | ${selectedCM} | ${date}`
-    const div  = '─'.repeat(60)
+    const subj = `Viaero MW Program — Forecast Schedule | ${selectedCM} | ${date}`
 
-    let body = `${selectedCM},\n\n`
-    body += `Per our call today — here is your site summary and action items for ${date}.\n`
-    body += `${div}\n\n`
-
-    if (active.length > 0) {
-      body += `ACTIVE SITES (${active.length})\n${div}\n`
-      active.forEach(h => {
-        body += `• ${h.hop}  |  GC: ${h.gc}\n`
-        body += `  Started: ${h.ms15a}  |  FC Complete: ${h.ms16f}\n`
-        body += `  Status: ${h.statuses.join('  |  ')}\n`
-        if (h.mss)         body += `  MSS/NMS Ready: ${h.mss}\n`
-        if (h.powerUp)     body += `  Power-Up: ${h.powerUp}\n`
-        if (h.mainCutover) body += `  Main Cutover: ${h.mainCutover}\n`
-        if (h.divCutover)  body += `  Diversity Cutover: ${h.divCutover}\n`
-        if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
-        body += '\n'
-      })
-    }
-
-    const upcoming = [...thisWeek, ...next2Wks]
-    if (upcoming.length > 0) {
-      body += `STARTING WITHIN 2 WEEKS (${upcoming.length})\n${div}\n`
-      upcoming.forEach(h => {
-        body += `• ${h.hop}  |  GC: ${h.gc}  |  FC Start: ${h.ms15f}  |  ${h.daysOut}d out\n`
-        body += `  NTP: ${h.hasNtp ? '✓' : '✗ Pending'}  |  Material: ${h.hasMat ? '✓' : '✗ Pending'}  |  GC Pickup: ${h.gcPickupDate ? '✓ ' + h.gcPickupDate : '✗'}\n`
-        body += `  Steel From: ${h.steelFrom || '—'}  |  Mat Location: ${h.matLocation || '—'}\n`
-        if (h.vendorWindow && !h.vendorWindow.includes('✅ No conflicts')) body += `  Vendor: ${h.vendorWindow}\n`
-        if (h.blockers.length > 0) body += `  Blockers: ${h.blockers.join(' | ')}\n`
-        if (sessionNotes[h.hop]) body += `  Note: ${sessionNotes[h.hop]}\n`
-        body += '\n'
-      })
-    }
-
-    // Action items from call notes
-    const actionItems = Object.entries(sessionNotes).filter(([hop, note]) => note.trim() && cmHops.some(h => h.hop === hop))
-    if (actionItems.length > 0) {
-      body += `ACTION ITEMS FROM TODAY'S CALL\n${div}\n`
-      actionItems.forEach(([hop, note], i) => {
-        body += `${i + 1}. ${hop} — ${note}\n`
-      })
-      body += '\n'
-    }
-
-    body += `${div}\n`
-    body += `Please confirm receipt and advise on any open items.\n\n`
+    let body = `Hey CM Team,\n\n`
+    body += `Attached is your forecast schedule of active and upcoming HOP activity, broken out by GC.\n\n`
+    body += `Please review and let us know if you have any questions.\n\n`
     body += `Respectfully,\nCJ\nNokia Program Manager — Viaero MW Construction Program\nCC: Thomas M. — Lead CM`
 
     window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
