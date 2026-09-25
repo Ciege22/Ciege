@@ -1720,7 +1720,12 @@ export default function GCCallPage() {
     return (a.daysOut ?? 0) - (b.daysOut ?? 0)
   }
 
-  const thisWeek    = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
+  // No lower bound on daysOut — a HOP whose forecast start already passed
+  // without actually starting (MS15A still blank) reads as more urgent than
+  // "this week," not less, and previously fell through every bucket below
+  // (too negative for This Week's old >= 0 floor, and Pull-Ins/30d+ only
+  // ever caught daysOut > 30) — never showed up anywhere in the tab.
+  const thisWeek    = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut <= 7 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
   const next2Weeks  = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
   const thisMonth   = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30 && matchesCrewFilter(h)).sort(sortByCrewThenDate)
   const pullIns     = gcHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 30 && matchesCrewFilter(h)).sort(sortByCrewThenDate)

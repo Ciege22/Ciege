@@ -700,7 +700,11 @@ export default function Home() {
       if (complete) completesToDate++
       if (inProgress) activeNow++
       if (inProgress && (daysElapsed ?? 0) > thresholds.durationAlertDays) over18d++
-      if (!started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7) startingThisWeek++
+      // No lower bound on daysOut — a HOP whose forecast start already
+      // passed without actually starting reads as more urgent than "this
+      // week," not less (same fix applied in CM View/GC Call View/Weekly
+      // Focus — see cm-view/page.tsx's thisWeek comment for the full story).
+      if (!started && !complete && daysOut !== null && daysOut <= 7) startingThisWeek++
       if (!hasNtp && !complete && daysOut !== null && daysOut <= thresholds.ntpUrgentDays) ntpUrgent++
       if (!hasSpo && !complete) {
         const spoStatus = computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status
@@ -788,7 +792,7 @@ export default function Home() {
         hasMat, hasSpo, hasCpo, hasSpoRequest,
         daysOut, daysElapsed, inProgress, complete,
         over18d: inProgress && (daysElapsed??0) > thresholds.durationAlertDays,
-        startingThisWeek: !started && !complete && daysOut !== null && daysOut >= 0 && daysOut <= 7,
+        startingThisWeek: !started && !complete && daysOut !== null && daysOut <= 7,
         ntpUrgent: !hasNtp && !complete && daysOut !== null && daysOut <= thresholds.ntpUrgentDays,
         cutSpoNow: !complete && computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status === 'cpo_ready',
         cpoRequested: !complete && computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status === 'cpo_requested',

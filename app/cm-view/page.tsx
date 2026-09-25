@@ -943,7 +943,12 @@ export default function CMViewPage() {
     const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
     return aTime - bTime
   })
-  const thisWeek  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+  // No lower bound on daysOut — a HOP whose forecast start already passed
+  // without actually starting (MS15A still blank) reads as more urgent than
+  // "this week," not less, and previously fell through every bucket below
+  // (too negative for This Week's old >= 0 floor, not null/>30 for Pipeline)
+  // and simply never showed up anywhere (e.g. CO-ALAMOSA-CO-ALAMOSA_HOSP).
+  const thisWeek  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const next2Wks  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const thisMonth = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const pipeline  = cmHops.filter(h => !h.inProgress && !h.complete && (h.daysOut === null || h.daysOut > 30)).sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999))
@@ -994,7 +999,7 @@ export default function CMViewPage() {
           const bTime = b.ms16f ? new Date(b.ms16f).getTime() : Infinity
           return aTime - bTime
         })
-        const thisWeek  = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
+        const thisWeek  = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut <= 7).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
         const next2Wks  = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
         const thisMonth = cmHops.filter(h => !h.inProgress && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
         const pipeline  = cmHops.filter(h => !h.inProgress && (h.daysOut === null || h.daysOut > 30)).sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999))

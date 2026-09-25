@@ -540,9 +540,14 @@ export default function WeeklyFocusPage() {
   })
 
   // Sections
+  // No lower bound on daysOut in the 0-7 checks below — a HOP whose forecast
+  // start already passed without actually starting (MS15A still blank)
+  // reads as more urgent than "this week," not less, and previously fell
+  // through every section (too negative for these, and nothing beyond
+  // pipeline60 catches daysOut < 0 either) — never showed up anywhere.
   const needsAttention = filteredHops.filter(h =>
     !h.inProgress && !h.complete &&
-    h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7 &&
+    h.daysOut !== null && h.daysOut <= 7 &&
     ((!h.hasNtp || !h.hasMat) || h.vendorWindow.includes('🔴'))
   ).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
 
@@ -551,7 +556,7 @@ export default function WeeklyFocusPage() {
 
   const thisWeekReady = filteredHops.filter(h =>
     !h.inProgress && !h.complete &&
-    h.daysOut !== null && h.daysOut >= 0 && h.daysOut <= 7 &&
+    h.daysOut !== null && h.daysOut <= 7 &&
     h.hasNtp && h.hasMat && !h.vendorWindow.includes('🔴')
   ).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
 
