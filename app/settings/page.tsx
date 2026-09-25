@@ -10,7 +10,7 @@ import BackToDashboard from '../components/BackToDashboard'
 import {
   ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, saveProgramSettings,
   ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, saveThresholdSettings,
-  EmailSettings, loadEmailSettings, saveEmailSettings,
+  EmailSettings, loadEmailSettings, saveEmailSettings, EMAIL_TYPES, EmailRouting,
   DisplaySettings, DEFAULT_DISPLAY, loadDisplaySettings, saveDisplaySettings,
   ScopSettings, DEFAULT_SCOP, loadScopSettings, saveScopSettings, SCOP_PATHWAVE_ITEM_LABELS,
 } from '../lib/settings'
@@ -58,6 +58,9 @@ export default function SettingsPage() {
   const [financeText, setFinanceText] = useState('')
   const [gcContactRows, setGcContactRows] = useState<{ gc: string; email: string }[]>([])
   const [cmContactRows, setCmContactRows] = useState<{ cm: string; email: string }[]>([])
+  // Keyed by EmailTypeConfig.id — one To/CC textarea pair per email type
+  // (see app/lib/settings.ts's EMAIL_TYPES/applyEmailRouting).
+  const [routingRows, setRoutingRows] = useState<Record<string, { toText: string; ccText: string }>>({})
   const [emailSaved, setEmailSaved] = useState(false)
 
   const [display, setDisplay] = useState<DisplaySettings>(DEFAULT_DISPLAY)
@@ -87,6 +90,12 @@ export default function SettingsPage() {
       setFinanceText(e.financeEmails.join('\n'))
       setGcContactRows(Object.entries(e.gcContactEmails).map(([gc, email]) => ({ gc, email })))
       setCmContactRows(Object.entries(e.cmContactEmails || {}).map(([cm, email]) => ({ cm, email })))
+      const initialRouting: Record<string, { toText: string; ccText: string }> = {}
+      EMAIL_TYPES.forEach(t => {
+        const entry = e.routing?.[t.id]
+        initialRouting[t.id] = { toText: (entry?.to ?? []).join('\n'), ccText: (entry?.cc ?? []).join('\n') }
+      })
+      setRoutingRows(initialRouting)
       setDisplay(d)
 
       const snap = await loadTrackerSnapshot()
@@ -119,6 +128,14 @@ export default function SettingsPage() {
   }
 
   const saveEmail = async () => {
+    const routing: Record<string, EmailRouting> = {}
+    EMAIL_TYPES.forEach(t => {
+      const row = routingRows[t.id]
+      if (!row) return
+      const to = row.toText.split('\n').map(s => s.trim()).filter(Boolean)
+      const cc = row.ccText.split('\n').map(s => s.trim()).filter(Boolean)
+      if (to.length > 0 || cc.length > 0) routing[t.id] = { to, cc }
+    })
     const parsed: EmailSettings = {
       ccList: ccText.split('\n').map(s => s.trim()).filter(Boolean),
       financeEmails: financeText.split('\n').map(s => s.trim()).filter(Boolean),
@@ -128,6 +145,7 @@ export default function SettingsPage() {
       cmContactEmails: Object.fromEntries(
         cmContactRows.filter(r => r.cm.trim() && r.email.trim()).map(r => [r.cm.trim(), r.email.trim()])
       ),
+      routing,
     }
     await saveEmailSettings(parsed)
     flash(setEmailSaved)
@@ -180,6 +198,10 @@ export default function SettingsPage() {
   const updateCmContact = (i: number, field: 'cm' | 'email', val: string) =>
     setCmContactRows(r => r.map((row, idx) => idx === i ? { ...row, [field]: val } : row))
   const removeCmContact = (i: number) => setCmContactRows(r => r.filter((_, idx) => idx !== i))
+
+  // Email Routing — per-type To/CC textareas
+  const updateRouting = (id: string, field: 'toText' | 'ccText', val: string) =>
+    setRoutingRows(r => ({ ...r, [id]: { toText: r[id]?.toText ?? '', ccText: r[id]?.ccText ?? '', [field]: val } }))
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
@@ -362,6 +384,36 @@ export default function SettingsPage() {
                 </div>
               </div>
 
+              <SaveButton onClick={saveEmail} saved={emailSaved} />
+            </SectionCard>
+
+            {/* Email Routing */}
+            <SectionCard title="Email Routing" subtitle="Per-email-type To/CC — To is added on top of that email's usual recipient (a GC/CM contact or fixed team address), CC replaces the CC List above for that type only, when set">
+              <div className="flex flex-col gap-4">
+                {EMAIL_TYPES.map(t => {
+                  const row = routingRows[t.id] ?? { toText: '', ccText: '' }
+                  return (
+                    <div key={t.id} className="border border-gray-800 rounded-lg p-3">
+                      <p className="text-sm font-semibold text-gray-200">{t.label}</p>
+                      {t.hasBaseTo && (
+                        <p className="text-gray-500 text-xs mb-2">To below is added to this email&apos;s usual recipient — it won&apos;t replace it.</p>
+                      )}
+                      <div className="grid grid-cols-2 gap-3 mt-2">
+                        <div>
+                          <label className="text-xs text-gray-400 block mb-1">To (one per line{t.hasBaseTo ? ', added on top' : ''})</label>
+                          <textarea value={row.toText} onChange={(e) => updateRouting(t.id, 'toText', e.target.value)} rows={2}
+                            className="w-full bg-gray-800 text-white text-xs rounded px-2 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500 font-mono" />
+                        </div>
+                        <div>
+                          <label className="text-xs text-gray-400 block mb-1">CC (one per line, replaces CC List when set)</label>
+                          <textarea value={row.ccText} onChange={(e) => updateRouting(t.id, 'ccText', e.target.value)} rows={2}
+                            className="w-full bg-gray-800 text-white text-xs rounded px-2 py-1.5 border border-gray-600 focus:outline-none focus:border-blue-500 font-mono" />
+                        </div>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
               <SaveButton onClick={saveEmail} saved={emailSaved} />
             </SectionCard>
 

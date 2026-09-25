@@ -14,8 +14,8 @@
 // including the OAD carve-out (§4a) and two real data-alignment incidents (§10).
 
 import { GC_CONFIG } from './gcConfig'
-import type { ScopSettings } from './settings'
-import { DEFAULT_SCOP } from './settings'
+import type { ScopSettings, EmailRouting } from './settings'
+import { DEFAULT_SCOP, applyEmailRouting } from './settings'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. COLUMN NAME CONSTANTS
@@ -540,14 +540,14 @@ export function buildGCEmailText(report: ScopGcReport, s: ScopCalcSettings, note
 export function buildScopGcEmailMailto(
   report: ScopGcReport,
   s: ScopCalcSettings,
-  emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> },
+  emailSettings: { ccList: string[]; gcContactEmails: Record<string, string>; routing?: Record<string, EmailRouting> },
   notesByKey?: Record<string, string>,
 ): string {
   const { subject, body } = buildGCEmailText(report, s, notesByKey)
   const target = report.gc.trim().toLowerCase()
   const toKey = Object.keys(emailSettings.gcContactEmails).find(k => k.trim().toLowerCase() === target)
-  const to = toKey ? emailSettings.gcContactEmails[toKey] : ''
-  const cc = emailSettings.ccList.join(',')
+  const baseTo = toKey ? emailSettings.gcContactEmails[toKey] : ''
+  const { to, cc } = applyEmailRouting(emailSettings.routing, 'scopGcEmail', [baseTo], emailSettings.ccList)
   return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
 

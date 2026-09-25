@@ -1,6 +1,6 @@
 import { supabase, loadTrackerSnapshot } from './supabase'
 import { GC_CONFIG, matches } from './gcConfig'
-import { lookupContactEmail, DEFAULT_SCOP, type ScopSettings } from './settings'
+import { lookupContactEmail, DEFAULT_SCOP, applyEmailRouting, type ScopSettings, type EmailRouting } from './settings'
 import { parseDecomRows } from './decom'
 import { buildScopDataset, keyScopRows, resolveScopCalcSettings } from './scop'
 import { loadChunkedReport } from './reportChunks'
@@ -472,7 +472,7 @@ export const GC_PRIMARY_CONTACT: Record<string, string> = {}
 export function buildGrEmailMailto(
   gc: string,
   rows: GrRow[],
-  emailOverrides?: { financeEmails?: string[]; gcContactEmails?: Record<string, string> }
+  emailOverrides?: { financeEmails?: string[]; gcContactEmails?: Record<string, string>; routing?: Record<string, EmailRouting> }
 ): string {
   const today = new Date()
   const dateStr = `${today.getMonth() + 1}/${today.getDate()}/${today.getFullYear()}`
@@ -504,8 +504,8 @@ export function buildGrEmailMailto(
   const gcContactMap = emailOverrides?.gcContactEmails ?? GC_PRIMARY_CONTACT
   const financeEmails = emailOverrides?.financeEmails ?? GR_EMAIL_CC_BASE
   const gcContact = lookupContactEmail(gcContactMap, gc)
-  const cc = [...(gcContact ? [gcContact] : []), ...financeEmails].join(',')
-  const to = GR_EMAIL_TO.join(',')
+  const baseCc = [...(gcContact ? [gcContact] : []), ...financeEmails]
+  const { to, cc } = applyEmailRouting(emailOverrides?.routing, 'grEmail', GR_EMAIL_TO, baseCc)
 
   return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }

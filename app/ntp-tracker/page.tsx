@@ -6,6 +6,7 @@ import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
+import { EmailSettings, DEFAULT_EMAIL, loadEmailSettings, applyEmailRouting } from '../lib/settings'
 
 interface HOP {
   hop: string
@@ -177,7 +178,12 @@ export default function NTPTrackerPage() {
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [expandedBuckets, setExpandedBuckets] = useState<Set<string>>(new Set())
   const [snapshotTime, setSnapshotTime] = useState<string>('')
+  const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
   const today = new Date()
+
+  useEffect(() => {
+    loadEmailSettings().then(setEmailSettings)
+  }, [])
 
   const loadNotes = async () => {
     const { data } = await supabase.from('hop_call_notes').select('*').order('logged_at', { ascending: false })
@@ -385,7 +391,7 @@ export default function NTPTrackerPage() {
     const isITW    = ownerCat.includes('ITW') || ownerCat.includes('Samsung')
 
     const buildEmailBody = (party: 'Viaero' | 'Nokia' | 'ITW') => {
-      const to = ''
+      const routingType = party === 'Viaero' ? 'ntpEmailViaero' : party === 'Nokia' ? 'ntpEmailNokia' : 'ntpEmailItw'
       const greeting = 'Team,'
 
       const relevantHops = party === 'Nokia'
@@ -420,7 +426,8 @@ export default function NTPTrackerPage() {
       body += `Please advise on status for each item. Nokia is ready to mobilize once NTP is issued.\n\n`
       body += `Respectfully,\nCJ\nNokia Program Manager — Viaero MW Construction Program`
 
-      window.open(`mailto:${to}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+      const { to, cc } = applyEmailRouting(emailSettings.routing, routingType, [], [])
+      window.open(`mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
     }
 
     if (ownerCat === 'Viaero & Nokia') {

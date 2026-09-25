@@ -133,7 +133,7 @@ export default function GrTrackerPage() {
     })
     const out: { gc: string; count: number; mailto: string }[] = []
     byGc.forEach((gcRows, gc) => {
-      out.push({ gc, count: gcRows.length, mailto: buildGrEmailMailto(gc, gcRows, { financeEmails: emailSettings.financeEmails, gcContactEmails: emailSettings.gcContactEmails }) })
+      out.push({ gc, count: gcRows.length, mailto: buildGrEmailMailto(gc, gcRows, { financeEmails: emailSettings.financeEmails, gcContactEmails: emailSettings.gcContactEmails, routing: emailSettings.routing }) })
     })
     out.sort((a, b) => a.gc.localeCompare(b.gc))
     setEmailGroups(out)

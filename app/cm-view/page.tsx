@@ -6,7 +6,7 @@ import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import BackToDashboard from '../components/BackToDashboard'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail } from '../lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, applyEmailRouting } from '../lib/settings'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 import { computeSpoStatus } from '../lib/spoStatus'
 
@@ -974,7 +974,8 @@ export default function CMViewPage() {
     body += `Please review and let us know if you have any questions.\n\n`
     body += `Respectfully,\nCJ\nNokia Program Manager — Viaero MW Construction Program\nCC: Thomas M. — Lead CM`
 
-    window.open(`mailto:?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+    const { to, cc } = applyEmailRouting(emailSettings.routing, 'cmEmail', [], [])
+    window.open(`mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
   const downloadAllCMs = () => {
@@ -1164,8 +1165,8 @@ export default function CMViewPage() {
       body += `${div}\n\n`
     })
 
-    const ccList = emailSettings.ccList.join(',')
-    window.open(`mailto:?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+    const { to, cc } = applyEmailRouting(emailSettings.routing, 'cmPipelineEmail', [], emailSettings.ccList)
+    window.open(`mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
   // CM Daily Email — one button per CM, computed at render time (not inside
@@ -1255,8 +1256,8 @@ export default function CMViewPage() {
     blocks.push(`Reply with actual dates and any field notes. Thank you, CJ`)
 
     const body = blocks.join('\n\n---\n\n')
-    const to = lookupContactEmail(emailSettings.cmContactEmails, cm)
-    const cc = emailSettings.ccList.join(',')
+    const baseTo = lookupContactEmail(emailSettings.cmContactEmails, cm)
+    const { to, cc } = applyEmailRouting(emailSettings.routing, 'cmDailyEmail', [baseTo], emailSettings.ccList)
     const mailto = `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`
 
     return { count, mailto }

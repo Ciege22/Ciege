@@ -1,5 +1,5 @@
 import { GC_CONFIG, matches } from './gcConfig'
-import { lookupContactEmail } from './settings'
+import { lookupContactEmail, applyEmailRouting, EmailRouting } from './settings'
 
 export interface DecomRow {
   // Unique per site row — Path ID (falling back to Site Name + Site Number
@@ -577,7 +577,7 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
 export function buildDecomEmailMailto(
   gc: string,
   gcRows: DecomRow[],
-  emailSettings: { ccList: string[]; gcContactEmails: Record<string, string> },
+  emailSettings: { ccList: string[]; gcContactEmails: Record<string, string>; routing?: Record<string, EmailRouting> },
   notesByRowKey?: Record<string, string>
 ): string {
   const today = new Date()
@@ -592,8 +592,8 @@ export function buildDecomEmailMailto(
   body += `Please see the attached Excel for full site detail.\n\n`
   body += `Thank you,\nCJ`
 
-  const to = lookupContactEmail(emailSettings.gcContactEmails, gc)
-  const cc = emailSettings.ccList.join(',')
+  const baseTo = lookupContactEmail(emailSettings.gcContactEmails, gc)
+  const { to, cc } = applyEmailRouting(emailSettings.routing, 'decomGcEmail', [baseTo], emailSettings.ccList)
 
   return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }
@@ -603,7 +603,7 @@ export function buildDecomEmailMailto(
 // of scoping to one GC.
 export function buildDecomCmEmailMailto(
   decomRows: DecomRow[],
-  emailSettings: { ccList: string[]; cmContactEmails: Record<string, string> }
+  emailSettings: { ccList: string[]; cmContactEmails: Record<string, string>; routing?: Record<string, EmailRouting> }
 ): string {
   const today = new Date()
   const pad = (n: number) => String(n).padStart(2, '0')
@@ -617,7 +617,8 @@ export function buildDecomCmEmailMailto(
   body += `Please see the attached Excel for the full decom detail by site and CM.\n\n`
   body += `Thank you,\nCJ`
 
-  const cc = Array.from(new Set([...emailSettings.ccList, ...Object.values(emailSettings.cmContactEmails)].filter(Boolean))).join(',')
+  const baseCc = Array.from(new Set([...emailSettings.ccList, ...Object.values(emailSettings.cmContactEmails)].filter(Boolean)))
+  const { to, cc } = applyEmailRouting(emailSettings.routing, 'decomCmDigestEmail', [], baseCc)
 
-  return `mailto:?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+  return `mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }

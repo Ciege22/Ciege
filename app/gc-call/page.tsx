@@ -7,7 +7,7 @@ import * as XLSX from 'xlsx'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, ScopSettings, DEFAULT_SCOP, loadScopSettings } from '../lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, ScopSettings, DEFAULT_SCOP, loadScopSettings, applyEmailRouting } from '../lib/settings'
 import ScopGcTab from './ScopGcTab'
 import { CallNoteCell, CallNoteHistoryCell } from './CallNoteCell'
 import { computeSpoStatus } from '../lib/spoStatus'
@@ -175,7 +175,7 @@ function GrInvoicingTab({ selectedGC, grRows, grLoaded, emailSettings }: GrInvoi
   const breakdown = computeGrBreakdown(gcGrRows)
   const ready = groupGrRows(gcGrRows).ready
   const emailMailto = ready.length > 0
-    ? buildGrEmailMailto(selectedGC, ready, { financeEmails: emailSettings.financeEmails, gcContactEmails: emailSettings.gcContactEmails })
+    ? buildGrEmailMailto(selectedGC, ready, { financeEmails: emailSettings.financeEmails, gcContactEmails: emailSettings.gcContactEmails, routing: emailSettings.routing })
     : null
 
   const displayRows = sortGrRowsBy(rowsForTileFilter(gcGrRows, tileFilter), 'trigger')
@@ -1864,10 +1864,10 @@ export default function GCCallPage() {
     body += `Please coordinate with your Site CM ${cm} for all field questions.\n`
     body += `For schedule, finance, or contract matters contact CJ directly.`
 
-    const ccList = emailSettings.ccList.join(',')
-    const to = lookupContactEmail(emailSettings.gcContactEmails, selectedGC)
+    const baseTo = lookupContactEmail(emailSettings.gcContactEmails, selectedGC)
+    const { to, cc } = applyEmailRouting(emailSettings.routing, 'gcPipelineEmail', [baseTo], emailSettings.ccList)
 
-    window.open(`mailto:${to}?cc=${encodeURIComponent(ccList)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
+    window.open(`mailto:${to}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(body)}`)
   }
 
   const downloadGCExcel = () => {

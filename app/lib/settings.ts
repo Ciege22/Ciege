@@ -28,6 +28,42 @@ export interface ThresholdSettings {
   rampUpWindow: number
 }
 
+// One row per distinct email this app generates — lets Settings expose a
+// per-type To/CC override instead of everything sharing one CC List. `to`
+// entries here are ADDED on top of whatever a type already resolves as its
+// primary recipient (a per-GC/per-CM contact lookup, or a hardcoded team
+// address like the GR processors) — they never replace it, since for a
+// GC/CM-specific email a fixed To wouldn't make sense across different
+// GCs/CMs. `cc`, when non-empty, REPLACES the shared ccList (or, for GR,
+// the financeEmails default) for that type only — see applyEmailRouting.
+export interface EmailTypeConfig {
+  id: string
+  label: string
+  // Shown in the Settings UI as a hint — true if this type already fills in
+  // a primary recipient on its own (per-GC/per-CM contact, or a fixed team
+  // address) before any per-type "To" here gets added on top.
+  hasBaseTo: boolean
+}
+
+export const EMAIL_TYPES: EmailTypeConfig[] = [
+  { id: 'cmEmail', label: 'CM View — CM Email', hasBaseTo: false },
+  { id: 'cmPipelineEmail', label: 'CM View — CM Pipeline Email (All CMs)', hasBaseTo: false },
+  { id: 'cmDailyEmail', label: 'CM View — CM Daily Email', hasBaseTo: true },
+  { id: 'gcPipelineEmail', label: 'GC Call View — Pipeline Weekly Email', hasBaseTo: true },
+  { id: 'decomGcEmail', label: 'Decom — GC Email', hasBaseTo: true },
+  { id: 'decomCmDigestEmail', label: 'Decom — Program-Wide CM Digest', hasBaseTo: false },
+  { id: 'scopGcEmail', label: 'SCOP — GC Email', hasBaseTo: true },
+  { id: 'grEmail', label: 'GR / Invoicing — Release Request', hasBaseTo: true },
+  { id: 'ntpEmailViaero', label: 'NTP Tracker — Viaero Action Required', hasBaseTo: false },
+  { id: 'ntpEmailNokia', label: 'NTP Tracker — Nokia Action Required', hasBaseTo: false },
+  { id: 'ntpEmailItw', label: 'NTP Tracker — ITW/Samsung Action Required', hasBaseTo: false },
+]
+
+export interface EmailRouting {
+  to: string[]
+  cc: string[]
+}
+
 export interface EmailSettings {
   ccList: string[]
   financeEmails: string[]
@@ -35,6 +71,28 @@ export interface EmailSettings {
   // Keyed by CM name (not GC) — used to CC the right people on the decom
   // per-CM digest email.
   cmContactEmails: Record<string, string>
+  // Keyed by EmailTypeConfig.id — see applyEmailRouting for how these merge
+  // with each email's existing to/cc logic.
+  routing: Record<string, EmailRouting>
+}
+
+// Merges a per-type routing override (Settings → Email Routing) onto an
+// email's already-computed base to/cc. baseTo/baseCc are whatever that
+// email builder already resolves today (a per-GC contact lookup, a
+// hardcoded team address, the shared ccList, etc.) — this never changes
+// that logic, it only layers the override on top: custom "to" entries are
+// added to baseTo (never replacing it), and a non-empty custom "cc" fully
+// replaces baseCc (falls back to baseCc when unset, per that trade-off).
+export function applyEmailRouting(
+  routing: Record<string, EmailRouting> | undefined,
+  typeId: string,
+  baseTo: string[],
+  baseCc: string[],
+): { to: string; cc: string } {
+  const entry = routing?.[typeId]
+  const to = [...baseTo, ...(entry?.to ?? [])].filter(Boolean)
+  const cc = entry?.cc && entry.cc.length > 0 ? entry.cc : baseCc
+  return { to: to.filter(Boolean).join(','), cc: cc.filter(Boolean).join(',') }
 }
 
 export interface DisplaySettings {
@@ -151,6 +209,7 @@ export const DEFAULT_EMAIL: EmailSettings = {
   ],
   gcContactEmails: {},
   cmContactEmails: {},
+  routing: {},
 }
 
 export const DEFAULT_DISPLAY: DisplaySettings = {
