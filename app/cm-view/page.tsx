@@ -105,6 +105,25 @@ function fmtDate(d: Date | null): string {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`
 }
 
+// "na", "NA", "n/A", "N.A.", etc. all reduce to "na" once punctuation and
+// case are stripped — matches any spelling of not-applicable someone might
+// type into the tracker.
+function isNaText(raw: unknown): boolean {
+  return String(raw ?? '').trim().toLowerCase().replace(/[^a-z]/g, '') === 'na'
+}
+
+// Cutover/decom "Completed" columns are legitimately N/A for a site that
+// doesn't need that step — parseDateAny just fails on that text and
+// fmtDate(null) silently drops it to blank, which reads as "not entered"
+// and gets flagged/edited again on every fresh upload (see Main Path
+// Cutover / Diversity Cutover / Decom Complete below). Recovers the N/A
+// instead of losing it.
+function fmtDateOrNA(raw: unknown): string {
+  const d = parseDateAny(raw)
+  if (d) return fmtDate(d)
+  return isNaText(raw) ? 'N/A' : ''
+}
+
 function fmtDM(d: Date | null): string {
   if (!d) return ''
   return `${d.getMonth() + 1}/${d.getDate()}`
@@ -731,9 +750,6 @@ export default function CMViewPage() {
       const pickupD  = parseDateAny(row[pickupCol])
       const mssDate  = parseDateAny(row[mssCol])
       const powerDate= parseDateAny(row[powerCol])
-      const mainDate = parseDateAny(row[mainCutCol])
-      const divDate  = parseDateAny(row[divCutCol])
-      const decomDate= parseDateAny(row[decomCol])
 
       const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
       const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
@@ -805,9 +821,9 @@ export default function CMViewPage() {
         ms16a:        fmtDate(ms16a),
         mss:          fmtDate(mssDate),
         powerUp:      fmtDate(powerDate),
-        mainCutover:  fmtDate(mainDate),
-        divCutover:   fmtDate(divDate),
-        decom:        fmtDate(decomDate),
+        mainCutover:  fmtDateOrNA(row[mainCutCol]),
+        divCutover:   fmtDateOrNA(row[divCutCol]),
+        decom:        fmtDateOrNA(row[decomCol]),
         hasNtp, hasMat, wpApproved, gcPickup,
         gcPickupDate: fmtDate(pickupD),
         ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
