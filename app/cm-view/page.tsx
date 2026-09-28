@@ -903,7 +903,15 @@ export default function CMViewPage() {
   // "My HOPs Only" preserves the original behavior of scoping to CJ's HOPs;
   // bulk all-CM actions (download/email) always use cjHops regardless of the
   // toggle, since that toggle is scoped to the selected-CM view only.
-  const cjHops    = hops.filter(h => h.regionPm?.trim().toUpperCase() === 'CJ')
+  //
+  // Filters on nokiaPm (not regionPm) — Nokia PM is the authoritative,
+  // consistently-populated "who owns this HOP" field everywhere else in the
+  // app (gc-call's matchesPmFilter, the dashboard's pmFilter, etc.);
+  // Region PM is a separate, much more sparsely filled column. Filtering on
+  // it here meant a real HOP with Nokia PM = CJ but a blank Region PM
+  // silently dropped out of the default "Mine" workload — confirmed live:
+  // 69 DON 444 rows had Nokia PM = CJ but Region PM blank/other.
+  const cjHops    = hops.filter(h => h.nokiaPm?.trim().toUpperCase() === 'CJ')
   // Only list a CM if they have at least one HOP that isn't complete —
   // active + thisWeek + next2Wks + thisMonth + pipeline below is exactly
   // the set of !h.complete HOPs (inProgress and complete are mutually
