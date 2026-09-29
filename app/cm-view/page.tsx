@@ -718,6 +718,8 @@ export default function CMViewPage() {
     const itwECol     = col('ITW Schedule Complete')
     const ssSCol      = col('Samsung Schedule Start')
     const ssECol      = col('Samsung Schedule Complete')
+    const awSCol      = col('Allwave Schedule Start')
+    const awECol      = col('Allwave Schedule Complete')
     const siteNameCol = col('Site Name')
 
     const hopRows = new Map<string, unknown[][]>()
@@ -768,9 +770,11 @@ export default function CMViewPage() {
         const rItwE  = parseDateAny(r[itwECol])
         const rSsS   = parseDateAny(r[ssSCol])
         const rSsE   = parseDateAny(r[ssECol])
+        const rAwS   = parseDateAny(r[awSCol])
+        const rAwE   = parseDateAny(r[awECol])
         const rMs15f = parseDateAny(r[ms15fCol]) || ms15f
         if (!rMs15f) return
-        if (!rSsS && !rSsE && !rItwS && !rItwE) return
+        if (!rSsS && !rSsE && !rItwS && !rItwE && !rAwS && !rAwE) return
         const siteName  = String(r[siteNameCol] || '').trim()
         const siteLabel = siteName ? ` (${siteName})` : ''
         const checkV = (name: string, start: Date | null, end: Date | null) => {
@@ -793,12 +797,14 @@ export default function CMViewPage() {
         }
         checkV('ITW', rItwS, rItwE)
         checkV('Samsung', rSsS, rSsE)
+        checkV('Allwave', rAwS, rAwE)
       })
 
       const itwParts  = Array.from(new Set(allVendorParts.filter(p => p.includes('ITW'))))
       const ssParts   = Array.from(new Set(allVendorParts.filter(p => p.includes('Samsung'))))
+      const awParts   = Array.from(new Set(allVendorParts.filter(p => p.includes('Allwave'))))
       const sortParts = (parts: string[]) => [...parts.filter(p => p.includes('🔴')), ...parts.filter(p => p.includes('⚠️')), ...parts.filter(p => p.includes('✅'))]
-      const vendorWindow = [...sortParts(itwParts), ...sortParts(ssParts)].filter(Boolean).join(' | ') || '✅ No conflicts'
+      const vendorWindow = [...sortParts(itwParts), ...sortParts(ssParts), ...sortParts(awParts)].filter(Boolean).join(' | ') || '✅ No conflicts'
 
       const blockers: string[] = []
       if (!hasNtp) blockers.push('🔴 NTP pending')

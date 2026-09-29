@@ -445,6 +445,8 @@ export default function WeeklyFocusPage() {
     const itwECol     = col('ITW Schedule Complete')
     const ssSCol      = col('Samsung Schedule Start')
     const ssECol      = col('Samsung Schedule Complete')
+    const awSCol      = col('Allwave Schedule Start')
+    const awECol      = col('Allwave Schedule Complete')
     const pathIdCol = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
 
     const hopRows = new Map<string, unknown[][]>()
@@ -495,9 +497,11 @@ export default function WeeklyFocusPage() {
       rows2.forEach(r => {
         const itwS = parseDateAny(r[itwSCol]); const itwE = parseDateAny(r[itwECol])
         const ssS  = parseDateAny(r[ssSCol]);  const ssE  = parseDateAny(r[ssECol])
+        const awS  = parseDateAny(r[awSCol]);  const awE  = parseDateAny(r[awECol])
         if (ms15f) {
           if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) parts.push(`🔴 ITW thru ${fmtDM(itwE)}`)
           if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) parts.push(`🔴 Samsung thru ${fmtDM(ssE)}`)
+          if (awS && awE && awS <= ms15f && ms15f <= awE) parts.push(`🔴 Allwave thru ${fmtDM(awE)}`)
         }
       })
       const vendorWindow = parts.length > 0 ? parts.join(' | ') : '✅ Clear'

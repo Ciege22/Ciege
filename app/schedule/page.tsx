@@ -375,6 +375,8 @@ export default function SchedulePage() {
     const itwECol    = col('ITW Schedule Complete')
     const ssSCol     = col('Samsung Schedule Start')
     const ssECol     = col('Samsung Schedule Complete')
+    const awSCol     = col('Allwave Schedule Start')
+    const awECol     = col('Allwave Schedule Complete')
     const pathIdCol  = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'Path ID')
 
     const hopRows = new Map<string, unknown[][]>()
@@ -408,8 +410,10 @@ export default function SchedulePage() {
       rows2.forEach(r => {
         const itwS = parseDate(r[itwSCol]); const itwE = parseDate(r[itwECol])
         const ssS  = parseDate(r[ssSCol]);  const ssE  = parseDate(r[ssECol])
+        const awS  = parseDate(r[awSCol]);  const awE  = parseDate(r[awECol])
         if (itwS && itwE) vendorConflicts.push({ vendor: 'ITW', start: itwS, end: itwE })
         if (ssS && ssE)   vendorConflicts.push({ vendor: 'Samsung', start: ssS, end: ssE })
+        if (awS && awE)   vendorConflicts.push({ vendor: 'Allwave', start: awS, end: awE })
       })
 
       parsed.push({

@@ -594,6 +594,8 @@ export default function Home() {
     const itwECol     = col('ITW Schedule Complete')
     const ssSCol      = col('Samsung Schedule Start')
     const ssECol      = col('Samsung Schedule Complete')
+    const awSCol      = col('Allwave Schedule Start')
+    const awECol      = col('Allwave Schedule Complete')
 
     console.log('[kpi] headerRow index:', headerRow)
     console.log('[kpi] ntpCol index:', ntpCol)
@@ -722,9 +724,11 @@ export default function Home() {
       rows2.forEach(r => {
         const itwS = parseD(r[itwSCol]); const itwE = parseD(r[itwECol])
         const ssS  = parseD(r[ssSCol]);  const ssE  = parseD(r[ssECol])
+        const awS  = parseD(r[awSCol]);  const awE  = parseD(r[awECol])
         if (ms15f) {
           if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) hasConflict = true
           if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) hasConflict = true
+          if (awS && awE && awS <= ms15f && ms15f <= awE) hasConflict = true
         }
       })
       if (hasConflict && !complete) vendorConflicts++
@@ -777,9 +781,11 @@ export default function Home() {
       rows2.forEach(r => {
         const itwS = parseD(r[itwSCol]); const itwE = parseD(r[itwECol])
         const ssS  = parseD(r[ssSCol]);  const ssE  = parseD(r[ssECol])
+        const awS  = parseD(r[awSCol]);  const awE  = parseD(r[awECol])
         if (ms15f) {
           if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) hasConflict2 = true
           if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) hasConflict2 = true
+          if (awS && awE && awS <= ms15f && ms15f <= awE) hasConflict2 = true
         }
       })
       details.push({
