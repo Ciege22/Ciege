@@ -5,17 +5,26 @@
 //
 // Reads three tracker columns:
 //   'CX SPO issued'        -> hasSpo: the SPO itself has been created
-//   'Service CPO Received' -> hasCpo: CPO's in, ready to cut the SPO
+//   'Service CPO Received' -> hasCpo: CPO's in
 //   'CX SPO Request'       -> hasSpoRequest: the request was logged, but the
 //                             SPO hasn't actually been created/issued yet
 //
-// hasCpo and hasSpoRequest are independent signals — a HOP can have a CPO
-// AND already have had its SPO requested. That combination gets its own
-// 'cpo_requested' status (distinct from plain 'cpo_ready') so a HOP that's
-// already been requested stops reading "Cut SPO Now" (a call to action
-// that's already been done) and instead reads "CPO Requested" (already
-// actioned, just waiting on creation).
-export type SpoStatus = 'issued' | 'cpo_requested' | 'cpo_ready' | 'requested' | 'needed'
+// Matches the real procurement flow (per CJ): the CPO is the Customer PO to
+// Nokia, and it's what lets Nokia turn around and issue the SPO (Supplier
+// PO) to the contractor — CJ can't meaningfully request an SPO without a
+// CPO in hand, so "has a CPO" isn't its own separate signal once a request
+// exists; it's the gate that made the request possible in the first place.
+// Four states, in priority order:
+//   issued        - the SPO itself exists. Done.
+//   requested     - CX SPO Request logged, SPO not created yet — waiting on
+//                   Nokia. (Previously split into two tiles depending on
+//                   whether a CPO was also present — collapsed into one,
+//                   since by the time a request exists the CPO already did
+//                   its job of enabling it.)
+//   needs_request - CPO's in, nobody's requested the SPO yet. This is the
+//                   action item: CJ needs to request it.
+//   pending_cpo   - nothing yet. Waiting on the CPO to arrive.
+export type SpoStatus = 'issued' | 'requested' | 'needs_request' | 'pending_cpo'
 
 export interface SpoStatusResult {
   status: SpoStatus
@@ -25,8 +34,7 @@ export interface SpoStatusResult {
 
 export function computeSpoStatus(hasSpo: boolean, hasCpo: boolean, hasSpoRequest: boolean): SpoStatusResult {
   if (hasSpo) return { status: 'issued', label: 'Issued', shortLabel: '✓ Issued' }
-  if (hasCpo && hasSpoRequest) return { status: 'cpo_requested', label: 'CPO Requested — Pending SPO Creation', shortLabel: '📨 CPO Requested' }
-  if (hasCpo) return { status: 'cpo_ready', label: 'Cut SPO Now', shortLabel: '⚡ Cut Now' }
   if (hasSpoRequest) return { status: 'requested', label: 'Requested — Pending SPO Creation', shortLabel: '📨 Requested' }
-  return { status: 'needed', label: 'Pending SPO Request', shortLabel: '🔴 Pending Request' }
+  if (hasCpo) return { status: 'needs_request', label: 'Needs SPO Requested', shortLabel: '⚡ Needs Request' }
+  return { status: 'pending_cpo', label: 'Pending CPO', shortLabel: '🔴 Pending CPO' }
 }

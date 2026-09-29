@@ -142,10 +142,9 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
           }
           {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
           {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
-          {h.spoStatus === 'cpo_ready' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO Now</span>}
-          {h.spoStatus === 'cpo_requested' && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 CPO Requested</span>}
+          {h.spoStatus === 'needs_request' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Needs SPO Request</span>}
           {h.spoStatus === 'requested' && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 SPO Requested</span>}
-          {h.spoStatus === 'needed' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">SPO — Pending Request</span>}
+          {h.spoStatus === 'pending_cpo' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">Pending CPO</span>}
           {h.vendorWindow.includes('🔴') && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">Vendor ⚠️</span>}
           {h.over18d && <span className="bg-red-800 text-red-200 text-xs px-2 py-0.5 rounded-full">⚠️ Over 18d</span>}
           {hopOpenActions.length > 0 && (
@@ -170,16 +169,14 @@ function HopRow({ h, showElapsed, isExpanded, hopAllActions, hopOpenActions, mod
             <div><span className="text-gray-500">Material:</span> <span className={h.hasMat ? 'text-green-400' : 'text-red-400'}>{h.hasMat ? '✓ Received' : '✗ Pending'}</span></div>
             <div><span className="text-gray-500">SPO:</span> <span className={
               h.spoStatus === 'issued' ? 'text-green-400' :
-              h.spoStatus === 'cpo_requested' ? 'text-blue-400' :
-              h.spoStatus === 'cpo_ready' ? 'text-yellow-300 font-bold' :
               h.spoStatus === 'requested' ? 'text-blue-400' :
+              h.spoStatus === 'needs_request' ? 'text-yellow-300 font-bold' :
               'text-red-400'
             }>{
               h.spoStatus === 'issued' ? '✓ Issued' :
-              h.spoStatus === 'cpo_requested' ? '📨 CPO Requested — Pending SPO Creation' :
-              h.spoStatus === 'cpo_ready' ? '⚡ CPO Available — Cut SPO Now' :
               h.spoStatus === 'requested' ? '📨 Requested — Pending SPO Creation' :
-              '✗ Pending SPO Request'
+              h.spoStatus === 'needs_request' ? '⚡ CPO Available — Needs SPO Requested' :
+              '✗ Pending CPO'
             }</span></div>
             {!h.hasNtp && h.ntpWaitingOn && <div className="col-span-2"><span className="text-gray-500">NTP Waiting On:</span> <span className="text-yellow-300">{h.ntpWaitingOn}</span></div>}
             {!h.hasMat && h.matForecast && <div><span className="text-gray-500">Mat Forecast:</span> <span className="text-yellow-300">{h.matForecast}</span></div>}
@@ -603,10 +600,9 @@ export default function WeeklyFocusPage() {
     over18: active.filter(h => h.over18d),
     thisweek: [...needsAttention, ...thisWeekReady],
     ntpurgent: ntpUrgent,
-    sponeeded: filteredHops.filter(h => h.spoStatus === 'needed' && !h.complete),
+    pendingcpo: filteredHops.filter(h => h.spoStatus === 'pending_cpo' && !h.complete),
     sporequested: filteredHops.filter(h => h.spoStatus === 'requested' && !h.complete),
-    cutspo: filteredHops.filter(h => h.spoStatus === 'cpo_ready' && !h.complete),
-    cporequested: filteredHops.filter(h => h.spoStatus === 'cpo_requested' && !h.complete),
+    needsrequest: filteredHops.filter(h => h.spoStatus === 'needs_request' && !h.complete),
     matwatch: filteredHops.filter(h => !h.hasMat && !h.complete && h.daysOut !== null && h.daysOut <= 14),
     ready: filteredHops.filter(h => h.hasNtp && h.hasMat && !h.inProgress && !h.complete),
   }
@@ -616,10 +612,9 @@ export default function WeeklyFocusPage() {
     { key: 'over18', label: 'Over 18 Days', color: 'text-red-400' },
     { key: 'thisweek', label: 'Starting This Week', color: 'text-orange-400' },
     { key: 'ntpurgent', label: 'NTP Urgent ≤14d', color: 'text-yellow-400' },
-    { key: 'sponeeded', label: 'Pending SPO Request', color: 'text-red-400' },
+    { key: 'pendingcpo', label: 'Pending CPO', color: 'text-red-400' },
     { key: 'sporequested', label: 'SPO Requested', color: 'text-blue-400' },
-    { key: 'cutspo', label: 'Cut SPO Now', color: 'text-yellow-400' },
-    { key: 'cporequested', label: 'CPO Requested', color: 'text-blue-400' },
+    { key: 'needsrequest', label: 'Needs SPO Requested', color: 'text-yellow-400' },
     { key: 'matwatch', label: 'Material Watch', color: 'text-orange-400' },
     { key: 'ready', label: 'Ready to Start', color: 'text-green-400' },
     { key: 'openactions', label: 'Open Actions', color: 'text-blue-400' },
@@ -808,10 +803,9 @@ export default function WeeklyFocusPage() {
                         {h.over18d && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">⚠️ {h.daysElapsed}d elapsed</span>}
                         {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
                         {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
-                        {h.spoStatus === 'cpo_ready' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Cut SPO</span>}
-                        {h.spoStatus === 'cpo_requested' && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 CPO Requested</span>}
+                        {h.spoStatus === 'needs_request' && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Needs Request</span>}
                         {h.spoStatus === 'requested' && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 Requested</span>}
-                        {h.spoStatus === 'needed' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">🔴 Pending Request</span>}
+                        {h.spoStatus === 'pending_cpo' && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">🔴 Pending CPO</span>}
                         {h.daysOut !== null && !h.inProgress && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>}
                         {openHopActs.length > 0 && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">{openHopActs.length} open</span>}
                       </div>
