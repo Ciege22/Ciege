@@ -752,6 +752,16 @@ function fmtDate(d: Date | null): string {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`
 }
 
+// Some columns (e.g. Material Forecast +4ish) get a status note instead of a
+// date — "At LSC", "In transit to LSC", "SDS in process", "TBD", etc. A plain
+// parseDateAny+fmtDate pass silently drops that text since it isn't a valid
+// date; this keeps it so CJ still sees it on calls instead of a blank cell.
+function fmtDateOrText(raw: unknown): string {
+  const d = parseDateAny(raw)
+  if (d) return fmtDate(d)
+  return String(raw ?? '').trim()
+}
+
 function fmtDM(d: Date | null): string {
   if (!d) return ''
   return `${d.getMonth() + 1}/${d.getDate()}`
@@ -1430,7 +1440,6 @@ export default function GCCallPage() {
       const ms16a   = parseDate(row[ms16aCol])
       const ntpDate = parseDate(row[ntpCol])
       const matDate = parseDateAny(row[matCol])
-      const matFc   = parseDateAny(row[matFcCol])
       const wpDate  = parseDateAny(row[wpCol])
       const pickupD = parseDateAny(row[pickupCol])
       const spoDate  = parseDateAny(row[spoCol]) || (row2 ? parseDateAny(row2[spoCol]) : null)
@@ -1554,7 +1563,7 @@ export default function GCCallPage() {
         hasNtp, hasMat, wpApproved, gcPickup,
         ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
         ntpWaitingOn: String(row[ntpWaitCol] || '').trim() || String(row2?.[ntpWaitCol] || '').trim(),
-        matForecast:  fmtDate(matFc),
+        matForecast:  fmtDateOrText(row[matFcCol]),
         matReceived:  matDate ? fmtDate(matDate) : '',
         gcPickupDate: fmtDate(pickupD),
         hasSpo:       !!(spoDate && spoDate.getFullYear() >= 2020),

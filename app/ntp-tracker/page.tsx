@@ -58,6 +58,16 @@ function fmtDate(d: Date | null): string {
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`
 }
 
+// Some columns (e.g. Material Forecast +4ish) get a status note instead of a
+// date — "At LSC", "In transit to LSC", "SDS in process", "TBD", etc. A plain
+// parseDateAny+fmtDate pass silently drops that text since it isn't a valid
+// date; this keeps it so CJ still sees it on calls instead of a blank cell.
+function fmtDateOrText(raw: unknown): string {
+  const d = parseDateAny(raw)
+  if (d) return fmtDate(d)
+  return String(raw ?? '').trim()
+}
+
 function fmtDM(d: Date | null): string {
   if (!d) return ''
   return `${d.getMonth() + 1}/${d.getDate()}`
@@ -305,7 +315,7 @@ export default function NTPTrackerPage() {
         ntpOwner,
         ntpWaitingOn:  ntpWait,
         hasMat:        !!(matDate && matDate.getFullYear() >= 2020),
-        matForecast:   fmtDate(parseDateAny(row[matFcCol])),
+        matForecast:   fmtDateOrText(row[matFcCol]),
         vendorWindow,
         month:         monthLabel,
         daysOut:       ms15f ? daysBetween(today, ms15f) : null,

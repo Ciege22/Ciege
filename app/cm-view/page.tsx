@@ -124,6 +124,16 @@ function fmtDateOrNA(raw: unknown): string {
   return isNaText(raw) ? 'N/A' : ''
 }
 
+// Some columns (e.g. Material Forecast +4ish) get a status note instead of a
+// date — "At LSC", "In transit to LSC", "SDS in process", "TBD", etc. A plain
+// parseDateAny+fmtDate pass silently drops that text since it isn't a valid
+// date; this keeps it so CJ still sees it on calls instead of a blank cell.
+function fmtDateOrText(raw: unknown): string {
+  const d = parseDateAny(raw)
+  if (d) return fmtDate(d)
+  return String(raw ?? '').trim()
+}
+
 function fmtDM(d: Date | null): string {
   if (!d) return ''
   return `${d.getMonth() + 1}/${d.getDate()}`
@@ -834,7 +844,7 @@ export default function CMViewPage() {
         gcPickupDate: fmtDate(pickupD),
         ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
         ntpWaitingOn: String(row[ntpWaitCol] || '').trim() || String(row2?.[ntpWaitCol] || '').trim(),
-        matForecast:  fmtDate(parseDateAny(row[matFcCol])),
+        matForecast:  fmtDateOrText(row[matFcCol]),
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
         steelFrom: (() => {

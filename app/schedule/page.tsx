@@ -33,6 +33,11 @@ interface HOP {
   hasNtp: boolean
   hasMat: boolean
   materialForecastDate: Date | null
+  // Display-only: Material Forecast +4ish sometimes holds a status note
+  // instead of a date ("At LSC", "In transit to LSC", "SDS in process") —
+  // the scheduling math below can't use that as a date, but CJ still needs
+  // to see it on the Pipeline table instead of a blank cell.
+  materialForecastText: string
   vendorConflicts: { vendor: string; start: Date; end: Date }[]
 }
 
@@ -46,6 +51,7 @@ interface Row {
   ms15a: Date | null
   ms16f: Date | null
   materialForecastDate: Date | null
+  materialForecastText: string
   daysElapsed: number | null
   hasNtp: boolean
   hasMat: boolean
@@ -146,7 +152,7 @@ function runSimulation(
       return {
         hop: h.hop, gc, crew: 1,
         ms15f: h.ms15f, ms15a: h.ms15a, ms16f: h.ms16f,
-        materialForecastDate: h.materialForecastDate,
+        materialForecastDate: h.materialForecastDate, materialForecastText: h.materialForecastText,
         daysElapsed: elapsed,
         hasNtp: h.hasNtp, hasMat: h.hasMat,
         vendorConflict: '', // never flagged on in-progress HOPs
@@ -248,6 +254,7 @@ function runSimulation(
           hop: h.hop, gc, crew: crewIdx + 1,
           ms15f: h.ms15f, ms15a: h.ms15a, ms16f: h.ms16f,
           materialForecastDate: matDate,
+          materialForecastText: h.materialForecastText,
           daysElapsed: null,
           hasNtp: h.hasNtp, hasMat: h.hasMat,
           vendorConflict: vc,
@@ -262,7 +269,7 @@ function runSimulation(
     const heldRows: Row[] = heldHops.map(h => ({
       hop: h.hop, gc, crew: crewOf.get(h.hop) != null ? (crewOf.get(h.hop) as number) + 1 : 0,
       ms15f: h.ms15f, ms15a: h.ms15a, ms16f: h.ms16f,
-      materialForecastDate: h.materialForecastDate,
+      materialForecastDate: h.materialForecastDate, materialForecastText: h.materialForecastText,
       daysElapsed: null,
       hasNtp: h.hasNtp, hasMat: h.hasMat,
       vendorConflict: '',
@@ -405,6 +412,7 @@ export default function SchedulePage() {
       const hasMat = !!(matDate && matDate.getFullYear() >= 2020)
       const matForecastRaw = parseDate(row[matFcCol])
       const materialForecastDate = matForecastRaw && matForecastRaw.getFullYear() >= 2025 ? matForecastRaw : null
+      const materialForecastText = materialForecastDate ? '' : String(row[matFcCol] ?? '').trim()
 
       const vendorConflicts: { vendor: string; start: Date; end: Date }[] = []
       rows2.forEach(r => {
@@ -421,7 +429,7 @@ export default function SchedulePage() {
         gc: String(row[gcCol] || '').trim(),
         pathId: String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         ms15f, ms15a, ms16f, ms16a,
-        hasNtp, hasMat, materialForecastDate,
+        hasNtp, hasMat, materialForecastDate, materialForecastText,
         vendorConflicts,
       })
     })
@@ -613,7 +621,7 @@ export default function SchedulePage() {
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{fmtDate(row.ms16f)}</td>
                                 <td className="p-2">{row.hasNtp ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
                                 <td className="p-2">{row.hasMat ? <span className="text-green-400 font-bold">✓</span> : <span className="text-red-400 font-bold">✗</span>}</td>
-                                <td className="p-2 text-gray-300 whitespace-nowrap">{fmtShort(row.materialForecastDate)}</td>
+                                <td className="p-2 text-gray-300 whitespace-nowrap">{fmtShort(row.materialForecastDate) || row.materialForecastText}</td>
                                 <td className="p-2 text-xs text-yellow-300 whitespace-nowrap">{row.vendorConflict || '—'}</td>
                                 <td className="p-2 whitespace-nowrap">
                                   <span className={`text-xs font-bold ${RECOMMENDATION_COLOR[row.recommendation]}`}>{RECOMMENDATION_LABEL[row.recommendation]}</span>
