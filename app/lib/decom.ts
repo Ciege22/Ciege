@@ -496,9 +496,12 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
   const onTrackCount = pendingDropOff.filter(r => (r.aging ?? 0) < 4).length
   const maxAging = pendingDropOff.reduce((max, r) => Math.max(max, r.aging ?? 0), 0)
 
-  const top5DropOff = [...pendingDropOff].sort(byAgingDesc).slice(0, 5)
-  const top5Pathwave = [...pendingPathwave].sort(byAgingDesc).slice(0, 5)
-  const top5QuickBase = [...pendingQuickBase].sort(byAgingDesc).slice(0, 5)
+  // No cap — every outstanding site is listed (a 5-item cap here used to
+  // silently cut off real, legitimate items ranked #6+, e.g. MZI's 9 pending
+  // drop-offs shrinking to 5 with nothing in the email saying there was more).
+  const sortedDropOff = [...pendingDropOff].sort(byAgingDesc)
+  const sortedPathwave = [...pendingPathwave].sort(byAgingDesc)
+  const sortedQuickBase = [...pendingQuickBase].sort(byAgingDesc)
 
   const thinDiv = `${'─'.repeat(41)}\n`
   const thickDiv = `${'═'.repeat(41)}\n`
@@ -521,7 +524,7 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
   body += `★★★ TOP PRIORITY — PENDING DROP OFF ★★★\n`
   body += thinDiv
   body += `\n`
-  top5DropOff.forEach(r => {
+  sortedDropOff.forEach(r => {
     const tier = classifyAgingTier(r.aging)
     const days = r.aging ?? 0
     const label = tier === 'onTrack' ? `ON TRACK — ${days} DAYS` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${days} DAYS OUTSTANDING`
@@ -539,7 +542,7 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
   body += `★★★ TOP PRIORITY — PENDING POD PATHWAVE ★★★\n`
   body += thinDiv
   body += `\n`
-  top5Pathwave.forEach(r => {
+  sortedPathwave.forEach(r => {
     const daysSince = r.dropOffDate ? daysBetween(r.dropOffDate, today) : 0
     const tier = classifyAgingTier(daysSince)
     const label = tier === 'onTrack' ? `ON TRACK — ${daysSince} DAYS SINCE DROP OFF` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${daysSince} DAYS SINCE DROP OFF`
@@ -557,7 +560,7 @@ function buildDecomStatusBody(gcRows: DecomRow[], headerLabel: string, dateStr: 
     body += `★★★ TOP PRIORITY — PENDING POD QUICKBASE ★★★\n`
     body += thinDiv
     body += `\n`
-    top5QuickBase.forEach(r => {
+    sortedQuickBase.forEach(r => {
       const daysSince = r.dropOffDate ? daysBetween(r.dropOffDate, today) : 0
       const tier = classifyAgingTier(daysSince)
       const label = tier === 'onTrack' ? `ON TRACK — ${daysSince} DAYS SINCE DROP OFF` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${daysSince} DAYS SINCE DROP OFF`
