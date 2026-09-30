@@ -1616,6 +1616,21 @@ export default function TrackerGridPage() {
     setFilterPanel(null)
   }
 
+  // Clears just this one column's value filter and sort level, leaving every
+  // other column's filter/sort untouched — the per-column counterpart to
+  // clearAllSortsAndFilters, so removing one filter doesn't require wiping
+  // the whole grid's filter/sort state.
+  const clearColumnFilter = (name: string, e: React.MouseEvent) => {
+    e.stopPropagation()
+    setColumnFilters(prev => {
+      if (!(name in prev)) return prev
+      const next = { ...prev }
+      delete next[name]
+      return next
+    })
+    setSortOrder(prev => prev.filter(s => s.name !== name))
+  }
+
   const openColumnFilter = (name: string, e: React.MouseEvent) => {
     e.stopPropagation()
     if (filterPanel?.col === name) { setFilterPanel(null); return }
@@ -1653,6 +1668,16 @@ export default function TrackerGridPage() {
               onClick={() => toggleDraftHidden(col.name)}
               className="text-red-300 hover:text-red-100 font-bold text-xs"
               title="Hide column"
+            >
+              ✕
+            </button>
+          )}
+          {isColFilterActive(col.name) && (
+            <button
+              onClick={(e) => clearColumnFilter(col.name, e)}
+              title="Clear this column's filter/sort"
+              className="leading-none font-bold hover:brightness-125"
+              style={{ fontSize: 10, color: '#FFD166' }}
             >
               ✕
             </button>
