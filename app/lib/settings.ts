@@ -109,10 +109,10 @@ export interface ScopSettings {
   // Days since Construction Complete before the aging number turns amber,
   // then red. `< green` = green, `green..<amber` = amber, `>= amber` = red.
   agingColorThresholds: { green: number; amber: number }
-  // Min aging for a HOP to appear in a GC email's "Top Priority" callout.
+  // Min aging for a HOP to appear in a GC email's "Top Priority" callout —
+  // every item at/above this is listed, no cap (a cap used to silently cut
+  // off legitimate outstanding items with nothing in the email saying so).
   emailPriorityThresholdDays: number
-  // Max HOPs shown in that callout (oldest first).
-  emailPriorityCap: number
   // Case-insensitive substrings against `One and Done` that reclassify a HOP
   // from In Progress into the separate OAD bucket.
   oadKeywords: string[]
@@ -228,7 +228,6 @@ export const SCOP_PATHWAVE_ITEM_LABELS = [
 export const DEFAULT_SCOP: ScopSettings = {
   agingColorThresholds: { green: 30, amber: 60 },
   emailPriorityThresholdDays: 60,
-  emailPriorityCap: 5,
   oadKeywords: ['oad'],
   headerRowOverride: null,
   asOfDateOverride: null,

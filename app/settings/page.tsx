@@ -466,12 +466,6 @@ export default function SettingsPage() {
                   <p className="text-gray-600 text-xs mt-1">Min aging for a HOP to hit a GC email&apos;s priority callout</p>
                 </div>
                 <div>
-                  <label className="text-sm text-gray-300 block mb-1">Max Priority Items Per Email</label>
-                  <input type="number" value={scop.emailPriorityCap}
-                    onChange={(e) => setScop(s => ({ ...s, emailPriorityCap: Number(e.target.value) || 0 }))}
-                    className="w-full bg-gray-800 text-white text-sm rounded px-3 py-2 border border-gray-600 focus:outline-none focus:border-blue-500" />
-                </div>
-                <div>
                   <label className="text-sm text-gray-300 block mb-1">OAD Detection Keywords (comma-separated)</label>
                   <input value={scop.oadKeywords.join(', ')}
                     onChange={(e) => setScop(s => ({ ...s, oadKeywords: e.target.value.split(',').map(k => k.trim()).filter(Boolean) }))}

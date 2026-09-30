@@ -187,7 +187,6 @@ export interface ScopCalcSettings {
   aliasMap: Record<string, string>
   oadKeywords: string[]
   emailPriorityThresholdDays: number
-  emailPriorityCap: number
   pathwaveGcOwnedItems: string[]
   asOfDate: Date
 }
@@ -197,7 +196,6 @@ export function resolveScopCalcSettings(s: ScopSettings = DEFAULT_SCOP): ScopCal
     aliasMap: buildScopAliasMap(s.gcAliasMap),
     oadKeywords: s.oadKeywords?.length ? s.oadKeywords : ['oad'],
     emailPriorityThresholdDays: s.emailPriorityThresholdDays ?? 60,
-    emailPriorityCap: s.emailPriorityCap ?? 5,
     pathwaveGcOwnedItems: s.pathwaveGcOwnedItems?.length
       ? s.pathwaveGcOwnedItems
       : DEFAULT_SCOP.pathwaveGcOwnedItems,
@@ -500,13 +498,15 @@ export function buildGCEmailText(report: ScopGcReport, s: ScopCalcSettings, note
   const { gc, summary, sections } = report
   const dateStr = mmddyyyy(report.generatedDate)
   const threshold = s.emailPriorityThresholdDays
-  const cap = s.emailPriorityCap
 
-  // Dedupe the site-level Pathwave rows down to one entry per HOP (already OAD-free).
+  // Dedupe the site-level Pathwave rows down to one entry per HOP (already
+  // OAD-free). No cap — every outstanding item at/above the aging threshold
+  // is listed (a 5-item cap used to silently cut off real, legitimate items
+  // ranked #6+, which just read as "missing" with nothing in the email
+  // saying there was more).
   const priorityItems = [...new Map(sections.pathwave.map(r => [r.hop, r])).values()]
     .filter(r => (r.agingDays || 0) >= threshold)
     .sort((a, b) => (b.agingDays || 0) - (a.agingDays || 0))
-    .slice(0, cap)
 
   const subject = `Weekly SCOP Action Items — ${gc} (${dateStr})`
 
