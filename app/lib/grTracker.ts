@@ -66,9 +66,17 @@ function matchKey(s: string): string {
   return s.trim().toLowerCase()
 }
 
+// Blank Excel date cells round-trip through Supabase/JSON as the literal
+// "1899-12-30" epoch-zero timestamp (day 0 of Excel's date system) rather
+// than a true null — treating that as a real date would show "12/30/1899"
+// for what's actually an empty cell. Same `year < 1990` guard scop.ts and
+// decom.ts already use for this exact pattern.
 export function parseDateAny(val: unknown): Date | null {
   if (!val) return null
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val
+  if (val instanceof Date) {
+    if (isNaN(val.getTime()) || val.getFullYear() < 1990) return null
+    return val
+  }
   if (typeof val === 'number') {
     if (val > 40000 && val < 60000) {
       const d = new Date((val - 25569) * 86400 * 1000)
@@ -79,11 +87,11 @@ export function parseDateAny(val: unknown): Date | null {
   const s = String(val).trim()
   if (!s || s === 'null' || s === 'undefined' || s === 'NaN') return null
   const d = new Date(s)
-  if (!isNaN(d.getTime())) return d
+  if (!isNaN(d.getTime())) return d.getFullYear() < 1990 ? null : d
   const parts = s.split('/')
   if (parts.length === 3) {
     const d2 = new Date(parseInt(parts[2]), parseInt(parts[0]) - 1, parseInt(parts[1]))
-    return isNaN(d2.getTime()) ? null : d2
+    return isNaN(d2.getTime()) || d2.getFullYear() < 1990 ? null : d2
   }
   return null
 }

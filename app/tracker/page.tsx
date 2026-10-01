@@ -154,19 +154,49 @@ function normHeader(h: unknown): string {
 }
 
 const DATE_COL_REGEX = /start|end|complete|date|ntp|material|mss|power|forecast|actual|issue|request/i
+
+// Columns confirmed against the live tracker to hold real dates but whose
+// names don't contain any DATE_COL_REGEX keyword (no safe generic keyword
+// fits without over-matching unrelated columns — e.g. adding "approv"/
+// "submit" broadly would also catch "Pre-Con CR Submitted", which holds
+// plain "pending"/"NA" status text, not a date).
+const EXTRA_DATE_COLUMN_NAMES = new Set([
+  'Snap 9.16.26', 'Prelim CDs', 'Final CDs F', 'Final CDs A', 'SAs  A',
+  'LLD Uploaded to QB', 'LLD Aproved', 'Work Package Uploaded to QB', 'Work Package Approved in QB',
+  'Eng Docs Submitted F', 'Eng Docs Submitted A', 'Eng Docs Approved F', 'Eng Docs Approved A',
+  'B2B Testing F', 'Post Cage Match CR Submitted',
+])
+
 // Free-text columns that happen to contain a date-ish keyword ("ntp",
-// "material") and so falsely match DATE_COL_REGEX — every other page in
-// this app already classifies these three as text, never dates (see
+// "material", "complete") and so falsely match DATE_COL_REGEX — every other
+// page in this app already classifies these as text, never dates (see
 // app/page.tsx, app/gc-call/page.tsx, app/cm-view/page.tsx, etc.). Treating
 // them as date columns here was a real bug: cellDisplayValue's date-parse
 // fallback only catches a value that fails to parse as a date at all — a
-// free-text comment that happens to contain a date-shaped fragment (e.g.
-// "Meeting with Hosp on 8/18") still "succeeds" as a JS Date via a wrong,
-// coincidental year, and got displayed as that bogus date instead of the
-// real note.
-const NON_DATE_COLUMN_NAMES = new Set(['NTP Action Owner', 'NTP is waiting on', 'Material Current Location'])
-function isDateColumn(name: string): boolean {
+// free-text value that happens to be date-shaped (e.g. "Oct/26" parses as
+// October 26 2001, "w/o 4/20" as April 20 2001) still "succeeds" as a JS
+// Date via a wrong, coincidental year/day, and got displayed as that bogus
+// date instead of the real text. Confirmed live: 'Pre-Con Complete' holds
+// "w/o 4/20"/"complete", 'Material F'/'Material A' hold "Nov/26"-style
+// month-only forecast text (distinct columns from "Material Received A").
+const NON_DATE_COLUMN_NAMES = new Set([
+  'NTP Action Owner', 'NTP is waiting on', 'Material Current Location',
+  'Pre-Con Complete', 'Material F', 'Material A',
+])
+
+// 'NTP F' and 'NTP A' each appear TWICE in the live tracker at different
+// column positions — the first occurrence is the real, full-date column used
+// throughout the rest of the app; the second is a separate POR-summary block
+// further right holding "Oct/26"-style month-only text (same coincidental-
+// parse risk as above). Classification is name-based everywhere else in this
+// file, so this is the one place position has to matter: only the first
+// occurrence of either name counts as a date.
+const DUPLICATE_NAME_DATE_ONLY_FIRST = new Set(['NTP F', 'NTP A'])
+
+function isDateColumn(name: string, index: number, headers: string[]): boolean {
   if (NON_DATE_COLUMN_NAMES.has(name)) return false
+  if (EXTRA_DATE_COLUMN_NAMES.has(name)) return true
+  if (DUPLICATE_NAME_DATE_ONLY_FIRST.has(name) && headers.indexOf(name) !== index) return false
   return DATE_COL_REGEX.test(name)
 }
 
@@ -249,11 +279,27 @@ function parseAllTrackerRows(rows: unknown[][]): { headers: string[]; trackerRow
 // "NTP Action Owner" and "NTP is waiting on" both contain "ntp" but are
 // people/text fields, not dates) — fall back to plain text display/editing
 // per-cell rather than force an empty date picker over real data.
+// A blank Excel date cell round-trips through Supabase/JSON as the literal
+// "1899-12-30" epoch-zero timestamp (parseDateAny correctly rejects it via
+// its year<1990 guard) — but that rejection alone isn't enough to decide
+// what to SHOW: a genuinely blank cell should display as blank, not as that
+// raw ISO garbage string. Distinguishing "this was date-shaped but garbage"
+// from "this is a real word" (e.g. "At LSC", "N/A", "Oct/26") is what lets a
+// failed date-column parse fall back to blank in the first case and the
+// actual text in the second, instead of always doing one or the other.
+function looksDateShaped(raw: unknown): boolean {
+  if (raw instanceof Date) return true
+  if (typeof raw === 'number' && raw > 25000 && raw < 60000) return true
+  if (typeof raw === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(raw)) return true
+  return false
+}
+
 function cellDisplayValue(raw: unknown, isDateCol: boolean): { text: string; treatAsDate: boolean } {
   if (raw === null || raw === undefined || raw === '') return { text: '', treatAsDate: isDateCol }
   if (isDateCol) {
     const d = parseDateAny(raw)
     if (d) return { text: d.toLocaleDateString('en-US'), treatAsDate: true }
+    if (looksDateShaped(raw)) return { text: '', treatAsDate: true }
     return { text: String(raw).trim(), treatAsDate: false }
   }
   if (raw instanceof Date) return { text: raw.toLocaleDateString('en-US'), treatAsDate: false }
@@ -1024,7 +1070,7 @@ export default function TrackerGridPage() {
 
       if (HOP_MIRROR_FIELDS.has(field)) {
         const fieldIdx = headers.findIndex(h => h === field)
-        const isDateCol = isDateColumn(field)
+        const isDateCol = isDateColumn(field, fieldIdx, headers)
         trackerRows
           .filter(r => r.hop === hop && r.rowKey !== rowKey)
           .forEach(sibling => {
@@ -1267,7 +1313,7 @@ export default function TrackerGridPage() {
     const real = orderedIndexes.map(i => {
       const name = headers[i] || `Column ${i + 1}`
       const isHop = i === hopColIdx
-      const isDate = isDateColumn(name)
+      const isDate = isDateColumn(name, i, headers)
       const defaultWidth = isHop ? 220 : (isDate ? 150 : 130)
       return { index: i, name, isHop, isDate, isBlockers: false, isCrew: false, isCxComments: false, width: columnWidths[name] ?? defaultWidth }
     })
