@@ -123,6 +123,29 @@ const STARTER_VIEW_DEFS: { name: string; keep: string[] }[] = [
   },
 ]
 
+// Fixed column set + order for the HOP detail card (see hopCardHop below) —
+// CJ's own curated list, independent of whichever grid View is active, so
+// the card always shows the same thing regardless of what the grid is
+// currently filtered/hidden to.
+const HOP_CARD_COLUMNS: string[] = [
+  'App Path ID', 'HOP', 'Path ID', 'Site Name', 'Site Number', 'Nokia PM', 'New CM',
+  'General Contractor', 'Viaero Ops Field Ops', 'Phase Buckets', 'PCN Group',
+  'Hardware CPO Received', 'Hardware CPO Received Date', 'Service CPO Received', 'Service CPO Received Date',
+  'CX SPO Request', 'CX SPO issued', 'CX SPO Vendor', 'Material Forecast +4ish', 'Adeel Status',
+  'Material Received A', 'NTP A', 'Nokia NTP', 'NTP Action Owner', 'NTP is waiting on',
+  'Hop Deployment Method', 'Steel From', 'Material Current Location',
+  'GC Material Pick-up (F)', 'GC Material Pick-up (A)',
+  'ITW Schedule Start', 'ITW Schedule Complete', 'Allwave Schedule Start', 'Allwave Schedule Complete',
+  'Samsung Schedule Start', 'Samsung Schedule Complete',
+  'MS15 Implementation Start F', 'MS15 Implementation Start A', 'MS16 Implementation Ends F', 'MS16 Implementation Ends A',
+  'One and Done', 'Decom Status', 'CX Notes:', 'Latt.', 'Long.',
+]
+
+// Long free-text values (CX Notes especially) get clamped to ~2 lines with a
+// Show more/less toggle instead of forcing a long scroll on a phone — this is
+// the length past which 2 lines at this card's width realistically overflow.
+const CARD_LONG_TEXT_THRESHOLD = 110
+
 // Some headers carry a leading/trailing apostrophe (an Excel "force text"
 // formatting artifact — see Path ID / CX Notes: elsewhere in the app) — strip
 // it uniformly so column matching (views, dedup) never trips on it.
@@ -674,10 +697,14 @@ export default function TrackerGridPage() {
   const [cxCommentsModalRowKey, setCxCommentsModalRowKey] = useState<string | null>(null)
 
   // HOP detail card — tapping a HOP name opens a read-only vertical
-  // column:value list (whatever the active view currently shows), combining
-  // both of the HOP's physical rows into one card. Built for mobile, where
-  // the grid's locked columns make horizontal scrolling impractical.
+  // column:value list (the fixed HOP_CARD_COLUMNS set), combining both of
+  // the HOP's physical rows into one card. Built for mobile, where the
+  // grid's locked columns make horizontal scrolling impractical.
   const [hopCardHop, setHopCardHop] = useState<string | null>(null)
+  // Which long-text values are currently expanded past their 2-line clamp —
+  // keyed `${columnName}|${valueIndex}` so Site A/Site B can expand
+  // independently. Cleared whenever a new HOP's card is opened.
+  const [expandedCardValues, setExpandedCardValues] = useState<Set<string>>(new Set())
 
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -2066,7 +2093,7 @@ export default function TrackerGridPage() {
                             className="px-2 py-1 text-xs font-bold whitespace-nowrap border-r border-b border-gray-200"
                           >
                             <button
-                              onClick={(e) => { e.stopPropagation(); setHopCardHop(row.hop) }}
+                              onClick={(e) => { e.stopPropagation(); setExpandedCardValues(new Set()); setHopCardHop(row.hop) }}
                               className="underline decoration-dotted hover:text-blue-700 hover:decoration-solid text-left"
                               title="View HOP detail card"
                             >
@@ -2336,7 +2363,32 @@ export default function TrackerGridPage() {
       {hopCardHop && (() => {
         const hopRows = trackerRows.filter(r => r.hop === hopCardHop)
         if (hopRows.length === 0) return null
-        const cardColumns = filteredColumns.filter(c => !c.isHop)
+        const cardColumns = HOP_CARD_COLUMNS
+          .map(name => allColumns.find(c => c.name === name))
+          .filter((c): c is GridColumn => !!c)
+
+        const renderValue = (text: string, valueKey: string) => {
+          const isLong = text.length > CARD_LONG_TEXT_THRESHOLD
+          const expanded = expandedCardValues.has(valueKey)
+          return (
+            <div className="text-sm text-gray-800 break-words">
+              <span className={!isLong || expanded ? '' : 'line-clamp-2'}>{text || '—'}</span>
+              {isLong && (
+                <button
+                  onClick={() => setExpandedCardValues(prev => {
+                    const next = new Set(prev)
+                    if (next.has(valueKey)) next.delete(valueKey); else next.add(valueKey)
+                    return next
+                  })}
+                  className="text-xs font-semibold text-blue-700 hover:underline mt-0.5 block"
+                >
+                  {expanded ? 'Show less' : 'Show more'}
+                </button>
+              )}
+            </div>
+          )
+        }
+
         return (
           <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-end sm:items-center justify-center sm:p-4"
             onClick={() => setHopCardHop(null)}>
@@ -2354,13 +2406,13 @@ export default function TrackerGridPage() {
                     <div key={col.name} className="px-4 py-2.5">
                       <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{col.name}</div>
                       {allSame ? (
-                        <div className="text-sm text-gray-800 mt-0.5 break-words">{values[0] || '—'}</div>
+                        <div className="mt-0.5">{renderValue(values[0], `${col.name}|0`)}</div>
                       ) : (
-                        <div className="mt-0.5 space-y-1">
+                        <div className="mt-0.5 space-y-1.5">
                           {values.map((v, i) => (
-                            <div key={i} className="text-sm text-gray-800 break-words">
+                            <div key={i}>
                               <span className="text-xs text-gray-400 mr-1.5">{hopRows.length > 1 ? `Site ${String.fromCharCode(65 + i)}:` : ''}</span>
-                              {v || '—'}
+                              {renderValue(v, `${col.name}|${i}`)}
                             </div>
                           ))}
                         </div>
