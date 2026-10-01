@@ -52,11 +52,16 @@ function stripRow(row: unknown[], keepCols: number[]): unknown[] {
   return stripped
 }
 
+// Every current caller passes an already-guarded Date|null (decom.ts's
+// parseDate+yearOk pipeline), so this never sees a raw "1899-12-30"
+// epoch-zero value in practice today — the year<1990 check here is just
+// defense-in-depth so that stays true if a future caller doesn't.
 function fmtDate(val: unknown): string {
   if (!val) return ''
-  if (val instanceof Date) return val.toLocaleDateString('en-US')
+  if (val instanceof Date) return val.getFullYear() < 1990 ? '' : val.toLocaleDateString('en-US')
   const d = new Date(String(val))
-  return isNaN(d.getTime()) ? String(val) : d.toLocaleDateString('en-US')
+  if (isNaN(d.getTime())) return String(val)
+  return d.getFullYear() < 1990 ? '' : d.toLocaleDateString('en-US')
 }
 
 function buildGCReportWorkbook(rows: unknown[][], colIdx: number[], headers: string[], vendorColInMaster: number, matchList: string[], sheetName: string): XLSX.WorkBook {

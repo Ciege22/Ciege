@@ -52,15 +52,20 @@ interface Action {
   source_field: string | null
 }
 
+// A blank Excel date cell round-trips through Supabase/JSON as the literal
+// "1899-12-30" epoch-zero timestamp rather than true null — rejecting
+// anything before 1990 (matches the guard every other page's date parser in
+// this app already has) keeps a blank cell from being treated as a real,
+// wildly-wrong date.
 function parseDateAny(val: unknown): Date | null {
   if (!val) return null
-  if (val instanceof Date) return isNaN(val.getTime()) ? null : val
+  if (val instanceof Date) return isNaN(val.getTime()) || val.getFullYear() < 1990 ? null : val
   if (typeof val === 'number') {
     const d = new Date((val - 25569) * 86400 * 1000)
-    return isNaN(d.getTime()) ? null : d
+    return isNaN(d.getTime()) || d.getFullYear() < 1990 ? null : d
   }
   const d = new Date(String(val))
-  return isNaN(d.getTime()) ? null : d
+  return isNaN(d.getTime()) || d.getFullYear() < 1990 ? null : d
 }
 
 function parseDate(val: unknown): Date | null {

@@ -597,24 +597,29 @@ export default function Home() {
     console.log('[kpi] ntpCol index:', ntpCol)
     console.log('[kpi] total data rows being processed:', rows.length - headerRow - 1)
 
+    // A blank Excel date cell round-trips through Supabase/JSON as the
+    // literal "1899-12-30" epoch-zero timestamp rather than true null —
+    // rejecting anything before 1990 (matches the guard every other page's
+    // date parser in this app already has) keeps a blank cell from being
+    // treated as a real, wildly-wrong date.
     const parseD = (val: unknown): Date | null => {
       if (!val) return null
-      if (val instanceof Date) return isNaN(val.getTime()) ? null : val
+      if (val instanceof Date) return isNaN(val.getTime()) || val.getFullYear() < 1990 ? null : val
       if (typeof val === 'number') {
         if (val > 40000 && val < 60000) {
           const d = new Date((val - 25569) * 86400 * 1000)
-          return isNaN(d.getTime()) ? null : d
+          return isNaN(d.getTime()) || d.getFullYear() < 1990 ? null : d
         }
         return null
       }
       const s = String(val).trim()
       if (!s || s === 'null' || s === 'undefined' || s === 'NaN') return null
       const d = new Date(s)
-      if (!isNaN(d.getTime())) return d
+      if (!isNaN(d.getTime())) return d.getFullYear() < 1990 ? null : d
       const parts = s.split('/')
       if (parts.length === 3) {
         const d2 = new Date(parseInt(parts[2]), parseInt(parts[0])-1, parseInt(parts[1]))
-        return isNaN(d2.getTime()) ? null : d2
+        return isNaN(d2.getTime()) || d2.getFullYear() < 1990 ? null : d2
       }
       return null
     }
@@ -1066,13 +1071,24 @@ export default function Home() {
     const newMap = buildHopMap(newRows, newHeaderInfo.headers, newHeaderInfo.index)
     const oldMap = buildHopMap(oldRows, oldHeaderInfo.headers, oldHeaderInfo.index)
 
+    // A blank Excel date cell round-trips as the literal "1899-12-30"
+    // epoch-zero ISO timestamp rather than true null — rejecting it (year <
+    // 1990) alone isn't enough to decide what to SHOW though: an ISO-shaped
+    // value that fails the year check is a blank cell (→ show nothing), but
+    // a watched field that's genuinely non-date text (e.g. a GC name) should
+    // still show its real value, not get blanked just because it also failed
+    // to parse as a date.
+    const looksIsoDateShaped = (s: string) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(s)
     const fmtVal = (val: unknown) => {
       if (!val) return ''
-      if (val instanceof Date) return val.toLocaleDateString()
+      if (val instanceof Date) return val.getFullYear() > 2000 ? val.toLocaleDateString() : ''
       const s = String(val).trim()
       if (s === 'null' || s === 'undefined' || s === 'NaN') return ''
       const d = new Date(s)
-      if (!isNaN(d.getTime()) && d.getFullYear() > 2000) return d.toLocaleDateString()
+      if (!isNaN(d.getTime())) {
+        if (d.getFullYear() > 2000) return d.toLocaleDateString()
+        if (looksIsoDateShaped(s)) return ''
+      }
       return s
     }
 
