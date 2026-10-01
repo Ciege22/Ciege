@@ -153,7 +153,7 @@ function normHeader(h: unknown): string {
   return String(h ?? '').trim().replace(/^'+|'+$/g, '')
 }
 
-const DATE_COL_REGEX = /start|end|complete|date|ntp|material|mss|power|forecast|actual/i
+const DATE_COL_REGEX = /start|end|complete|date|ntp|material|mss|power|forecast|actual|issue|request/i
 // Free-text columns that happen to contain a date-ish keyword ("ntp",
 // "material") and so falsely match DATE_COL_REGEX — every other page in
 // this app already classifies these three as text, never dates (see
