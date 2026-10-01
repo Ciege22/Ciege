@@ -17,6 +17,7 @@ import { computeSpoStatus, SpoStatus } from './lib/spoStatus'
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", emoji: "🎯" },
   { label: "Deck Builder", href: "/deck-builder", emoji: "🃏" },
+  { label: "Deck Builder V2 (beta)", href: "/deck-builder-v2", emoji: "🧪" },
   { label: "GC Call View", href: "/gc-call", emoji: "🏗️" },
   { label: "CM Call View", href: "/cm-view", emoji: "👷" },
   { label: "GR Tracker", href: "/gr-tracker", emoji: "💰" },

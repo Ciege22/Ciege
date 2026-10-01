@@ -319,6 +319,48 @@ export function decomRowsForGc(rows: DecomRow[], gc: string): DecomRow[] {
   return rows.filter(r => r.gc?.trim().toLowerCase() === gc?.trim().toLowerCase())
 }
 
+export interface DecomFunnel {
+  totalTracked: number
+  droppedOff: number
+  podPathwave: number
+  podQuickBase: number
+  gap1: number
+  gap2: number
+  gap3: number
+}
+
+// Shared by the Reports page funnel section, the Decom Dashboard Excel, and
+// the Decom Dashboard pptx slides, so none of the three can drift out of
+// sync with each other. `extraDroppedOff` folds in sites that have a real
+// Drop Off date but haven't had CX Complete logged yet — parseDecomRows
+// excludes those rows entirely (they aren't decom-eligible), so their
+// drop-off would otherwise be invisible even though it genuinely happened.
+// Only Dropped Off counts them — Total Tracked stays scoped to CX-Complete-
+// confirmed rows, so gap1 can legitimately go negative (more dropped off
+// than the tracked denominator) when it does.
+export function computeDecomFunnel(decomRows: DecomRow[], extraDroppedOff: number = 0): DecomFunnel {
+  const totalTracked = decomRows.length
+  const droppedOff = decomRows.filter(r => !!r.dropOffDate).length + extraDroppedOff
+  const podPathwave = decomRows.filter(r => r.podPathwave).length
+  const podQuickBase = decomRows.filter(r => r.podQuickBase).length
+  return {
+    totalTracked, droppedOff, podPathwave, podQuickBase,
+    gap1: totalTracked - droppedOff,
+    gap2: droppedOff - podPathwave,
+    gap3: podPathwave - podQuickBase,
+  }
+}
+
+// "Gap: -{N}" only reads correctly when gap is positive (sites stuck). Once
+// Dropped Off can exceed Total Tracked, gap1 can go negative or zero — this
+// picks the correct sign instead of rendering a literal double negative
+// ("Gap: --2").
+export function fmtGapLabel(gap: number): string {
+  if (gap > 0) return `Gap: -${gap}`
+  if (gap < 0) return `Gap: +${Math.abs(gap)}`
+  return 'Gap: 0'
+}
+
 // Case/whitespace-insensitive GC dedup — decomRowsForGc matches this same
 // way, so the GC name list driving summarizeDecomByGc must dedupe the same
 // way too. A plain `Set` on raw r.gc values doesn't: any GC not in

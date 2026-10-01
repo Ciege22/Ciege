@@ -61,7 +61,11 @@ export interface ScopDeckData {
   generatedDate: Date
 }
 
-export async function buildScopDeck(data: ScopDeckData, outputPath: string): Promise<string> {
+// Builds the 3-slide presentation in memory. Shared by both the file-writing
+// export (standalone manual download from the Reports/SCOP tab) and the
+// blob-returning export (Deck Builder V2 pulls the bytes directly instead of
+// triggering a browser download, so it can bundle them into its own build).
+function renderScopDeck(data: ScopDeckData): pptxgen {
   const { totalNokiaHops, constructionComplete, notYetConstructed, qbView, pwView, overallView, generatedDate } = data
   const dateStr = formatDate(generatedDate)
 
@@ -225,6 +229,19 @@ export async function buildScopDeck(data: ScopDeckData, outputPath: string): Pro
 
   footer(s3, `Generated ${dateStr}  |  ${overallView.trackedTotal} construction-complete HOPs (${notYetConstructed} still under construction, excluded from this view)`)
 
+  return pres
+}
+
+export async function buildScopDeck(data: ScopDeckData, outputPath: string): Promise<string> {
+  const pres = renderScopDeck(data)
   await pres.writeFile({ fileName: outputPath })
   return outputPath
+}
+
+// Returns the raw .pptx bytes instead of downloading — used by Deck Builder
+// V2 to fold these 3 slides into its own build without a second download
+// popping up in the browser.
+export async function buildScopDeckBlob(data: ScopDeckData): Promise<Blob> {
+  const pres = renderScopDeck(data)
+  return (await pres.write({ outputType: 'blob' })) as Blob
 }

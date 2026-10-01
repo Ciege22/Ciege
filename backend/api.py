@@ -19,6 +19,7 @@ from supabase import create_client
 # Ensure backend package path is importable when running this file directly
 sys.path.append(os.path.dirname(__file__))
 import build_deck
+import build_deck_v2
 import gr_tracker
 
 app = Flask(__name__)
@@ -137,6 +138,85 @@ def build_endpoint():
 			resp.headers['X-Ntp-Emails'] = encoded
 			resp.headers['Access-Control-Expose-Headers'] = 'X-Ntp-Emails'
 		return resp
+
+	except Exception as e:
+		tb = traceback.format_exc()
+		return jsonify({'error': str(e), 'traceback': tb}), 500
+
+	finally:
+		try:
+			shutil.rmtree(tmpdir)
+		except Exception:
+			pass
+
+
+@app.route('/build_v2', methods=['POST'])
+def build_v2_endpoint():
+	"""Deck Builder V2 — fully separate from /build above (which it never
+	calls into, and never modifies any state /build also reads). See
+	build_deck_v2.py's module docstring for the full list of behavioral
+	differences this exists to deliver."""
+	tmpdir = tempfile.mkdtemp(prefix='ciege_build_v2_')
+	try:
+		tracker = request.files.get('tracker')
+		previous_deck = request.files.get('previous_deck')
+		decom_pptx = request.files.get('decom_pptx')
+		scop_pptx = request.files.get('scop_pptx')
+		deck_date = request.form.get('deck_date') or request.args.get('deck_date')
+
+		if not previous_deck or not deck_date:
+			return jsonify({'error': 'Missing required fields: previous_deck, deck_date'}), 400
+		if not decom_pptx or not scop_pptx:
+			return jsonify({'error': 'Missing required fields: decom_pptx, scop_pptx (generated client-side before upload)'}), 400
+
+		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx') if tracker else ''
+		previous_deck_path = _save_uploaded_file(previous_deck, tmpdir, 'previous_deck.pptx')
+		decom_pptx_bytes = decom_pptx.read()
+		scop_pptx_bytes = scop_pptx.read()
+
+		tracker_rows = None
+		if not tracker and supabase_client:
+			try:
+				latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
+				if latest.data:
+					tracker_rows = json.loads(latest.data['data'])
+			except Exception as e:
+				print(f'Supabase tracker fetch error: {e}')
+
+		if not tracker_path and tracker_rows is None:
+			return jsonify({'error': 'Missing tracker: upload a .xlsx file or ensure Supabase has a snapshot'}), 400
+
+		try:
+			parsed = datetime.strptime(deck_date, '%m/%d/%Y')
+			deck_date_str = parsed.strftime('%m/%d/%Y')
+		except Exception:
+			deck_date_str = deck_date
+
+		out = build_deck_v2.build(
+			tracker_path=tracker_path,
+			previous_deck_path=previous_deck_path,
+			deck_date=deck_date_str,
+			output_dir=tmpdir,
+			tracker_rows=tracker_rows,
+			supabase_client=supabase_client,
+			decom_pptx_bytes=decom_pptx_bytes,
+			scop_pptx_bytes=scop_pptx_bytes,
+		)
+
+		# Read into memory before the `finally` block's tmpdir cleanup runs —
+		# send_file() given a path can still be mid-stream when that cleanup
+		# fires, since Flask sends the body after this function returns (the
+		# existing /build route sidesteps this the same way, via an in-memory
+		# zip buffer instead of a path).
+		with open(out['deck_path'], 'rb') as f:
+			deck_bytes = f.read()
+		buffer = io.BytesIO(deck_bytes)
+		return send_file(
+			buffer,
+			mimetype='application/vnd.openxmlformats-officedocument.presentationml.presentation',
+			as_attachment=True,
+			download_name=os.path.basename(out['deck_path']),
+		)
 
 	except Exception as e:
 		tb = traceback.format_exc()
