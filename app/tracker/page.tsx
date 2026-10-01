@@ -673,6 +673,12 @@ export default function TrackerGridPage() {
   const [cxCommentDrafts, setCxCommentDrafts] = useState<Record<string, string>>({})
   const [cxCommentsModalRowKey, setCxCommentsModalRowKey] = useState<string | null>(null)
 
+  // HOP detail card — tapping a HOP name opens a read-only vertical
+  // column:value list (whatever the active view currently shows), combining
+  // both of the HOP's physical rows into one card. Built for mobile, where
+  // the grid's locked columns make horizontal scrolling impractical.
+  const [hopCardHop, setHopCardHop] = useState<string | null>(null)
+
   const longPressRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // --- Smart search bar. `searchInput` is the raw box value; `searchQuery` is
@@ -2059,7 +2065,13 @@ export default function TrackerGridPage() {
                             }}
                             className="px-2 py-1 text-xs font-bold whitespace-nowrap border-r border-b border-gray-200"
                           >
-                            {row.hop}
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setHopCardHop(row.hop) }}
+                              className="underline decoration-dotted hover:text-blue-700 hover:decoration-solid text-left"
+                              title="View HOP detail card"
+                            >
+                              {row.hop}
+                            </button>
                           </td>
                         )
                       }
@@ -2315,6 +2327,47 @@ export default function TrackerGridPage() {
                 >
                   Save
                 </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {hopCardHop && (() => {
+        const hopRows = trackerRows.filter(r => r.hop === hopCardHop)
+        if (hopRows.length === 0) return null
+        const cardColumns = filteredColumns.filter(c => !c.isHop)
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-end sm:items-center justify-center sm:p-4"
+            onClick={() => setHopCardHop(null)}>
+            <div className="bg-white w-full h-[90vh] rounded-t-2xl sm:h-auto sm:max-h-[85vh] sm:max-w-lg sm:rounded-xl border border-gray-300 overflow-hidden shadow-2xl flex flex-col"
+              onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between p-4 border-b border-gray-200 shrink-0" style={{ backgroundColor: NAVY }}>
+                <h2 className="text-base font-bold text-white truncate pr-2">{hopCardHop}</h2>
+                <button onClick={() => setHopCardHop(null)} className="text-white hover:text-gray-200 text-xl font-bold shrink-0">✕</button>
+              </div>
+              <div className="overflow-y-auto flex-1 divide-y divide-gray-100">
+                {cardColumns.map(col => {
+                  const values = hopRows.map(r => cellText(r, col))
+                  const allSame = values.every(v => v.trim() === values[0].trim())
+                  return (
+                    <div key={col.name} className="px-4 py-2.5">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">{col.name}</div>
+                      {allSame ? (
+                        <div className="text-sm text-gray-800 mt-0.5 break-words">{values[0] || '—'}</div>
+                      ) : (
+                        <div className="mt-0.5 space-y-1">
+                          {values.map((v, i) => (
+                            <div key={i} className="text-sm text-gray-800 break-words">
+                              <span className="text-xs text-gray-400 mr-1.5">{hopRows.length > 1 ? `Site ${String.fromCharCode(65 + i)}:` : ''}</span>
+                              {v || '—'}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
             </div>
           </div>
