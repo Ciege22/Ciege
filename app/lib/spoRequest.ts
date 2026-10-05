@@ -147,10 +147,13 @@ export async function loadSpoDraft(): Promise<SpoDraft> {
   return { to: '', hops: {} }
 }
 
-export function saveSpoDraft(draft: SpoDraft): void {
-  supabase.from('pm_updates_cache').upsert({
+// Supabase query builders only send when awaited — an un-awaited upsert is
+// silently dropped, which is why entered pricing used to vanish on navigation.
+export async function saveSpoDraft(draft: SpoDraft): Promise<void> {
+  const { error } = await supabase.from('pm_updates_cache').upsert({
     id: DRAFT_ID, updates: JSON.stringify(draft), updated_at: new Date().toISOString(),
   })
+  if (error) console.error('Failed to save SPO draft:', error)
 }
 
 // One flat table: 3 payment rows per HOP, same columns as the SPO form.
