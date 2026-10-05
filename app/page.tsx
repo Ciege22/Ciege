@@ -10,6 +10,7 @@ import { loadChunkedReport } from './lib/reportChunks'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
 import { computeSpoStatus, SpoStatus } from './lib/spoStatus'
+import { SpoBatchForHops } from './components/SpoBatchBar'
 
 // Decom isn't its own page (it lives inside Reports' Decom section and
 // GC Call View's Decom tab), so it isn't listed as a separate nav card here
@@ -343,7 +344,7 @@ function modalRowMatches(h: HopDetail, col: ModalCol, filterVal: string): boolea
   return col.get(h).toLowerCase().includes(filterVal.toLowerCase())
 }
 
-function HopsModal({ title, hops, onClose }: { title: string; hops: HopDetail[]; onClose: () => void }) {
+function HopsModal({ title, hops, onClose, footer }: { title: string; hops: HopDetail[]; onClose: () => void; footer?: React.ReactNode }) {
   const [filters, setFilters] = useState<Record<string, string>>({})
   const [sortKey, setSortKey] = useState<string | null>(null)
   const [sortDir, setSortDir] = useState<ModalSortDir>('asc')
@@ -397,6 +398,7 @@ function HopsModal({ title, hops, onClose }: { title: string; hops: HopDetail[];
             )}
             <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
           </div>
+        {footer && <div className="px-6 py-3 border-b border-gray-700">{footer}</div>}
         </div>
         <div className="overflow-auto flex-1">
           {hops.length === 0 ? (
@@ -2144,7 +2146,12 @@ export default function Home() {
 
       {/* KPI Drill-Down Modal — sortable/filterable per column, see HopsModal above */}
       {showModal && (
-        <HopsModal title={modalTitle} hops={modalHops} onClose={() => setShowModal(false)} />
+        <HopsModal
+          title={modalTitle}
+          hops={modalHops}
+          onClose={() => setShowModal(false)}
+          footer={modalTitle === 'Needs SPO Requested' ? <SpoBatchForHops hopNames={modalHops.map(h => h.hop)} /> : undefined}
+        />
       )}
     </div>
   );
