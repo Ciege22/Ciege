@@ -19,6 +19,7 @@ const navItems = [
   { label: "Deck Builder", href: "/deck-builder", emoji: "🃏" },
   { label: "Deck Builder V2 (beta)", href: "/deck-builder-v2", emoji: "🧪" },
   { label: "Map", href: "/map", emoji: "🗺️" },
+  { label: "SPO Requests", href: "/spo-request", emoji: "📨" },
   { label: "GC Call View", href: "/gc-call", emoji: "🏗️" },
   { label: "CM Call View", href: "/cm-view", emoji: "👷" },
   { label: "GR Tracker", href: "/gr-tracker", emoji: "💰" },
