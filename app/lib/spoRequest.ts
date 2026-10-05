@@ -39,7 +39,7 @@ export interface SpoDraft {
 }
 
 export const SPO_HEADERS = [
-  'HOP (App Path ID)', 'SPO type', 'Customer Site ID', 'Site Name', '% payment', 'SPO value', 'CPO#', 'Vendor Name', 'SPO Request',
+  'HOP (App Path ID)', 'SPO type', 'Customer Site ID', 'Site Name', 'General Contractor', '% payment', 'SPO value', 'CPO#', 'Vendor Name', 'SPO Request',
 ]
 
 function validDate(v: unknown): boolean {
@@ -121,6 +121,7 @@ export function buildSpoBucket(rows: unknown[][]): HopSpo[] {
     const cpo = String(row[C.cpo] ?? '').trim()
     if (cpo) h.hasCpo = true
     if (!h.vendor) h.vendor = String(row[C.vendor] ?? '').trim()
+    if (!h.gc) h.gc = String(row[C.gc] ?? '').trim()
     h.rows.push({ rowKey, siteName, pathId, cpo })
   }
 
@@ -157,7 +158,7 @@ export function batchTable(bucket: HopSpo[], draft: SpoDraft): string[][] {
   const out: string[][] = []
   bucket.forEach(h => {
     rowsFor(draft, h.hop).forEach(r => {
-      out.push([h.appPathId, 'Base', h.pathId, h.hop, r.pct, money(r.value), cpoText(h), h.vendor, todayStr()])
+      out.push([h.appPathId, 'Base', h.pathId, h.hop, h.gc || '—', r.pct, money(r.value), cpoText(h), h.vendor, todayStr()])
     })
   })
   return out
@@ -171,7 +172,7 @@ export function emailBody(bucket: HopSpo[], draft: SpoDraft): string {
     ``,
   ]
   bucket.forEach(h => {
-    lines.push(`HOP ${h.appPathId}  |  ${h.hop}  |  Customer Site ID ${h.pathId}  |  CPO# ${cpoText(h)}  |  Vendor ${h.vendor}`)
+    lines.push(`HOP ${h.appPathId}  |  ${h.hop}  |  GC: ${h.gc || '—'}  |  Customer Site ID ${h.pathId}  |  CPO# ${cpoText(h)}  |  Vendor ${h.vendor}`)
     rowsFor(draft, h.hop).forEach(r => {
       lines.push(`    Base  ${r.pct.padEnd(6)}  ${money(r.value).padEnd(14)}  Requested ${todayStr()}`)
     })
@@ -188,7 +189,7 @@ export function openSpoEmail(bucket: HopSpo[], draft: SpoDraft): void {
 
 export function downloadSpoExcel(bucket: HopSpo[], draft: SpoDraft): void {
   const ws = XLSX.utils.aoa_to_sheet([SPO_HEADERS, ...batchTable(bucket, draft)])
-  ws['!cols'] = [12, 10, 16, 36, 12, 14, 30, 26, 14].map(w => ({ wch: w }))
+  ws['!cols'] = [12, 10, 16, 36, 24, 12, 14, 30, 26, 14].map(w => ({ wch: w }))
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'SPO Requests')
   XLSX.writeFile(wb, `SPO_Requests_${new Date().toISOString().slice(0, 10)}.xlsx`)

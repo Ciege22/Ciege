@@ -65,6 +65,7 @@ export default function SpoRequestPage() {
               <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3">
                 <span className="text-sm font-bold text-white">HOP {h.appPathId}</span>
                 <span className="text-sm text-zinc-300">{h.hop}</span>
+                <span className="text-sm font-semibold text-amber-300">GC: {h.gc || '—'}</span>
                 <span className="text-xs text-zinc-500">Customer Site ID {h.pathId}</span>
                 <span className="text-xs text-zinc-500">CPO# {cpoText(h) || '—'}</span>
                 <span className="text-xs text-zinc-500">{h.vendor}</span>
