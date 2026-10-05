@@ -52,56 +52,58 @@ export default function SpoRequestPage() {
         {bucket.length} HOP{bucket.length === 1 ? '' : 's'} with a CPO received and no SPO requested yet. Enter each payment split&apos;s SPO value, then email the batch.
       </p>
 
-      <div className="mb-4">
-        <SpoBatchBar bucket={bucket} draft={draft} onDraftChange={updateDraft} />
-      </div>
-
-      {bucket.length === 0 ? (
-        <div className="text-zinc-400 text-sm">Nothing waiting — every CPO-received HOP already has an SPO requested.</div>
-      ) : (
-        <div className="space-y-3">
-          {bucket.map(h => (
-            <div key={h.hop} className="rounded-xl border border-white/10 bg-zinc-900 p-4">
-              <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3">
-                <span className="text-sm font-bold text-white">HOP {h.appPathId}</span>
-                <span className="text-sm text-zinc-300">{h.hop}</span>
-                <span className="text-sm font-semibold text-amber-300">GC: {h.gc || '—'}</span>
-                <span className="text-xs text-zinc-500">Customer Site ID {h.pathId}</span>
-                <span className="text-xs text-zinc-500">CPO# {cpoText(h) || '—'}</span>
-                <span className="text-xs text-zinc-500">{h.vendor}</span>
+      <SpoBatchBar bucket={bucket} draft={draft} onDraftChange={updateDraft}>
+        {scoped => scoped.length === 0 ? (
+          <div className="text-zinc-400 text-sm">Nothing waiting — every CPO-received HOP already has an SPO requested.</div>
+        ) : (
+          <div className="space-y-3">
+            {scoped.map((h, idx) => (
+              <div key={h.hop}>
+                {(idx === 0 || (scoped[idx - 1].gc || '') !== (h.gc || '')) && (
+                  <div className="text-sm font-bold text-amber-300 mt-4 mb-2">{h.gc || '(no GC)'}</div>
+                )}
+                <div className="rounded-xl border border-white/10 bg-zinc-900 p-4">
+                  <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 mb-3">
+                    <span className="text-sm font-bold text-white">HOP {h.appPathId}</span>
+                    <span className="text-sm text-zinc-300">{h.hop}</span>
+                    <span className="text-xs text-zinc-500">Customer Site ID {h.pathId}</span>
+                    <span className="text-xs text-zinc-500">CPO# {cpoText(h) || '—'}</span>
+                    <span className="text-xs text-zinc-500">{h.vendor}</span>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="text-zinc-500 text-left">
+                          <th className="py-1 pr-3">SPO type</th>
+                          <th className="py-1 pr-3">% payment</th>
+                          <th className="py-1 pr-3">SPO value</th>
+                          <th className="py-1 pr-3">SPO Request</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {rowsFor(draft, h.hop).map((r, i) => (
+                          <tr key={i} className="border-t border-white/5">
+                            <td className="py-1.5 pr-3 text-zinc-300">Base</td>
+                            <td className="py-1.5 pr-3">
+                              <input value={r.pct} onChange={e => updateRow(h.hop, i, 'pct', e.target.value)}
+                                className="w-20 bg-zinc-800 rounded px-2 py-1 border border-white/10" />
+                            </td>
+                            <td className="py-1.5 pr-3">
+                              <input value={r.value} placeholder="$0.00" onChange={e => updateRow(h.hop, i, 'value', e.target.value)}
+                                className="w-32 bg-zinc-800 rounded px-2 py-1 border border-white/10" />
+                            </td>
+                            <td className="py-1.5 pr-3 text-zinc-300">{todayStr()}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-xs">
-                  <thead>
-                    <tr className="text-zinc-500 text-left">
-                      <th className="py-1 pr-3">SPO type</th>
-                      <th className="py-1 pr-3">% payment</th>
-                      <th className="py-1 pr-3">SPO value</th>
-                      <th className="py-1 pr-3">SPO Request</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rowsFor(draft, h.hop).map((r, i) => (
-                      <tr key={i} className="border-t border-white/5">
-                        <td className="py-1.5 pr-3 text-zinc-300">Base</td>
-                        <td className="py-1.5 pr-3">
-                          <input value={r.pct} onChange={e => updateRow(h.hop, i, 'pct', e.target.value)}
-                            className="w-20 bg-zinc-800 rounded px-2 py-1 border border-white/10" />
-                        </td>
-                        <td className="py-1.5 pr-3">
-                          <input value={r.value} placeholder="$0.00" onChange={e => updateRow(h.hop, i, 'value', e.target.value)}
-                            className="w-32 bg-zinc-800 rounded px-2 py-1 border border-white/10" />
-                        </td>
-                        <td className="py-1.5 pr-3 text-zinc-300">{todayStr()}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
+            ))}
+          </div>
+        )}
+      </SpoBatchBar>
     </div>
   )
 }

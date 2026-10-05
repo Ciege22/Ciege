@@ -135,7 +135,7 @@ export function buildSpoBucket(rows: unknown[][]): HopSpo[] {
       rows: h.rows,
     })
   })
-  bucket.sort((a, b) => a.hop.localeCompare(b.hop))
+  bucket.sort((a, b) => (a.gc || '~').localeCompare(b.gc || '~') || a.hop.localeCompare(b.hop))
   return bucket
 }
 
