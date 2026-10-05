@@ -39,7 +39,7 @@ export interface SpoDraft {
 }
 
 export const SPO_HEADERS = [
-  'HOP (App Path ID)', 'SPO type', 'Customer Site ID', 'Site Name', 'General Contractor', '% payment', 'SPO value', 'CPO#', 'Vendor Name', 'SPO Request',
+  'HOP (App Path ID)', 'SPO type', 'Customer Site ID', 'Site Name', 'General Contractor', '% payment', 'SPO value', 'CPO#', 'SPO Request',
 ]
 
 function validDate(v: unknown): boolean {
@@ -161,7 +161,7 @@ export function batchTable(bucket: HopSpo[], draft: SpoDraft): string[][] {
   const out: string[][] = []
   bucket.forEach(h => {
     rowsFor(draft, h.hop).forEach(r => {
-      out.push([h.appPathId, 'Base', h.pathId, h.hop, h.gc || '—', r.pct, money(r.value), cpoText(h), h.vendor, todayStr()])
+      out.push([h.appPathId, 'Base', h.pathId, h.hop, h.gc || '—', r.pct, money(r.value), cpoText(h), todayStr()])
     })
   })
   return out
@@ -192,7 +192,7 @@ export function openSpoEmail(bucket: HopSpo[], draft: SpoDraft): void {
 
 export function downloadSpoExcel(bucket: HopSpo[], draft: SpoDraft): void {
   const ws = XLSX.utils.aoa_to_sheet([SPO_HEADERS, ...batchTable(bucket, draft)])
-  ws['!cols'] = [12, 10, 16, 36, 24, 12, 14, 30, 26, 14].map(w => ({ wch: w }))
+  ws['!cols'] = [12, 10, 16, 36, 24, 12, 14, 30, 14].map(w => ({ wch: w }))
   const wb = XLSX.utils.book_new()
   XLSX.utils.book_append_sheet(wb, ws, 'SPO Requests')
   XLSX.writeFile(wb, `SPO_Requests_${new Date().toISOString().slice(0, 10)}.xlsx`)
