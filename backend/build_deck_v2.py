@@ -47,6 +47,7 @@ from datetime import datetime
 import pandas as pd
 from pptx import Presentation
 from pptx.dml.color import RGBColor
+from pptx.oxml.ns import qn
 from lxml import etree
 
 from build_deck import (
@@ -283,6 +284,14 @@ def copy_slides_into(content: dict, donor_bytes: bytes, donor_slide_positions, i
     with zipfile.ZipFile(__import__('io').BytesIO(donor_bytes)) as z:
         donor = {n: z.read(n) for n in z.namelist()}
 
+    def _slide_cx(pkg):
+        root = etree.fromstring(pkg['ppt/presentation.xml'])
+        sz = root.find(f'{{{P_NS}}}sldSz')
+        return int(sz.get('cx')) if sz is not None else None
+    donor_cx = _slide_cx(donor)
+    target_cx = _slide_cx(content)
+    scale_f = (target_cx / donor_cx) if (donor_cx and target_cx) else 1.0
+
     donor_slide_paths = _ordered_slide_paths(donor)
 
     # Figure out the next free numeric suffix for every part type we might add,
@@ -306,7 +315,7 @@ def copy_slides_into(content: dict, donor_bytes: bytes, donor_slide_positions, i
         donor_rels_path = _rels_path_for(donor_slide_path)
         donor_rels = donor.get(donor_rels_path, b'')
 
-        slide_xml_str = donor_slide_xml.decode('utf-8')
+        slide_xml_str = scale_slide_xml(donor_slide_xml.decode('utf-8'), scale_f)
         rid_remap = {}
 
         if donor_rels:
@@ -490,6 +499,134 @@ def clear_extra_rows(shape, hdrs, from_row):
     for ri in range(from_row, len(shape.table.rows)):
         for ci in range(len(hdrs)):
             set_table_cell(shape, ri, ci, '')
+
+
+MONTHS_RE = r'(January|February|March|April|May|June|July|August|September|October|November|December)'
+TABLE_BOTTOM_EMU = 4850000  # footer bar starts at 4885403
+
+
+def relabel_months(slide, mo_name):
+    """Rewrites any 'Month POR' / 'Month Plan of Record' label on the slide to mo_name."""
+    for sh in slide.shapes:
+        if not sh.has_text_frame:
+            continue
+        for para in sh.text_frame.paragraphs:
+            for run in para.runs:
+                run.text = re.sub(MONTHS_RE + r'(?=\s+(?:POR|Plan of Record))', mo_name, run.text)
+
+
+def set_para_text(para, text):
+    runs = para.runs
+    if runs:
+        runs[0].text = text
+        for r in runs[1:]:
+            r.text = ''
+    else:
+        para.text = text
+
+
+def _tighten_margins(tr):
+    for tc in tr.findall(qn('a:tc')):
+        tcPr = tc.find(qn('a:tcPr'))
+        if tcPr is not None:
+            tcPr.set('marT', '22860')
+            tcPr.set('marB', '22860')
+
+
+def fit_table(shape, bottom_emu=TABLE_BOTTOM_EMU, min_row_emu=160000):
+    """Shrinks row heights so a table with extra rows stops above the footer."""
+    if shape.top + shape.height <= bottom_emu:
+        return
+    trs = shape.table._tbl.findall(qn('a:tr'))
+    if len(trs) < 2:
+        return
+    for tr in trs:
+        _tighten_margins(tr)
+    avail = bottom_emu - shape.top
+    hdr_h = int(trs[0].get('h', min_row_emu))
+    per = max(min_row_emu, (avail - hdr_h) // (len(trs) - 1))
+    for tr in trs[1:]:
+        tr.set('h', str(per))
+    shape.height = hdr_h + per * (len(trs) - 1)
+
+
+def stack_fit(tables, bottom_emu=TABLE_BOTTOM_EMU, gap_emu=120000, min_row_emu=160000):
+    """Two stacked tables on one slide: shares the vertical space between them."""
+    tables = sorted(tables, key=lambda t: t.top)
+    total_rows = sum(len(t.table.rows) for t in tables)
+    avail = bottom_emu - tables[0].top - gap_emu * (len(tables) - 1)
+    per = max(min_row_emu, avail // total_rows)
+    y = tables[0].top
+    for t in tables:
+        trs = t.table._tbl.findall(qn('a:tr'))
+        for tr in trs:
+            _tighten_margins(tr)
+            tr.set('h', str(per))
+        t.top = y
+        t.height = per * len(trs)
+        y += t.height + gap_emu
+
+
+def fit_deck_tables(prs, bottom_emu=TABLE_BOTTOM_EMU):
+    for sl in prs.slides:
+        tbls = [sh for sh in sl.shapes if sh.has_table]
+        if not tbls:
+            continue
+        if len(tbls) == 2 and max(t.top + t.height for t in tbls) > bottom_emu:
+            stack_fit(tbls, bottom_emu)
+        else:
+            for t in tbls:
+                fit_table(t, bottom_emu)
+
+
+def scale_slide_xml(xml: str, f: float) -> str:
+    """Scales a donor slide's geometry and font sizes by f (donor width -> target width)."""
+    if abs(f - 1.0) < 1e-6:
+        return xml
+    def scale_tag(m, attrs):
+        tag = m.group(0)
+        for a in attrs:
+            tag = re.sub(rf'\b{a}="(-?\d+)"', lambda mm: f'{a}="{int(round(int(mm.group(1)) * f))}"', tag)
+        return tag
+    xml = re.sub(r'<a:(?:off|chOff)\b[^>]*>', lambda m: scale_tag(m, ['x', 'y']), xml)
+    xml = re.sub(r'<a:(?:ext|chExt)\b[^>]*>', lambda m: scale_tag(m, ['cx', 'cy']), xml)
+    xml = re.sub(r'<a:gridCol\b[^>]*>', lambda m: scale_tag(m, ['w']), xml)
+    xml = re.sub(r'<a:tr\b[^>]*>', lambda m: scale_tag(m, ['h']), xml)
+    xml = re.sub(r'<a:(?:rPr|defRPr|endParaRPr)\b[^>]*>', lambda m: scale_tag(m, ['sz']), xml)
+    return xml
+
+
+def delete_slide_content(content: dict, slide_path: str):
+    P_NS = 'http://schemas.openxmlformats.org/presentationml/2006/main'
+    R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+    CT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types'
+    prs_root = etree.fromstring(content['ppt/presentation.xml'])
+    rels_root = etree.fromstring(content['ppt/_rels/presentation.xml.rels'])
+    rid = None
+    for r in rels_root.findall(f'{{{PKG_NS}}}Relationship'):
+        t = r.get('Target', '')
+        full = t if t.startswith('ppt/') else 'ppt/' + t
+        if full == slide_path:
+            rid = r.get('Id')
+            rels_root.remove(r)
+            break
+    if rid is None:
+        return
+    sld_id_lst = prs_root.find(f'.//{{{P_NS}}}sldIdLst')
+    for sid in list(sld_id_lst.findall(f'{{{P_NS}}}sldId')):
+        if sid.get(f'{{{R_NS}}}id') == rid:
+            sld_id_lst.remove(sid)
+            break
+    content['ppt/presentation.xml'] = etree.tostring(prs_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+    content['ppt/_rels/presentation.xml.rels'] = etree.tostring(rels_root, xml_declaration=True, encoding='UTF-8', standalone=True)
+    content.pop(slide_path, None)
+    content.pop(_rels_path_for(slide_path), None)
+    ct_root = etree.fromstring(content['[Content_Types].xml'])
+    for ov in list(ct_root.findall(f'{{{CT_NS}}}Override')):
+        if ov.get('PartName') == '/' + slide_path:
+            ct_root.remove(ov)
+            break
+    content['[Content_Types].xml'] = etree.tostring(ct_root, xml_declaration=True, encoding='UTF-8', standalone=True)
 
 
 # ─────────────────────────────────────────────
@@ -694,11 +831,16 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
 
     prs = Presentation(tmp_path)
 
-    # Global date sweep.
+    # Global date sweep: swaps the old build date inside text, and also any
+    # date-stamp box that holds only a date (stale stamps from older builds).
     if OLD_DATE:
         for slide in prs.slides:
             for shape in slide.shapes:
                 replace_text_in_shape(shape, OLD_DATE, NEW_DATE)
+    for slide in prs.slides:
+        for shape in slide.shapes:
+            if shape.has_text_frame and re.fullmatch(r'\d{1,2}/\d{1,2}/\d{4}', shape.text_frame.text.strip() or 'x'):
+                set_shape_text(shape, NEW_DATE)
 
     def slide_by_title(fragment):
         for s in prs.slides:
@@ -708,6 +850,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
         return None
 
     # ── Delta slide ("What Changed Dashboard") ──
+    prev_session = last_snapshot.get('session_date', '')
     delta_slide = slide_by_title('What Changed')
     if delta_slide is not None:
         shapes4 = list(delta_slide.shapes)
@@ -715,18 +858,47 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
         delta_complete = d['complete_count'] - last_snapshot.get('total_complete', 0)
         delta_ip = d['ip_count'] - last_snapshot.get('in_progress', 0)
         delta_ntp = d['ntp_count'] - last_snapshot.get('total_ntp', 0)
+        ref = prev_session or 'first build'
 
         def ds(v, ref):
             return f'+{v} vs {ref}' if v > 0 else (f'No change vs {ref}' if v == 0 else f'{v} vs {ref}')
 
-        # Headline KPI values + deltas sit in fixed relative positions on this
-        # slide (value, label, delta triples) — unchanged by CJ's edits so far.
         for idx, val in [(6, d['started_count']), (11, d['complete_count']), (16, d['ip_count']), (21, d['ntp_count'])]:
             if idx < len(shapes4):
                 set_shape_text(shapes4[idx], str(val))
         for idx, val in [(9, delta_starts), (14, delta_complete), (19, delta_ip), (24, delta_ntp)]:
-            if idx < len(shapes4) and OLD_DATE:
-                set_shape_text(shapes4[idx], ds(val, OLD_DATE))
+            if idx < len(shapes4):
+                set_shape_text(shapes4[idx], ds(val, ref))
+
+        for sh in delta_slide.shapes:
+            if not sh.has_text_frame:
+                continue
+            t = sh.text_frame.text
+            if 'Compared to' in t:
+                set_shape_text(sh, f'Compared to {prev_session or "first build"}  ·  {NEW_DATE}')
+            elif 'Construction Completed' in t:
+                total = d['total']
+                done = d['complete_count']
+                pct = round(100 * done / total) if total else 0
+                new_t = re.sub(r'\d+ of \d+ HOPs \(\d+%\)', f'{done} of {total} HOPs ({pct}%)', t)
+                new_t = re.sub(r'– \d+ HOPs', f'– {total - done} HOPs', new_t)
+                set_shape_text(sh, new_t)
+
+        # "NTP Start Changes by Month" lines — one per active POR month, in order.
+        month_lines = []
+        for shp in delta_slide.shapes:
+            if not shp.has_text_frame:
+                continue
+            for para in shp.text_frame.paragraphs:
+                if re.search(r'POR:\s+\d+ of \d+', para.text) or re.search(r'POR:\s+\d+ of \d+ Hops', para.text):
+                    month_lines.append(para)
+        for k, para in enumerate(month_lines):
+            if k < len(por_order):
+                mo_key, mo_name, _ = por_order[k]
+                pp = por[mo_key]
+                set_para_text(para, f'{mo_name} POR:  {pp["ntp"]} of {pp["total"]} HOPs with NTP')
+            else:
+                set_para_text(para, '')
 
     # ── POR slides: fill whatever trio-groups exist in the template, in
     #    rolling-window order; blank any trailing group beyond the active
@@ -863,48 +1035,28 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     por_overview_slides = [s for s in prs.slides if any(
         sh.has_text_frame and re.search(r'\d+\s+Forecasted\s+\S+\s+POR', sh.text_frame.text) for sh in s.shapes)]
     all_slides = list(prs.slides)
+    blank_trio_bases = []
     for i, ov_slide in enumerate(por_overview_slides):
         base_idx = all_slides.index(ov_slide)
         confirmed_slide = all_slides[base_idx + 1] if base_idx + 1 < len(all_slides) else None
         pending_slide = all_slides[base_idx + 2] if base_idx + 2 < len(all_slides) else None
         if i < len(por_order):
             mo_key, mo_name, sheet_key = por_order[i]
+            for sl in [ov_slide, confirmed_slide, pending_slide]:
+                if sl is not None:
+                    relabel_months(sl, mo_name)
             update_por_overview(ov_slide, mo_name, mo_key)
             if confirmed_slide is not None:
                 update_por_confirmed(confirmed_slide, mo_name, mo_key, sheet_key)
             if pending_slide is not None:
                 update_por_pending(pending_slide, mo_name, mo_key, sheet_key)
         else:
-            # No active month left for this template slot — blank every text
-            # label and table row rather than leave the previous build's
-            # stale month name/numbers showing (project winding down, fewer
-            # active months than the template has slide-groups for).
-            for sh in ov_slide.shapes:
-                if not sh.has_text_frame:
-                    continue
-                if re.search(r'\d+\s+Forecasted\s+\S+\s+POR', sh.text_frame.text):
-                    set_shape_text(sh, '0 Forecasted —')
-                elif re.search(r'\S+\s+Plan of Record', sh.text_frame.text):
-                    set_shape_text(sh, '—')
-                elif re.search(r'\d+\s+with\s+NTP\s+of\s+\d+\s+POR', sh.text_frame.text, re.I):
-                    set_shape_text(sh, '0 with NTP of 0 POR  ·  0 pending NTP')
-            for extra_slide in [confirmed_slide, pending_slide]:
-                if extra_slide is None:
-                    continue
-                for sh in extra_slide.shapes:
-                    if not sh.has_text_frame:
-                        continue
-                    if re.search(r'\d+\s+with\s+NTP\s+of\s+\d+\s+POR', sh.text_frame.text, re.I):
-                        set_shape_text(sh, '0 with NTP of 0 POR')
-                    elif re.search(r'\d+\s+of\s+\d+\s+pending', sh.text_frame.text, re.I):
-                        set_shape_text(sh, '0 of 0 pending NTP')
-                    elif re.search(r'External Blockers', sh.text_frame.text):
-                        set_shape_text(sh, 'External Blockers (0)  —  ITW · Samsung · Viaero')
-                    elif re.search(r'Program Team Actions', sh.text_frame.text):
-                        set_shape_text(sh, 'Program Team Actions (0)')
-                for sh in extra_slide.shapes:
-                    if sh.has_table:
-                        clear_extra_rows(sh, [sh.table.cell(0, c).text for c in range(len(sh.table.columns))], 1)
+            # No active month for this template group (project nearly done) —
+            # the whole 3-slide group is removed after the save below.
+            blank_trio_bases.append(base_idx)
+
+    if por_order and por_overview_slides:
+        relabel_months(slide_by_title('Agenda') or prs.slides[1], por_order[0][1])
 
     # ── MSS Readiness / Look-ahead / In Progress — header-driven, resilient
     #    to CJ's already-simplified column sets on these tables. ──
@@ -1031,6 +1183,13 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     with zipfile.ZipFile(output_path + '.tmp2.pptx', 'r') as z:
         content2 = {n: z.read(n) for n in z.namelist()}
     os.remove(output_path + '.tmp2.pptx')
+    if blank_trio_bases:
+        cur_paths = _ordered_slide_paths(content2)
+        for b in blank_trio_bases:
+            for k in (b, b + 1, b + 2):
+                if k < len(cur_paths):
+                    delete_slide_content(content2, cur_paths[k])
+        # paths shift after deletion; nothing else depends on them below
 
     # Reopen once to map title -> slide index by position.
     tmp3 = output_path + '.tmp3.pptx'
@@ -1094,9 +1253,14 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             insert_after = new_paths[-1]
             copy_slides_into(content2, scop_pptx_bytes, [1, 0], insert_after)
 
-    with zipfile.ZipFile(output_path, 'w', zipfile.ZIP_DEFLATED) as z:
+    final_tmp = output_path + '.final.pptx'
+    with zipfile.ZipFile(final_tmp, 'w', zipfile.ZIP_DEFLATED) as z:
         for n, b in content2.items():
             z.writestr(n, b)
+    final_prs = Presentation(final_tmp)
+    fit_deck_tables(final_prs)
+    final_prs.save(output_path)
+    os.remove(final_tmp)
 
     # Persist this build's headline numbers as the baseline for next time.
     snapshot = {
