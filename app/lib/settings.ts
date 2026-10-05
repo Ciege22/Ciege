@@ -57,6 +57,7 @@ export const EMAIL_TYPES: EmailTypeConfig[] = [
   { id: 'ntpEmailViaero', label: 'NTP Tracker — Viaero Action Required', hasBaseTo: false },
   { id: 'ntpEmailNokia', label: 'NTP Tracker — Nokia Action Required', hasBaseTo: false },
   { id: 'ntpEmailItw', label: 'NTP Tracker — ITW/Samsung Action Required', hasBaseTo: false },
+  { id: 'spoRequestEmail', label: 'SPO Requests — Batch Email to Team', hasBaseTo: false },
 ]
 
 export interface EmailRouting {

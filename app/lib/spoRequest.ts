@@ -6,6 +6,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from './supabase'
 import { computeSpoStatus } from './spoStatus'
 import { loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from './pendingUpdates'
+import { EmailRouting, applyEmailRouting } from './settings'
 
 const DRAFT_ID = 'spo-request-draft'
 const DEFAULT_SPLIT = [20, 60, 20]
@@ -185,9 +186,16 @@ export function emailBody(bucket: HopSpo[], draft: SpoDraft): string {
   return lines.join('\n')
 }
 
-export function openSpoEmail(bucket: HopSpo[], draft: SpoDraft): void {
+// Recipients come from Settings → Email Routing (the spoRequestEmail type),
+// so the To and CC are set once there rather than typed per batch.
+export function spoRecipients(routing: Record<string, EmailRouting> | undefined): { to: string; cc: string } {
+  return applyEmailRouting(routing, 'spoRequestEmail', [], [])
+}
+
+export function openSpoEmail(bucket: HopSpo[], draft: SpoDraft, routing: Record<string, EmailRouting> | undefined): void {
   const subject = `SPO Requests — ${bucket.length} HOPs — ${todayStr()}`
-  window.location.href = `mailto:${encodeURIComponent(draft.to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody(bucket, draft))}`
+  const { to, cc } = spoRecipients(routing)
+  window.location.href = `mailto:${encodeURIComponent(to)}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(emailBody(bucket, draft))}`
 }
 
 export function downloadSpoExcel(bucket: HopSpo[], draft: SpoDraft): void {

@@ -2,8 +2,9 @@
 
 import { ReactNode, useEffect, useMemo, useState } from 'react'
 import { loadTrackerSnapshot } from '../lib/supabase'
+import { loadEmailSettings, EmailRouting } from '../lib/settings'
 import {
-  buildSpoBucket, HopSpo, SpoDraft, loadSpoDraft, saveSpoDraft, rowsFor, openSpoEmail,
+  buildSpoBucket, HopSpo, SpoDraft, loadSpoDraft, rowsFor, openSpoEmail, spoRecipients,
   downloadSpoExcel, stageSpoRequested,
 } from '../lib/spoRequest'
 
@@ -11,14 +12,19 @@ import {
 // filter so one GC's pricing can be worked at a time. The caller supplies the
 // bucket and draft; the children render prop receives the GC-filtered list so
 // the page's cards and the actions always cover the same HOPs.
-export default function SpoBatchBar({ bucket, draft, onDraftChange, children }: {
+export default function SpoBatchBar({ bucket, draft, children }: {
   bucket: HopSpo[]
   draft: SpoDraft
-  onDraftChange: (d: SpoDraft) => void
   children?: (scoped: HopSpo[]) => ReactNode
 }) {
   const [gc, setGc] = useState<string>('ALL')
   const [status, setStatus] = useState<string | null>(null)
+  const [routing, setRouting] = useState<Record<string, EmailRouting> | undefined>(undefined)
+
+  useEffect(() => {
+    loadEmailSettings().then(e => setRouting(e.routing)).catch(() => setRouting(undefined))
+  }, [])
+  const recipients = spoRecipients(routing)
 
   const gcs = useMemo(() => {
     const counts = new Map<string, number>()
@@ -51,14 +57,12 @@ export default function SpoBatchBar({ bucket, draft, onDraftChange, children }: 
             <option value="ALL">All contractors ({bucket.length})</option>
             {gcs.map(([name, n]) => <option key={name} value={name}>{name} ({n})</option>)}
           </select>
-          <input
-            type="email"
-            placeholder="Team email address"
-            value={draft.to}
-            onChange={e => onDraftChange({ ...draft, to: e.target.value })}
-            className="flex-1 min-w-[200px] bg-zinc-800 text-sm rounded px-3 py-2 border border-white/10"
-          />
-          <button onClick={() => openSpoEmail(scoped, draft)} disabled={scoped.length === 0}
+          <div className="flex-1 min-w-[200px] text-xs text-zinc-400">
+            <div>To: <span className="text-zinc-200">{recipients.to || 'not set'}</span></div>
+            <div>CC: <span className="text-zinc-200">{recipients.cc || 'none'}</span></div>
+            <div className="text-zinc-500">Set in Settings → Email Routing → SPO Requests</div>
+          </div>
+          <button onClick={() => openSpoEmail(scoped, draft, routing)} disabled={scoped.length === 0}
             className="bg-blue-600 hover:bg-blue-500 disabled:opacity-40 text-white text-sm font-semibold rounded px-4 py-2">
             ✉️ Email SPO requests
           </button>
@@ -101,5 +105,5 @@ export function SpoBatchForHops({ hopNames }: { hopNames: string[] }) {
   }, [hopNames.join('|')])
 
   if (bucket === null) return <div className="text-xs text-zinc-500">Loading SPO batch…</div>
-  return <SpoBatchBar bucket={bucket} draft={draft} onDraftChange={d => { setDraft(d); saveSpoDraft(d) }} />
+  return <SpoBatchBar bucket={bucket} draft={draft} />
 }

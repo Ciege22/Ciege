@@ -52,7 +52,7 @@ export default function SpoRequestPage() {
         {bucket.length} HOP{bucket.length === 1 ? '' : 's'} with a CPO received and no SPO requested yet. Enter each payment split&apos;s SPO value, then email the batch.
       </p>
 
-      <SpoBatchBar bucket={bucket} draft={draft} onDraftChange={updateDraft}>
+      <SpoBatchBar bucket={bucket} draft={draft}>
         {scoped => scoped.length === 0 ? (
           <div className="text-zinc-400 text-sm">Nothing waiting — every CPO-received HOP already has an SPO requested.</div>
         ) : (
