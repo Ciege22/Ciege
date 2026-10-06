@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { loadTrackerSnapshot } from '../lib/supabase'
 import { loadChunkedReport } from '../lib/reportChunks'
 import BackToDashboard from '../components/BackToDashboard'
+import DeckPreview from '../components/DeckPreview'
 import {
   parseDecomRows, parseTrackerHopsForDecom, findMissingDecom,
   countDroppedOffWithoutCxComplete,
@@ -230,6 +231,9 @@ export default function DeckBuilderV2Page() {
               {loading && statusMsg && <p className="text-sm text-zinc-400">{statusMsg}</p>}
             </div>
           </form>
+        </section>
+        <section className="mt-6 rounded-[32px] border border-white/10 bg-white/5 p-6">
+          <DeckPreview />
         </section>
       </div>
     </div>
