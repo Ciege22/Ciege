@@ -230,11 +230,10 @@ function hasValidMs16a(ms16a: string): boolean {
   return !isNaN(d.getTime()) && d.getFullYear() >= 2025
 }
 
-// HOPs that count toward the Nebraska program deadline despite not matching
-// the "NE-" naming convention (e.g. named after a Wyoming site but still
-// part of the Nebraska count) — confirmed manually, not inferable from the
-// HOP name itself. Add to this list as more come up.
-const NEBRASKA_EXTRA_HOPS = new Set(['WY-TORRINGTON_SOUTH-WY-TORRINGTON_DT'])
+// A Nebraska HOP has an "NE-" site token: the HOP name starts with it, or it
+// follows a "-" (e.g. CO-BUCHANAN-NE-SIDNEY). A plain substring match also
+// caught names like CO-BETHUNE-… and CO-BOONE-…, so match the token instead.
+const NEBRASKA_HOP_PATTERN = /(^|-)NE-/i
 
 // Shared row shape for hopDetails — named at module scope (rather than
 // inferred inline inside Home, as before) so NebraskaWidget can be typed
@@ -264,7 +263,7 @@ function NebraskaWidget({ hopDetails, onOpenModal }: {
   hopDetails: HopDetail[]
   onOpenModal: (title: string, hops: HopDetail[]) => void
 }) {
-  const neHops = hopDetails.filter(h => h.hop.toUpperCase().includes('NE-') || NEBRASKA_EXTRA_HOPS.has(h.hop))
+  const neHops = hopDetails.filter(h => NEBRASKA_HOP_PATTERN.test(h.hop))
   const total = neHops.length
   const remainingHops = neHops.filter(h => !hasValidMs16a(h.ms16a))
   const remaining = remainingHops.length
