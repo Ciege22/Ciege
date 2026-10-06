@@ -1212,6 +1212,20 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     paths2 = _ordered_slide_paths(content2)
     os.remove(tmp3)
 
+    # A previous build's output already carries these merged slides — drop any
+    # copies so the fresh ones below are the only set in the deck.
+    MERGED_TITLES = {
+        'Decom Status — Program Overview', 'Overall SCOP Status — Program Summary',
+        'Top Aging Sites — Drop Off Pending', 'GC Decom Accountability — Status by Contractor',
+        'Pathwave SCOP — Contractor Action Items', 'QuickBase Status',
+    }
+    stale = [i for i, t in enumerate(titles) if t.split('\n')[0].strip() in MERGED_TITLES]
+    for i in sorted(stale, reverse=True):
+        delete_slide_content(content2, paths2[i])
+    if stale:
+        titles = [t for i, t in enumerate(titles) if i not in set(stale)]
+        paths2 = _ordered_slide_paths(content2)
+
     action_items_idx = next((i for i, t in enumerate(titles) if 'Action Items Log' in t), None)
 
     def _title_for(fragment, exact=False):
