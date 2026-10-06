@@ -43,7 +43,7 @@ import copy
 import json
 import zipfile
 import calendar
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pandas as pd
 from pptx import Presentation
@@ -70,30 +70,50 @@ EXT_CONTENT_TYPES = {
     'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 }
 
-SNAPSHOT_ID = 'deck-v2-last-snapshot'
 
 # ─────────────────────────────────────────────
 # 1. SUPABASE SNAPSHOT (delta baseline) — replaces the tracker-upload fallback
 # ─────────────────────────────────────────────
 
-def load_last_snapshot(supabase_client):
+SNAPSHOT_PREFIX = 'deck-v2-snapshot-'
+
+
+def call_tuesday(deck_date_str: str) -> datetime:
+    """The Tuesday call this deck is for — the Tuesday nearest the picked date."""
+    d = datetime.strptime(deck_date_str, '%m/%d/%Y')
+    delta = (1 - d.weekday()) % 7
+    if delta > 3:
+        delta -= 7
+    return d + timedelta(days=delta)
+
+
+def load_prior_snapshot(supabase_client, call_dt: datetime) -> dict:
+    """The saved numbers from the most recent Tuesday call before this one."""
     if not supabase_client:
         return {}
     try:
-        res = supabase_client.table('pm_updates_cache').select('updates').eq('id', SNAPSHOT_ID).single().execute()
-        if res.data and res.data.get('updates'):
-            return json.loads(res.data['updates'])
+        res = supabase_client.table('pm_updates_cache').select('id,updates').like('id', f'{SNAPSHOT_PREFIX}%').execute()
+        best_key, best = None, {}
+        for row in res.data or []:
+            day = row['id'][len(SNAPSHOT_PREFIX):]
+            try:
+                dt = datetime.strptime(day, '%Y-%m-%d')
+            except ValueError:
+                continue
+            if dt < call_dt and (best_key is None or dt > best_key):
+                best_key, best = dt, json.loads(row['updates'])
+        return best
     except Exception as e:
         print(f'[v2-snapshot] load failed: {e}', flush=True)
     return {}
 
 
-def save_snapshot(supabase_client, snapshot: dict):
+def save_snapshot(supabase_client, call_dt: datetime, snapshot: dict):
     if not supabase_client:
         return
     try:
         supabase_client.table('pm_updates_cache').upsert({
-            'id': SNAPSHOT_ID,
+            'id': SNAPSHOT_PREFIX + call_dt.strftime('%Y-%m-%d'),
             'updates': json.dumps(snapshot, default=str),
             'updated_at': datetime.utcnow().isoformat(),
         }).execute()
@@ -655,7 +675,8 @@ def delete_slide_content(content: dict, slide_path: str):
 
 def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                     last_snapshot: dict, supabase_client=None,
-                    decom_pptx_bytes: bytes = None, scop_pptx_bytes: bytes = None):
+                    decom_pptx_bytes: bytes = None, scop_pptx_bytes: bytes = None,
+                    call_dt: datetime = None):
     d = data
     NEW_DATE = d['deck_date']
 
@@ -1309,7 +1330,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     }
     for mo_key, mo_name, sheet_key in por_order:
         snapshot[f'por_{mo_key}_ntp'] = por[mo_key]['ntp']
-    save_snapshot(supabase_client, snapshot)
+    save_snapshot(supabase_client, call_dt or datetime.strptime(NEW_DATE, '%m/%d/%Y'), snapshot)
 
     return output_path
 
@@ -1318,14 +1339,14 @@ def build(tracker_path: str = '', previous_deck_path: str = '', deck_date: str =
           output_dir: str = '', tracker_rows=None, supabase_client=None,
           decom_pptx_bytes: bytes = None, scop_pptx_bytes: bytes = None) -> dict:
     os.makedirs(output_dir, exist_ok=True)
+    call_dt = call_tuesday(deck_date)
+    deck_date = call_dt.strftime('%m/%d/%Y')
     date_slug = deck_date.replace('/', '-')
 
-    # Load the last build's snapshot once, and feed it to extract_data via a
-    # throwaway JSON file matching its existing snapshot_path format exactly
-    # (session_date/total_starts/.../ip_hops) — this is what makes
-    # new_starts/completions compute against V2's own persisted history
-    # instead of falling back to "everything currently in progress".
-    last_snapshot = load_last_snapshot(supabase_client)
+    # The prior Tuesday's saved numbers, fed to extract_data via a throwaway
+    # JSON file matching its snapshot_path format exactly, so new_starts and
+    # completions compare call to call.
+    last_snapshot = load_prior_snapshot(supabase_client, call_dt)
     snapshot_json_path = os.path.join(output_dir, '_last_snapshot.json')
     with open(snapshot_json_path, 'w') as f:
         json.dump(last_snapshot, f)
@@ -1334,7 +1355,7 @@ def build(tracker_path: str = '', previous_deck_path: str = '', deck_date: str =
     os.remove(snapshot_json_path)
 
     deck_out = os.path.join(output_dir, f'Viaero_Construction_Update_V2_{date_slug}.pptx')
-    update_deck_v2(data, previous_deck_path, deck_out, last_snapshot, supabase_client, decom_pptx_bytes, scop_pptx_bytes)
+    update_deck_v2(data, previous_deck_path, deck_out, last_snapshot, supabase_client, decom_pptx_bytes, scop_pptx_bytes, call_dt)
 
     return {
         'deck_path': deck_out,
