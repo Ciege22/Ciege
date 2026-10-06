@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react'
 
-// NTP comments for Deck Builder V2. Comments save to Supabase as you type
-// (on blur), every build reads them back into the NTP slides, and the Excel
+// NTP comments for Deck Builder V2. Nothing saves until you press Save (per
+// row or Save all); the server reads back what it wrote before confirming.
+// Every build reads the saved comments into the NTP slides, and the Excel
 // export is only for the customer after the call.
 
 const RAILWAY = 'https://ciege-production.up.railway.app'
@@ -24,6 +25,8 @@ type NtpRow = {
 type NtpMonth = { sheet: string; label: string; rows: NtpRow[] }
 
 type NtpPayload = { deck_date: string; statuses: string[]; months: NtpMonth[] }
+
+type Edit = { sheet: string; hop: string; comment?: string; status?: string }
 
 type ColKey = 'hop' | 'category' | 'owner' | 'gc' | 'fc_start' | 'fc_end' | 'blocker' | 'status' | 'comment'
 
@@ -61,8 +64,21 @@ export default function NtpCommentsV2() {
   const [filters, setFilters] = useState<Partial<Record<ColKey, Set<string>>>>({})
   const [sort, setSort] = useState<{ key: ColKey; dir: 'asc' | 'desc' } | null>(null)
   const [openCol, setOpenCol] = useState<ColKey | null>(null)
-  const [saving, setSaving] = useState<string | null>(null)
+  // Edits not yet saved, keyed by sheet + HOP. Only these are sent on save.
+  const [dirty, setDirty] = useState<Record<string, Edit>>({})
+  const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
+  const [savedAt, setSavedAt] = useState<string | null>(null)
+
+  const dirtyCount = Object.keys(dirty).length
+
+  // Warn before leaving the page with unsaved comments.
+  useEffect(() => {
+    if (dirtyCount === 0) return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirtyCount])
 
   useEffect(() => {
     let cancelled = false
@@ -115,34 +131,54 @@ export default function NtpCommentsV2() {
 
   const activeFilterCount = Object.keys(filters).length
 
-  // Local edit first so typing never fights a slow save; the server copy wins on reload.
-  function applyLocal(sheet: string, hop: string, patch: Partial<Pick<NtpRow, 'comment' | 'status'>>) {
+  // Edits show on screen and are marked unsaved until the server confirms them.
+  function edit(sheet: string, hop: string, patch: { comment?: string; status?: string }) {
     setData(prev => prev && {
       ...prev,
       months: prev.months.map(m => m.sheet !== sheet ? m : {
         ...m, rows: m.rows.map(r => r.hop === hop ? { ...r, ...patch } : r),
       }),
     })
+    setDirty(prev => ({ ...prev, [`${sheet}|${hop}`]: { ...(prev[`${sheet}|${hop}`] ?? { sheet, hop }), ...patch } }))
+    setSavedAt(null)
   }
 
-  async function save(sheet: string, hop: string, patch: Partial<Pick<NtpRow, 'comment' | 'status'>>) {
-    setSaving(hop)
+  // Saves the given unsaved edits (all of them by default). One request per month
+  // sheet; a failed sheet stays marked unsaved so nothing is silently dropped.
+  async function saveEdits(keys?: string[]) {
+    const pending = Object.entries(dirty).filter(([k]) => !keys || keys.includes(k))
+    if (pending.length === 0) return
+    setSaving(true)
     setSaveError(null)
-    try {
-      const res = await fetch(`${RAILWAY}/ntp_comments`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sheet, hop, ...patch }),
-      })
-      if (!res.ok) {
+    const bySheet = new Map<string, { entries: Edit[]; keys: string[] }>()
+    pending.forEach(([k, d]) => {
+      const group = bySheet.get(d.sheet) ?? { entries: [], keys: [] }
+      group.entries.push({ sheet: d.sheet, hop: d.hop, comment: d.comment, status: d.status })
+      group.keys.push(k)
+      bySheet.set(d.sheet, group)
+    })
+    const failures: string[] = []
+    for (const [sheet, group] of bySheet) {
+      try {
+        const res = await fetch(`${RAILWAY}/ntp_comments/save`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ sheet, entries: group.entries.map(({ hop, comment, status }) => ({ hop, comment, status })) }),
+        })
         const json = await res.json().catch(() => ({}))
-        throw new Error(json.error || `Save failed: ${res.status}`)
+        if (!res.ok) throw new Error(json.error || `Save failed: ${res.status}`)
+        setDirty(prev => {
+          const next = { ...prev }
+          group.keys.forEach(k => delete next[k])
+          return next
+        })
+      } catch (err) {
+        failures.push(`${sheet}: ${err instanceof Error ? err.message : 'save failed'}`)
       }
-    } catch (err) {
-      setSaveError(err instanceof Error ? err.message : 'Save failed.')
-    } finally {
-      setSaving(null)
     }
+    setSaving(false)
+    if (failures.length) setSaveError(`Not saved — ${failures.join(' · ')}. Your edits are still marked unsaved; press Save again.`)
+    else setSavedAt(new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', second: '2-digit' }))
   }
 
   function setColumnFilter(key: ColKey, selected: Set<string> | null) {
@@ -159,6 +195,12 @@ export default function NtpCommentsV2() {
     return `${RAILWAY}/ntp_comments/export?deck_date=${encodeURIComponent(date)}`
   }
 
+  function confirmExport(e: React.MouseEvent<HTMLAnchorElement>) {
+    if (dirtyCount > 0 && !window.confirm(`${dirtyCount} comment(s) are not saved yet, so the export will leave them out. Export anyway?`)) {
+      e.preventDefault()
+    }
+  }
+
   if (loading) return <p className="text-sm text-zinc-400">Loading NTP pending HOPs…</p>
   if (error) return <p className="text-sm text-red-300">{error}</p>
   if (!data) return null
@@ -168,10 +210,10 @@ export default function NtpCommentsV2() {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <p className="text-xs uppercase tracking-[0.3em] text-zinc-400">NTP comments</p>
-          <p className="text-sm text-zinc-500">Call date {data.deck_date} · saved as you type · shows on the NTP slides in the next build</p>
+          <p className="text-sm text-zinc-500">Call date {data.deck_date} · press Save to store changes · shows on the NTP slides in the next build</p>
         </div>
         <a
-          href={exportUrl()}
+          href={exportUrl()} onClick={confirmExport}
           className="inline-flex items-center rounded-2xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-white"
         >
           Export for customer (.xlsx)
@@ -203,9 +245,20 @@ export default function NtpCommentsV2() {
                 Clear filters & sort
               </button>
             )}
+            <button type="button" onClick={() => saveEdits()} disabled={saving || dirtyCount === 0}
+              className="rounded-xl bg-emerald-500 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-40">
+              {saving ? 'Saving…' : `Save all${dirtyCount ? ` (${dirtyCount})` : ''}`}
+            </button>
+            <span className="text-sm">
+              {dirtyCount > 0
+                ? <span className="text-amber-300">{dirtyCount} unsaved</span>
+                : savedAt ? <span className="text-emerald-300">All saved · {savedAt}</span> : null}
+            </span>
           </div>
 
-          {saveError && <p className="text-sm text-red-300">{saveError}</p>}
+          {saveError && (
+            <p className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-300">{saveError}</p>
+          )}
 
           {visibleRows.length === 0 ? (
             <p className="text-sm text-zinc-500">No HOPs match these filters.</p>
@@ -239,47 +292,53 @@ export default function NtpCommentsV2() {
                         </th>
                       )
                     })}
+                    <th className="px-3 py-2 align-top whitespace-nowrap">Save</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {visibleRows.map(r => (
-                    <tr key={r.hop} className="border-t border-white/5 align-top hover:bg-white/[0.02]">
-                      <td className="px-3 py-2 text-zinc-100">
-                        <div className="font-medium">{r.hop}</div>
-                        <div className="text-xs text-zinc-500">{r.path_id}</div>
-                      </td>
-                      <td className={`px-3 py-2 ${CATEGORY_STYLES[r.category] ?? 'text-zinc-300'}`}>{r.category}</td>
-                      <td className="px-3 py-2 text-zinc-300">{r.owner}</td>
-                      <td className="px-3 py-2 text-zinc-300">{r.gc}</td>
-                      <td className="px-3 py-2 text-zinc-300 whitespace-nowrap">{r.fc_start}</td>
-                      <td className="px-3 py-2 text-zinc-300 whitespace-nowrap">{r.fc_end}</td>
-                      <td className="px-3 py-2 text-zinc-400">{r.blocker}</td>
-                      <td className="px-3 py-2">
-                        <select
-                          value={r.status}
-                          disabled={saving === r.hop}
-                          onChange={e => {
-                            const status = e.target.value
-                            applyLocal(month.sheet, r.hop, { status })
-                            save(month.sheet, r.hop, { status })
-                          }}
-                          className="rounded-lg border border-white/10 bg-zinc-900 px-2 py-1.5 text-zinc-100"
-                        >
-                          {data.statuses.map(s => <option key={s}>{s}</option>)}
-                        </select>
-                      </td>
-                      <td className="px-3 py-2">
-                        <textarea
-                          rows={3}
-                          value={r.comment}
-                          onChange={e => applyLocal(month.sheet, r.hop, { comment: e.target.value })}
-                          onBlur={e => save(month.sheet, r.hop, { comment: e.target.value })}
-                          placeholder="Add the call update, e.g. 10/13/2026: …"
-                          className="w-full min-w-[28rem] rounded-lg border border-white/10 bg-zinc-900 px-2 py-1.5 text-zinc-100 placeholder:text-zinc-600"
-                        />
-                      </td>
-                    </tr>
-                  ))}
+                  {visibleRows.map(r => {
+                    const key = `${month.sheet}|${r.hop}`
+                    const isDirty = !!dirty[key]
+                    return (
+                      <tr key={r.hop} className={`border-t border-white/5 align-top hover:bg-white/[0.02] ${isDirty ? 'bg-amber-500/[0.06]' : ''}`}>
+                        <td className="px-3 py-2 text-zinc-100">
+                          <div className="font-medium">{r.hop}</div>
+                          <div className="text-xs text-zinc-500">{r.path_id}</div>
+                        </td>
+                        <td className={`px-3 py-2 ${CATEGORY_STYLES[r.category] ?? 'text-zinc-300'}`}>{r.category}</td>
+                        <td className="px-3 py-2 text-zinc-300">{r.owner}</td>
+                        <td className="px-3 py-2 text-zinc-300">{r.gc}</td>
+                        <td className="px-3 py-2 text-zinc-300 whitespace-nowrap">{r.fc_start}</td>
+                        <td className="px-3 py-2 text-zinc-300 whitespace-nowrap">{r.fc_end}</td>
+                        <td className="px-3 py-2 text-zinc-400">{r.blocker}</td>
+                        <td className="px-3 py-2">
+                          <select
+                            value={r.status}
+                            onChange={e => edit(month.sheet, r.hop, { status: e.target.value })}
+                            className="rounded-lg border border-white/10 bg-zinc-900 px-2 py-1.5 text-zinc-100"
+                          >
+                            {data.statuses.map(s => <option key={s}>{s}</option>)}
+                          </select>
+                        </td>
+                        <td className="px-3 py-2">
+                          <textarea
+                            rows={3}
+                            value={r.comment}
+                            onChange={e => edit(month.sheet, r.hop, { comment: e.target.value })}
+                            placeholder="Add the call update, e.g. 10/13/2026: …"
+                            className="w-full min-w-[28rem] rounded-lg border border-white/10 bg-zinc-900 px-2 py-1.5 text-zinc-100 placeholder:text-zinc-600"
+                          />
+                        </td>
+                        <td className="px-3 py-2 whitespace-nowrap">
+                          <button type="button" onClick={() => saveEdits([key])} disabled={!isDirty || saving}
+                            className="rounded-lg bg-zinc-100 px-3 py-1.5 text-xs font-semibold text-zinc-950 hover:bg-white disabled:cursor-not-allowed disabled:opacity-30">
+                            Save
+                          </button>
+                          {isDirty && <div className="mt-1 text-[11px] text-amber-300">unsaved</div>}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

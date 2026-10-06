@@ -434,19 +434,22 @@ def ntp_comments_get():
 		return jsonify({'error': str(e)}), 500
 
 
-@app.route('/ntp_comments', methods=['POST'])
+@app.route('/ntp_comments/save', methods=['POST'])
 def ntp_comments_save():
+	"""Saves one or more HOP edits for one month sheet. Reports success only
+	after the saved row is read back and matches."""
 	try:
 		body = request.get_json(force=True) or {}
-		sheet, hop = body.get('sheet'), body.get('hop')
-		if not sheet or not hop:
-			return jsonify({'error': 'sheet and hop are required'}), 400
-		if 'status' in body and body['status'] not in ntp_comments_v2.STATUS_OPTIONS:
-			return jsonify({'error': 'unknown status'}), 400
-		store = ntp_comments_v2.load_store(supabase_client)
-		ntp_comments_v2.set_entry(store, sheet, hop, comment=body.get('comment'), status=body.get('status'))
-		ntp_comments_v2.save_store(supabase_client, store)
-		return jsonify({'ok': True})
+		sheet = body.get('sheet')
+		entries = body.get('entries') or []
+		if not sheet or not entries:
+			return jsonify({'error': 'sheet and entries are required'}), 400
+		for e in entries:
+			if not e.get('hop'):
+				return jsonify({'error': 'every entry needs a hop'}), 400
+			if 'status' in e and e['status'] not in ntp_comments_v2.STATUS_OPTIONS:
+				return jsonify({'error': 'unknown status'}), 400
+		return jsonify(ntp_comments_v2.apply_batch(supabase_client, sheet, entries))
 	except Exception as e:
 		traceback.print_exc()
 		return jsonify({'error': str(e)}), 500

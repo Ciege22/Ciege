@@ -9,6 +9,7 @@ Store shape (one pm_updates_cache row, id STORE_ID):
 """
 import io
 import json
+import threading
 from datetime import datetime
 
 import openpyxl
@@ -17,6 +18,9 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 STORE_ID = 'ntp-comments-v2'
+# One writer at a time: every save is read-modify-write on the same row, so
+# overlapping saves could otherwise overwrite each other.
+STORE_LOCK = threading.Lock()
 COMMENT_HEADER = 'COMMENT (fill after call)'
 STATUS_OPTIONS = ['Pending', 'In Progress', 'Action Taken', 'Needs Attention']
 SECTIONS = [
@@ -99,6 +103,27 @@ def import_workbook(path: str) -> dict:
             if comment or status:
                 set_entry(store, ws.title, hop, comment=comment or '', status=status or 'Pending')
     return store
+
+
+def apply_batch(sb, sheet: str, entries: list) -> dict:
+    """Saves several HOP edits in one read-modify-write under the lock, then
+    reads the row back and checks every edit is there before reporting success."""
+    with STORE_LOCK:
+        store = load_store(sb)
+        for e in entries:
+            set_entry(store, sheet, e['hop'], comment=e.get('comment'), status=e.get('status'))
+        save_store(sb, store)
+        landed = load_store(sb)
+    missing = []
+    for e in entries:
+        got = landed.get(sheet, {}).get(e['hop'], {})
+        if 'comment' in e and got.get('comment', '') != (e['comment'] or ''):
+            missing.append(e['hop'])
+        if 'status' in e and got.get('status') != e['status']:
+            missing.append(e['hop'])
+    if missing:
+        raise RuntimeError(f'Save did not persist for: {", ".join(missing)}')
+    return {'saved': len(entries), 'saved_at': datetime.utcnow().isoformat()}
 
 
 def merge_store(base: dict, incoming: dict) -> dict:
