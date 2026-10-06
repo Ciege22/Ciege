@@ -37,6 +37,7 @@ Behavioral differences from the original /build, all explicitly requested:
 """
 
 import os
+import posixpath
 import re
 import copy
 import json
@@ -241,6 +242,25 @@ def _ordered_slide_paths(content: dict):
     return paths
 
 
+def _drop_dangling_refs(xml: str, valid_rids: set) -> str:
+    """Removes any graphic frame whose r:id points at a relationship that doesn't exist.
+    A dangling id makes PowerPoint repair the file."""
+    root = etree.fromstring(xml.encode('utf-8'))
+    P_NS_ = 'http://schemas.openxmlformats.org/presentationml/2006/main'
+    for frame in list(root.iter(f'{{{P_NS_}}}graphicFrame')):
+        refs = [v for el in frame.iter() for k, v in el.attrib.items() if k == f'{{{R_NS}}}id' or k == f'{{{R_NS}}}embed']
+        if any(r not in valid_rids for r in refs):
+            frame.getparent().remove(frame)
+    return etree.tostring(root, xml_declaration=True, encoding='UTF-8', standalone=True).decode('utf-8')
+
+
+def _resolve_part(base_dir: str, target: str):
+    """Resolves a relationship target (relative or absolute) to a package part name."""
+    if target.startswith('/'):
+        return target.lstrip('/')
+    return posixpath.normpath(posixpath.join(base_dir, target))
+
+
 def _rels_path_for(part_path: str) -> str:
     d, f = part_path.rsplit('/', 1)
     return f'{d}/_rels/{f}.rels'
@@ -324,8 +344,7 @@ def copy_slides_into(content: dict, donor_bytes: bytes, donor_slide_positions, i
                 rtype, rid, target = rel.get('Type', ''), rel.get('Id'), rel.get('Target', '')
                 if rtype.endswith('/slideLayout'):
                     continue  # re-pointed at the target's own layout below
-                donor_part = 'ppt/slides/' + target if target.startswith('../') is False and not target.startswith('/') else None
-                donor_part = ('ppt/' + target.replace('../', '')) if target.startswith('../') else donor_part
+                donor_part = _resolve_part('ppt/slides', target)
                 if donor_part is None or donor_part not in donor:
                     continue
                 ext = donor_part.rsplit('.', 1)[-1]
@@ -341,7 +360,7 @@ def copy_slides_into(content: dict, donor_bytes: bytes, donor_slide_positions, i
                         c_rels_root = etree.fromstring(chart_rels)
                         for crel in c_rels_root.findall(f'{{{PKG_NS}}}Relationship'):
                             ctarget = crel.get('Target', '')
-                            cdonor_part = ('ppt/' + ctarget.replace('../', '')) if ctarget.startswith('../') else None
+                            cdonor_part = _resolve_part('ppt/charts', ctarget)
                             if cdonor_part is None or cdonor_part not in donor:
                                 continue
                             cext = cdonor_part.rsplit('.', 1)[-1]
@@ -409,6 +428,7 @@ def copy_slides_into(content: dict, donor_bytes: bytes, donor_slide_positions, i
                     old_layout_rid = rel.get('Id')
                     slide_xml_str = slide_xml_str.replace(f'r:id="{old_layout_rid}"', f'r:id="{LAYOUT_RID_IN_NEW_SLIDE}"')
 
+        slide_xml_str = _drop_dangling_refs(slide_xml_str, set(rid_remap) | {LAYOUT_RID_IN_NEW_SLIDE})
         content[new_slide_path] = slide_xml_str.encode('utf-8')
         content[_rels_path_for(new_slide_path)] = etree.tostring(
             new_rels_root, xml_declaration=True, encoding='UTF-8', standalone=True)

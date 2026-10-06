@@ -184,10 +184,13 @@ def _slide_summary(prs):
 				rows = [[sh.table.cell(r, c).text.strip() for c in range(len(sh.table.columns))] for r in range(len(sh.table.rows))]
 				tables.append(rows)
 			if sh.has_chart:
-				ch = sh.chart
-				cats = [str(c) for c in ch.plots[0].categories]
-				series = [{'name': s.name, 'values': [None if v is None else float(v) for v in s.values]} for s in ch.series]
-				charts.append({'categories': cats, 'series': series})
+				try:
+					ch = sh.chart
+					cats = [str(c) for c in ch.plots[0].categories]
+					series = [{'name': s.name, 'values': [None if v is None else float(v) for v in s.values]} for s in ch.series]
+					charts.append({'categories': cats, 'series': series})
+				except KeyError:
+					texts.append('[chart missing from this build]')
 		slides.append({'index': idx, 'texts': texts, 'tables': tables, 'charts': charts})
 	return slides
 

@@ -215,7 +215,8 @@ export default function DeckBuilderV2Page() {
             )}
             {success && (
               <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-                Deck built successfully — your download should have started.
+                Deck built successfully — your download should have started.{' '}
+                <a href="/deck-preview" className="underline font-semibold text-emerald-200">Open the slide preview and comment on it →</a>
               </div>
             )}
 
