@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 // NTP comments for Deck Builder V2. Comments save to Supabase as you type
 // (on blur), every build reads them back into the NTP slides, and the Excel
@@ -25,10 +25,31 @@ type NtpMonth = { sheet: string; label: string; rows: NtpRow[] }
 
 type NtpPayload = { deck_date: string; statuses: string[]; months: NtpMonth[] }
 
+type ColKey = 'hop' | 'category' | 'owner' | 'gc' | 'fc_start' | 'fc_end' | 'blocker' | 'status' | 'comment'
+
+const COLUMNS: { key: ColKey; label: string; width: string }[] = [
+  { key: 'hop', label: 'HOP', width: 'min-w-[18rem]' },
+  { key: 'category', label: 'Category', width: 'min-w-[8rem]' },
+  { key: 'owner', label: 'Owner', width: 'min-w-[7rem]' },
+  { key: 'gc', label: 'GC', width: 'min-w-[9rem]' },
+  { key: 'fc_start', label: 'FC Start', width: 'min-w-[6rem]' },
+  { key: 'fc_end', label: 'FC End', width: 'min-w-[6rem]' },
+  { key: 'blocker', label: 'Blocker / waiting on', width: 'min-w-[16rem]' },
+  { key: 'status', label: 'Status', width: 'min-w-[9rem]' },
+  { key: 'comment', label: 'Comment', width: 'min-w-[30rem]' },
+]
+
+const BLANK = '(Blanks)'
+
 const CATEGORY_STYLES: Record<string, string> = {
   External: 'text-red-300',
   Other: 'text-orange-300',
   'Program Team': 'text-sky-300',
+}
+
+function cellValue(r: NtpRow, key: ColKey): string {
+  const v = r[key] ?? ''
+  return v.trim() === '' ? BLANK : v
 }
 
 export default function NtpCommentsV2() {
@@ -36,9 +57,10 @@ export default function NtpCommentsV2() {
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [activeSheet, setActiveSheet] = useState<string>('')
-  const [category, setCategory] = useState<string>('All')
-  const [gc, setGc] = useState<string>('All')
   const [search, setSearch] = useState('')
+  const [filters, setFilters] = useState<Partial<Record<ColKey, Set<string>>>>({})
+  const [sort, setSort] = useState<{ key: ColKey; dir: 'asc' | 'desc' } | null>(null)
+  const [openCol, setOpenCol] = useState<ColKey | null>(null)
   const [saving, setSaving] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
 
@@ -63,21 +85,35 @@ export default function NtpCommentsV2() {
 
   const month = data?.months.find(m => m.sheet === activeSheet)
 
-  const gcOptions = useMemo(() => {
-    const set = new Set<string>()
-    month?.rows.forEach(r => { if (r.gc) set.add(r.gc) })
-    return Array.from(set).sort()
+  // Distinct values per column for this month — the checklist in each filter.
+  const valuesByCol = useMemo(() => {
+    const out = {} as Record<ColKey, string[]>
+    COLUMNS.forEach(c => {
+      const set = new Set<string>()
+      month?.rows.forEach(r => set.add(cellValue(r, c.key)))
+      out[c.key] = Array.from(set).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))
+    })
+    return out
   }, [month])
 
   const visibleRows = useMemo(() => {
     if (!month) return []
     const q = search.trim().toLowerCase()
-    return month.rows.filter(r =>
-      (category === 'All' || r.category === category) &&
-      (gc === 'All' || r.gc === gc) &&
-      (!q || [r.hop, r.path_id, r.owner, r.blocker, r.comment].some(v => v.toLowerCase().includes(q)))
-    )
-  }, [month, category, gc, search])
+    const rows = month.rows.filter(r => {
+      for (const key of Object.keys(filters) as ColKey[]) {
+        const allowed = filters[key]
+        if (allowed && !allowed.has(cellValue(r, key))) return false
+      }
+      return !q || [r.hop, r.path_id, r.owner, r.gc, r.blocker, r.comment].some(v => v.toLowerCase().includes(q))
+    })
+    if (sort) {
+      const dir = sort.dir === 'asc' ? 1 : -1
+      rows.sort((a, b) => cellValue(a, sort.key).localeCompare(cellValue(b, sort.key), undefined, { numeric: true }) * dir)
+    }
+    return rows
+  }, [month, filters, search, sort])
+
+  const activeFilterCount = Object.keys(filters).length
 
   // Local edit first so typing never fights a slow save; the server copy wins on reload.
   function applyLocal(sheet: string, hop: string, patch: Partial<Pick<NtpRow, 'comment' | 'status'>>) {
@@ -109,6 +145,15 @@ export default function NtpCommentsV2() {
     }
   }
 
+  function setColumnFilter(key: ColKey, selected: Set<string> | null) {
+    setFilters(prev => {
+      const next = { ...prev }
+      if (selected === null || selected.size === valuesByCol[key].length) delete next[key]
+      else next[key] = selected
+      return next
+    })
+  }
+
   function exportUrl() {
     const date = data?.deck_date ?? ''
     return `${RAILWAY}/ntp_comments/export?deck_date=${encodeURIComponent(date)}`
@@ -138,7 +183,7 @@ export default function NtpCommentsV2() {
           <button
             key={m.sheet}
             type="button"
-            onClick={() => { setActiveSheet(m.sheet); setGc('All') }}
+            onClick={() => { setActiveSheet(m.sheet); setFilters({}); setSort(null); setOpenCol(null) }}
             className={`rounded-xl px-3 py-1.5 text-sm ${m.sheet === activeSheet ? 'bg-emerald-500 text-zinc-950 font-semibold' : 'bg-zinc-800 text-zinc-300 hover:bg-zinc-700'}`}
           >
             {m.label} <span className="opacity-70">({m.rows.length})</span>
@@ -148,18 +193,16 @@ export default function NtpCommentsV2() {
 
       {month && (
         <>
-          <div className="flex flex-wrap gap-3">
-            <select value={category} onChange={e => setCategory(e.target.value)}
-              className="rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-              {['All', 'External', 'Other', 'Program Team'].map(c => <option key={c}>{c}</option>)}
-            </select>
-            <select value={gc} onChange={e => setGc(e.target.value)}
-              className="rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100">
-              <option>All</option>
-              {gcOptions.map(g => <option key={g}>{g}</option>)}
-            </select>
-            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search HOP, owner, blocker, comment"
-              className="min-w-[16rem] flex-1 rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600" />
+          <div className="flex flex-wrap items-center gap-3">
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search HOP, owner, GC, blocker, comment"
+              className="min-w-[18rem] flex-1 rounded-xl border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder:text-zinc-600" />
+            <span className="text-sm text-zinc-400">{visibleRows.length} of {month.rows.length} HOPs</span>
+            {(activeFilterCount > 0 || sort) && (
+              <button type="button" onClick={() => { setFilters({}); setSort(null) }}
+                className="rounded-xl bg-zinc-800 px-3 py-2 text-sm text-zinc-200 hover:bg-zinc-700">
+                Clear filters & sort
+              </button>
+            )}
           </div>
 
           {saveError && <p className="text-sm text-red-300">{saveError}</p>}
@@ -168,33 +211,49 @@ export default function NtpCommentsV2() {
             <p className="text-sm text-zinc-500">No HOPs match these filters.</p>
           ) : (
             <div className="overflow-x-auto rounded-2xl border border-white/10">
-              <table className="w-full min-w-[1100px] text-left text-xs">
-                <thead className="bg-zinc-900 text-zinc-400">
+              <table className="w-full text-sm text-left">
+                <thead className="sticky top-0 z-10 bg-zinc-900 text-zinc-300">
                   <tr>
-                    <th className="px-3 py-2">HOP</th>
-                    <th className="px-3 py-2">Category</th>
-                    <th className="px-3 py-2">Owner</th>
-                    <th className="px-3 py-2">GC</th>
-                    <th className="px-3 py-2">FC Start</th>
-                    <th className="px-3 py-2">FC End</th>
-                    <th className="px-3 py-2">Blocker / waiting on</th>
-                    <th className="px-3 py-2">Status</th>
-                    <th className="px-3 py-2 w-[28rem]">Comment</th>
+                    {COLUMNS.map(c => {
+                      const active = !!filters[c.key]
+                      const sorted = sort?.key === c.key
+                      return (
+                        <th key={c.key} className={`relative px-3 py-2 align-top whitespace-nowrap ${c.width}`}>
+                          <button type="button" onClick={() => setOpenCol(openCol === c.key ? null : c.key)}
+                            className="inline-flex items-center gap-1.5 font-semibold hover:text-white">
+                            {c.label}
+                            <span className={active || sorted ? 'text-emerald-400' : 'text-zinc-500'}>
+                              {sorted ? (sort?.dir === 'asc' ? '▲' : '▼') : ''}{active ? ' ⏷' : ' ▾'}
+                            </span>
+                          </button>
+                          {openCol === c.key && (
+                            <ColumnFilterMenu
+                              values={valuesByCol[c.key]}
+                              selected={filters[c.key] ?? null}
+                              sort={sorted ? sort!.dir : null}
+                              onSort={dir => setSort(dir ? { key: c.key, dir } : null)}
+                              onApply={sel => setColumnFilter(c.key, sel)}
+                              onClose={() => setOpenCol(null)}
+                            />
+                          )}
+                        </th>
+                      )
+                    })}
                   </tr>
                 </thead>
                 <tbody>
                   {visibleRows.map(r => (
-                    <tr key={r.hop} className="border-t border-white/5 align-top">
+                    <tr key={r.hop} className="border-t border-white/5 align-top hover:bg-white/[0.02]">
                       <td className="px-3 py-2 text-zinc-100">
                         <div className="font-medium">{r.hop}</div>
-                        <div className="text-zinc-500">{r.path_id}</div>
+                        <div className="text-xs text-zinc-500">{r.path_id}</div>
                       </td>
                       <td className={`px-3 py-2 ${CATEGORY_STYLES[r.category] ?? 'text-zinc-300'}`}>{r.category}</td>
                       <td className="px-3 py-2 text-zinc-300">{r.owner}</td>
                       <td className="px-3 py-2 text-zinc-300">{r.gc}</td>
-                      <td className="px-3 py-2 text-zinc-300">{r.fc_start}</td>
-                      <td className="px-3 py-2 text-zinc-300">{r.fc_end}</td>
-                      <td className="px-3 py-2 text-zinc-400 max-w-[18rem]">{r.blocker}</td>
+                      <td className="px-3 py-2 text-zinc-300 whitespace-nowrap">{r.fc_start}</td>
+                      <td className="px-3 py-2 text-zinc-300 whitespace-nowrap">{r.fc_end}</td>
+                      <td className="px-3 py-2 text-zinc-400">{r.blocker}</td>
                       <td className="px-3 py-2">
                         <select
                           value={r.status}
@@ -204,7 +263,7 @@ export default function NtpCommentsV2() {
                             applyLocal(month.sheet, r.hop, { status })
                             save(month.sheet, r.hop, { status })
                           }}
-                          className="rounded-lg border border-white/10 bg-zinc-900 px-2 py-1 text-zinc-100"
+                          className="rounded-lg border border-white/10 bg-zinc-900 px-2 py-1.5 text-zinc-100"
                         >
                           {data.statuses.map(s => <option key={s}>{s}</option>)}
                         </select>
@@ -216,7 +275,7 @@ export default function NtpCommentsV2() {
                           onChange={e => applyLocal(month.sheet, r.hop, { comment: e.target.value })}
                           onBlur={e => save(month.sheet, r.hop, { comment: e.target.value })}
                           placeholder="Add the call update, e.g. 10/13/2026: …"
-                          className="w-full rounded-lg border border-white/10 bg-zinc-900 px-2 py-1 text-zinc-100 placeholder:text-zinc-600"
+                          className="w-full min-w-[28rem] rounded-lg border border-white/10 bg-zinc-900 px-2 py-1.5 text-zinc-100 placeholder:text-zinc-600"
                         />
                       </td>
                     </tr>
@@ -227,6 +286,69 @@ export default function NtpCommentsV2() {
           )}
         </>
       )}
+    </div>
+  )
+}
+
+// Excel-style filter for one column: sort, search, and a checkbox per value.
+function ColumnFilterMenu({ values, selected, sort, onSort, onApply, onClose }: {
+  values: string[]
+  selected: Set<string> | null
+  sort: 'asc' | 'desc' | null
+  onSort: (dir: 'asc' | 'desc' | null) => void
+  onApply: (sel: Set<string> | null) => void
+  onClose: () => void
+}) {
+  const [query, setQuery] = useState('')
+  const [checked, setChecked] = useState<Set<string>>(() => new Set(selected ?? values))
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', onDown)
+    return () => document.removeEventListener('mousedown', onDown)
+  }, [onClose])
+
+  const shown = values.filter(v => v.toLowerCase().includes(query.trim().toLowerCase()))
+
+  function toggle(v: string) {
+    setChecked(prev => {
+      const next = new Set(prev)
+      if (next.has(v)) next.delete(v); else next.add(v)
+      return next
+    })
+  }
+
+  return (
+    <div ref={ref} className="absolute left-0 top-full z-20 mt-1 w-72 rounded-xl border border-white/10 bg-zinc-900 p-3 text-left font-normal shadow-2xl">
+      <div className="mb-2 flex gap-2">
+        <button type="button" onClick={() => onSort(sort === 'asc' ? null : 'asc')}
+          className={`flex-1 rounded-lg px-2 py-1 text-xs ${sort === 'asc' ? 'bg-emerald-500 text-zinc-950' : 'bg-zinc-800 text-zinc-200'}`}>A → Z</button>
+        <button type="button" onClick={() => onSort(sort === 'desc' ? null : 'desc')}
+          className={`flex-1 rounded-lg px-2 py-1 text-xs ${sort === 'desc' ? 'bg-emerald-500 text-zinc-950' : 'bg-zinc-800 text-zinc-200'}`}>Z → A</button>
+      </div>
+      <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search values"
+        className="mb-2 w-full rounded-lg border border-white/10 bg-zinc-950 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-600" />
+      <div className="mb-2 flex gap-2 text-xs">
+        <button type="button" onClick={() => setChecked(new Set(values))} className="text-emerald-300 hover:underline">Select all</button>
+        <button type="button" onClick={() => setChecked(new Set())} className="text-emerald-300 hover:underline">Clear</button>
+      </div>
+      <div className="max-h-64 overflow-y-auto space-y-1 pr-1">
+        {shown.map(v => (
+          <label key={v} className="flex items-start gap-2 text-xs text-zinc-200">
+            <input type="checkbox" className="mt-0.5" checked={checked.has(v)} onChange={() => toggle(v)} />
+            <span className="break-words">{v}</span>
+          </label>
+        ))}
+        {shown.length === 0 && <p className="text-xs text-zinc-500">No matching values.</p>}
+      </div>
+      <div className="mt-3 flex justify-end gap-2">
+        <button type="button" onClick={onClose} className="rounded-lg px-3 py-1 text-xs text-zinc-300 hover:bg-zinc-800">Cancel</button>
+        <button type="button" onClick={() => { onApply(checked.size === values.length ? null : checked); onClose() }}
+          className="rounded-lg bg-emerald-500 px-3 py-1 text-xs font-semibold text-zinc-950 hover:bg-emerald-400">Apply</button>
+      </div>
     </div>
   )
 }

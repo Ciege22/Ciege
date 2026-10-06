@@ -149,7 +149,7 @@ export default function DeckBuilderV2Page() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className="mx-auto max-w-3xl px-6 py-8">
+      <div className={`mx-auto px-6 py-8 ${tab === 'ntp' ? 'max-w-[96vw]' : 'max-w-3xl'}`}>
         <BackToDashboard />
 
         <section className="rounded-[32px] border border-amber-400/20 bg-amber-400/5 p-6 mb-6">
