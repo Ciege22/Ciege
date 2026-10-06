@@ -8,7 +8,7 @@ import zipfile
 import tempfile
 import traceback
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import requests
 from flask import Flask, request, send_file, jsonify
@@ -22,6 +22,7 @@ sys.path.append(os.path.dirname(__file__))
 import build_deck
 import build_deck_v2
 import gr_tracker
+import ntp_comments_v2
 
 app = Flask(__name__)
 CORS(app)
@@ -389,6 +390,79 @@ def ai_assistant_endpoint():
 		app.logger.error(f'ai_assistant error: {str(e)}')
 		app.logger.error(tb)
 		return jsonify({'error': str(e), 'traceback': tb}), 500
+
+
+# ─────────────────────────────────────────────
+# NTP comments (Deck Builder V2) — the NTP tab reads these, edits save here,
+# and the Excel export is generated on demand for the customer.
+# ─────────────────────────────────────────────
+
+def _ntp_months(deck_date_str: str):
+	"""Pending-NTP HOPs for every month in the window around the call, with the
+	saved comment and status merged in. Same POR logic as the V2 slides."""
+	import pandas as pd
+	if not supabase_client:
+		raise RuntimeError('Supabase is not configured')
+	latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
+	if not latest.data:
+		raise RuntimeError('No tracker snapshot in Supabase')
+	tracker_rows = json.loads(latest.data['data'])
+	call_dt = build_deck_v2.call_tuesday(deck_date_str)
+	data = build_deck.extract_data('', '', '', call_dt.strftime('%m/%d/%Y'), tracker_rows=tracker_rows, prev_snapshot_data=None)
+	# Start three months back so Jul–Sep show up even though the call is in Oct.
+	por, order = build_deck_v2.compute_por_window(data['df'], pd.Timestamp(call_dt - timedelta(days=90)), window_months=12, max_active=12)
+	store = ntp_comments_v2.load_store(supabase_client)
+	months = []
+	for mo_key, mo_name, sheet in order:
+		rows = ntp_comments_v2.month_rows(por[mo_key]['pending_rows'], store.get(sheet, {}))
+		months.append({'sheet': sheet, 'label': mo_name, 'rows': rows})
+	return call_dt, months
+
+
+@app.route('/ntp_comments', methods=['GET'])
+def ntp_comments_get():
+	try:
+		deck_date = request.args.get('deck_date') or datetime.now().strftime('%m/%d/%Y')
+		call_dt, months = _ntp_months(deck_date)
+		return jsonify({
+			'deck_date': call_dt.strftime('%m/%d/%Y'),
+			'statuses': ntp_comments_v2.STATUS_OPTIONS,
+			'months': months,
+		})
+	except Exception as e:
+		traceback.print_exc()
+		return jsonify({'error': str(e)}), 500
+
+
+@app.route('/ntp_comments', methods=['POST'])
+def ntp_comments_save():
+	try:
+		body = request.get_json(force=True) or {}
+		sheet, hop = body.get('sheet'), body.get('hop')
+		if not sheet or not hop:
+			return jsonify({'error': 'sheet and hop are required'}), 400
+		if 'status' in body and body['status'] not in ntp_comments_v2.STATUS_OPTIONS:
+			return jsonify({'error': 'unknown status'}), 400
+		store = ntp_comments_v2.load_store(supabase_client)
+		ntp_comments_v2.set_entry(store, sheet, hop, comment=body.get('comment'), status=body.get('status'))
+		ntp_comments_v2.save_store(supabase_client, store)
+		return jsonify({'ok': True})
+	except Exception as e:
+		traceback.print_exc()
+		return jsonify({'error': str(e)}), 500
+
+
+@app.route('/ntp_comments/export', methods=['GET'])
+def ntp_comments_export():
+	try:
+		deck_date = request.args.get('deck_date') or datetime.now().strftime('%m/%d/%Y')
+		call_dt, months = _ntp_months(deck_date)
+		xlsx = ntp_comments_v2.export_workbook([(m['sheet'], m['rows']) for m in months])
+		return send_file(io.BytesIO(xlsx), mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+		                 as_attachment=True, download_name=f'NTP_Pending_{call_dt.strftime("%m-%d-%Y")}.xlsx')
+	except Exception as e:
+		traceback.print_exc()
+		return jsonify({'error': str(e)}), 500
 
 
 if __name__ == '__main__':

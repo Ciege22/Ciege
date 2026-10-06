@@ -7,6 +7,7 @@ import { loadTrackerSnapshot } from '../lib/supabase'
 import { loadChunkedReport } from '../lib/reportChunks'
 import BackToDashboard from '../components/BackToDashboard'
 import DeckPreview from '../components/DeckPreview'
+import NtpCommentsV2 from '../components/NtpCommentsV2'
 import {
   parseDecomRows, parseTrackerHopsForDecom, findMissingDecom,
   countDroppedOffWithoutCxComplete,
@@ -35,6 +36,7 @@ export default function DeckBuilderV2Page() {
   const [previousDeckFile, setPreviousDeckFile] = useState<File | null>(null)
   const [trackerOverrideFile, setTrackerOverrideFile] = useState<File | null>(null)
   const [deckDate, setDeckDate] = useState('')
+  const [tab, setTab] = useState<'build' | 'ntp'>('build')
 
   const [trackerLoaded, setTrackerLoaded] = useState(false)
   const [trackerInfo, setTrackerInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
@@ -161,6 +163,24 @@ export default function DeckBuilderV2Page() {
           </p>
         </section>
 
+        <div className="mb-6 flex gap-2">
+          {(['build', 'ntp'] as const).map(t => (
+            <button
+              key={t} type="button" onClick={() => setTab(t)}
+              className={`rounded-2xl px-4 py-2 text-sm font-semibold ${tab === t ? 'bg-emerald-500 text-zinc-950' : 'bg-white/5 text-zinc-300 hover:bg-white/10'}`}
+            >
+              {t === 'build' ? 'Build deck' : 'NTP comments'}
+            </button>
+          ))}
+        </div>
+
+        {tab === 'ntp' && (
+          <section className="rounded-[32px] border border-white/10 bg-white/5 p-6">
+            <NtpCommentsV2 />
+          </section>
+        )}
+
+        {tab === 'build' && (<>
         <section className="rounded-[32px] border border-white/10 bg-white/5 p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="bg-gray-800 border border-gray-600 rounded-lg p-4">
@@ -235,6 +255,7 @@ export default function DeckBuilderV2Page() {
         <section className="mt-6 rounded-[32px] border border-white/10 bg-white/5 p-6">
           <DeckPreview />
         </section>
+        </>)}
       </div>
     </div>
   )

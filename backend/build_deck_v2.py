@@ -51,6 +51,7 @@ from pptx.dml.color import RGBColor
 from pptx.oxml.ns import qn
 from lxml import etree
 
+from ntp_comments_v2 import load_store, comments_by_sheet
 from build_deck import (
     extract_data, gv, fmt_d, fmt_dm, fmt_ds,
     set_shape_text, set_table_cell, expand_table_rows, replace_text_in_shape,
@@ -76,6 +77,16 @@ EXT_CONTENT_TYPES = {
 # ─────────────────────────────────────────────
 
 SNAPSHOT_PREFIX = 'deck-v2-snapshot-'
+
+# Plan values as they stand on the Cx Start / Cx Complete slides (checked
+# against my_working_version.pptx and the V2 template). Used only when the
+# previous deck is missing a month's Plan point.
+PLAN_BASELINE_STARTS = {'Jan/26+': 24, 'Feb/26': 7, 'Mar/26': 18, 'Apr/26': 23, 'May/26': 22,
+                        'Jun/26': 26, 'Jul/26': 28, 'Aug/26': 13, 'Sep/26': 28, 'Oct/26': 20,
+                        'Nov/26': 20, 'Dec/26': 10, 'Jan/27': 8}
+PLAN_BASELINE_COMPLETE = {'Jan/26+': 13, 'Feb/26': 7, 'Mar/26': 8, 'Apr/26': 14, 'May/26': 29,
+                          'Jun/26': 31, 'Jul/26': 30, 'Aug/26': 19, 'Sep/26': 28, 'Oct/26': 22,
+                          'Nov/26': 20, 'Dec/26': 15, 'Jan/27': 10, 'Feb/27': 4}
 
 
 def call_tuesday(deck_date_str: str) -> datetime:
@@ -155,6 +166,7 @@ def compute_por_window(df, deck_date: pd.Timestamp, window_months: int = 6, max_
                     'New CM': gv(r, 'New CM'), '_ntp_owner': gv(r, '_ntp_owner'),
                     '_ntp_wait': gv(r, '_ntp_wait'), '_cx': gv(r, '_cx'), 'cat': cat,
                     'MS15 Implementation Start F': r.get(ms15f_col), 'has_mat': bool(r['has_mat']),
+                    'MS16 Implementation Ends F': r.get('MS16 Implementation Ends F'),
                     '_path_id': str(r.get('_path_id', '')).strip(), '_pm': gv(r, '_pm'),
                 })
             pending_rows.sort(key=lambda x: 0 if x['cat'] == 'External'
@@ -743,12 +755,15 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     starts_embed_path = _chart_embed(starts_chart_path) or 'ppt/embeddings/Microsoft_Excel_Worksheet.xlsx'
     complete_embed_path = _chart_embed(complete_chart_path) or 'ppt/embeddings/Microsoft_Excel_Worksheet1.xlsx'
 
-    def build_plan_vals(chart_path, month_labels):
+    def build_plan_vals(chart_path, month_labels, baseline):
         existing = read_plan_series(content.get(chart_path, b''))
-        return [existing.get(lbl, 0) for lbl in month_labels]
+        # A previous deck that went through Google Slides keeps only the first
+        # Plan point, so any month the deck doesn't carry falls back to the
+        # verified Plan values below instead of silently going to 0.
+        return [existing.get(lbl, baseline.get(lbl, 0)) for lbl in month_labels]
 
-    starts_plan = build_plan_vals(starts_chart_path, d['starts_labels'])
-    complete_plan = build_plan_vals(complete_chart_path, d['complete_labels'])
+    starts_plan = build_plan_vals(starts_chart_path, d['starts_labels'], PLAN_BASELINE_STARTS)
+    complete_plan = build_plan_vals(complete_chart_path, d['complete_labels'], PLAN_BASELINE_COMPLETE)
 
     def fix_chart_v2(xml_bytes, fc_vals, act_vals, plan_vals, month_labels):
         xml = xml_bytes.decode('utf-8')
@@ -900,8 +915,12 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
         delta_ip = d['ip_count'] - last_snapshot.get('in_progress', 0)
         delta_ntp = d['ntp_count'] - last_snapshot.get('total_ntp', 0)
         ref = prev_session or 'first build'
+        has_baseline = bool(last_snapshot)
 
         def ds(v, ref):
+            # No earlier Tuesday saved yet: the numbers are the starting point, so no delta to show.
+            if not has_baseline:
+                return 'Baseline — starts with this build'
             return f'+{v} vs {ref}' if v > 0 else (f'No change vs {ref}' if v == 0 else f'{v} vs {ref}')
 
         for idx, val in [(6, d['started_count']), (11, d['complete_count']), (16, d['ip_count']), (21, d['ntp_count'])]:
@@ -916,7 +935,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                 continue
             t = sh.text_frame.text
             if 'Compared to' in t:
-                set_shape_text(sh, f'Compared to {prev_session or "first build"}  ·  {NEW_DATE}')
+                set_shape_text(sh, f'Compared to {prev_session}  ·  {NEW_DATE}' if has_baseline else f'Baseline — starts with {NEW_DATE}')
             elif 'Construction Completed' in t:
                 total = d['total']
                 done = d['complete_count']
@@ -1055,6 +1074,10 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             gc_col = col_idx(hdrs, 'GC')
             owner_col = col_idx(hdrs, 'Owner', 'Action')
             wait_col = col_idx(hdrs, 'Wait', 'Note')
+            start_col = col_idx(hdrs, 'Start', exact=True)
+            end_col = col_idx(hdrs, 'End', exact=True)
+            comment_col = col_idx(hdrs, 'Comments', 'Comment', exact=True)
+            comments = d['ntp_comments'].get(sheet_key, {})
             rows = p['external'] if any(sh.has_text_frame and 'External' in sh.text_frame.text for sh in slide.shapes) else p['prog_team'] + p['other']
             # Heuristic: first table = external, second = program team/other —
             # matches the slide's left/right layout convention.
@@ -1067,6 +1090,14 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                     if gc_col is not None: set_table_cell(tbl_shape, ri, gc_col, r.get('General Contractor', ''))
                     if owner_col is not None: set_table_cell(tbl_shape, ri, owner_col, r.get('_ntp_owner', ''))
                     if wait_col is not None: set_table_cell(tbl_shape, ri, wait_col, (r.get('_ntp_wait', '') or '')[:60])
+                    # Dates and comments come from this build, never the template's stale values.
+                    if start_col is not None: set_table_cell(tbl_shape, ri, start_col, fmt_dm(r.get('MS15 Implementation Start F')))
+                    if end_col is not None: set_table_cell(tbl_shape, ri, end_col, fmt_dm(r.get('MS16 Implementation Ends F')))
+                    if comment_col is not None:
+                        comment = comments.get(r['HOP'], '')
+                        if not comment:
+                            comment = next((v for k, v in comments.items() if k.strip().upper() == r['HOP'].strip().upper()), '')
+                        set_table_cell(tbl_shape, ri, comment_col, comment)
                 else:
                     clear_extra_rows(tbl_shape, hdrs, ri)
 
@@ -1353,6 +1384,10 @@ def build(tracker_path: str = '', previous_deck_path: str = '', deck_date: str =
 
     data = extract_data(tracker_path, snapshot_json_path, '', deck_date, tracker_rows=tracker_rows, prev_snapshot_data=None)
     os.remove(snapshot_json_path)
+
+    # NTP comments come from the Supabase store the NTP tab writes to, not an
+    # uploaded workbook, so every build carries the latest saved comments.
+    data['ntp_comments'] = comments_by_sheet(load_store(supabase_client))
 
     deck_out = os.path.join(output_dir, f'Viaero_Construction_Update_V2_{date_slug}.pptx')
     update_deck_v2(data, previous_deck_path, deck_out, last_snapshot, supabase_client, decom_pptx_bytes, scop_pptx_bytes, call_dt)
