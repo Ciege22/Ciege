@@ -15,6 +15,7 @@ from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from supabase import create_client
+from pptx import Presentation
 
 # Ensure backend package path is importable when running this file directly
 sys.path.append(os.path.dirname(__file__))
@@ -150,6 +151,68 @@ def build_endpoint():
 			pass
 
 
+V2_LATEST_ID = 'v2-build-latest'
+V2_PRIOR_ID = 'v2-build-prior'
+
+
+def save_v2_build(deck_bytes: bytes, filename: str, deck_date: str):
+	"""Keeps the newest V2 build, rotating the previous latest into the prior slot."""
+	if not supabase_client:
+		return
+	try:
+		old = supabase_client.table('report_snapshots').select('*').eq('id', V2_LATEST_ID).execute()
+		if old.data:
+			supabase_client.table('report_snapshots').upsert({**old.data[0], 'id': V2_PRIOR_ID}).execute()
+		supabase_client.table('report_snapshots').upsert({
+			'id': V2_LATEST_ID,
+			'filename': filename,
+			'uploaded_at': datetime.utcnow().isoformat(),
+			'data': json.dumps({'deck_date': deck_date, 'b64': base64.b64encode(deck_bytes).decode()}),
+		}).execute()
+	except Exception as e:
+		print(f'save_v2_build failed: {e}')
+
+
+def _slide_summary(prs):
+	slides = []
+	for idx, slide in enumerate(prs.slides):
+		texts, tables, charts = [], [], []
+		for sh in slide.shapes:
+			if sh.has_text_frame and sh.text_frame.text.strip():
+				texts.append(sh.text_frame.text.strip())
+			if sh.has_table:
+				rows = [[sh.table.cell(r, c).text.strip() for c in range(len(sh.table.columns))] for r in range(len(sh.table.rows))]
+				tables.append(rows)
+			if sh.has_chart:
+				ch = sh.chart
+				cats = [str(c) for c in ch.plots[0].categories]
+				series = [{'name': s.name, 'values': [None if v is None else float(v) for v in s.values]} for s in ch.series]
+				charts.append({'categories': cats, 'series': series})
+		slides.append({'index': idx, 'texts': texts, 'tables': tables, 'charts': charts})
+	return slides
+
+
+@app.route('/v2_slides', methods=['GET'])
+def v2_slides_endpoint():
+	which = request.args.get('which', 'latest')
+	row_id = V2_PRIOR_ID if which == 'prior' else V2_LATEST_ID
+	if not supabase_client:
+		return jsonify({'error': 'Supabase not configured'}), 500
+	res = supabase_client.table('report_snapshots').select('*').eq('id', row_id).execute()
+	if not res.data:
+		return jsonify({'error': f'No {which} build saved yet'}), 404
+	row = res.data[0]
+	payload = json.loads(row['data'])
+	prs = Presentation(io.BytesIO(base64.b64decode(payload['b64'])))
+	return jsonify({
+		'which': which,
+		'filename': row['filename'],
+		'uploaded_at': row['uploaded_at'],
+		'deck_date': payload.get('deck_date'),
+		'slides': _slide_summary(prs),
+	})
+
+
 @app.route('/build_v2', methods=['POST'])
 def build_v2_endpoint():
 	"""Deck Builder V2 — fully separate from /build above (which it never
@@ -210,6 +273,7 @@ def build_v2_endpoint():
 		# zip buffer instead of a path).
 		with open(out['deck_path'], 'rb') as f:
 			deck_bytes = f.read()
+		save_v2_build(deck_bytes, os.path.basename(out['deck_path']), deck_date_str)
 		buffer = io.BytesIO(deck_bytes)
 		return send_file(
 			buffer,
