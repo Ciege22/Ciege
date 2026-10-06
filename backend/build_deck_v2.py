@@ -1155,6 +1155,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
 
     # ── New Starts & Completions Since Last Meeting ──
     ns_slide = slide_by_title('New Starts & Completions')
+    ns_slide_idx = next((i for i, sl in enumerate(prs.slides) if ns_slide is not None and sl.slide_id == ns_slide.slide_id), None)
     if ns_slide is not None:
         tbl_shapes = [sh for sh in ns_slide.shapes if sh.has_table]
         new_starts_rows = [{'HOP': h, 'GC': d['hop_gc_pm'].get(h, ''), 'CM': d['hop_site_cm'].get(h, '')}
@@ -1183,12 +1184,15 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     with zipfile.ZipFile(output_path + '.tmp2.pptx', 'r') as z:
         content2 = {n: z.read(n) for n in z.namelist()}
     os.remove(output_path + '.tmp2.pptx')
-    if blank_trio_bases:
-        cur_paths = _ordered_slide_paths(content2)
-        for b in blank_trio_bases:
-            for k in (b, b + 1, b + 2):
-                if k < len(cur_paths):
-                    delete_slide_content(content2, cur_paths[k])
+    cur_paths = _ordered_slide_paths(content2)
+    remove_idx = set()
+    for b in blank_trio_bases:
+        remove_idx.update({b, b + 1, b + 2})
+    if ns_slide_idx is not None:
+        remove_idx.add(ns_slide_idx)
+    for k in sorted(remove_idx):
+        if k < len(cur_paths):
+            delete_slide_content(content2, cur_paths[k])
         # paths shift after deletion; nothing else depends on them below
 
     # Reopen once to map title -> slide index by position.
