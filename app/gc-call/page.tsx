@@ -2285,10 +2285,18 @@ export default function GCCallPage() {
                                       : <span className="text-red-400 font-bold text-sm">✗</span>
                                   }
                                 </td>
-                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.mss || '—'}</td>
-                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.powerUp || '—'}</td>
-                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.mainCutover || '—'}</td>
-                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.divCutover || '—'}</td>
+                                <td className="p-2">
+                                  <GCEditableDate hop={h.hop} field="MSS Completed NMS Ready " value={h.mss} editedDates={editedDates} logDateEdit={logDateEdit} />
+                                </td>
+                                <td className="p-2">
+                                  <GCEditableDate hop={h.hop} field="Power-Up Completion" value={h.powerUp} editedDates={editedDates} logDateEdit={logDateEdit} />
+                                </td>
+                                <td className="p-2">
+                                  <GCEditableDate hop={h.hop} field="Main Path Cutover Completed" value={h.mainCutover} editedDates={editedDates} logDateEdit={logDateEdit} />
+                                </td>
+                                <td className="p-2">
+                                  <GCEditableDate hop={h.hop} field="Diversity Cutover Completed" value={h.divCutover} editedDates={editedDates} logDateEdit={logDateEdit} />
+                                </td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
                                 <td className="p-2">
                                   <GCEditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} editedDates={editedDates} logDateEdit={logDateEdit} />
@@ -2296,7 +2304,9 @@ export default function GCCallPage() {
                                 <td className="p-2">
                                   <GCEditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
-                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.decom || '—'}</td>
+                                <td className="p-2">
+                                  <GCEditableDate hop={h.hop} field="Decom Complete" value={h.decom} editedDates={editedDates} logDateEdit={logDateEdit} />
+                                </td>
                                 <td className="p-2">
                                   <div className="flex gap-1">
                                     <input type="text" placeholder="Note..." value={sessionNotes[h.hop] || ''}
