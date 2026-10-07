@@ -709,6 +709,9 @@ interface HOP {
   cm: string
   mss: string
   powerUp: string
+  mainCutover: string
+  divCutover: string
+  decom: string
   gcPickupF: string
   gcPickupA: string
   cxNotes: string
@@ -1357,6 +1360,9 @@ export default function GCCallPage() {
     const siteCmCol    = col('New CM')
     const mssCol       = col('MSS Completed NMS Ready ')
     const powerCol     = col('Power-Up Completion')
+    const mainCutCol   = col('Main Path Cutover Completed')
+    const divCutCol    = col('Diversity Cutover Completed')
+    const decomCol     = col('Decom Complete')
     const gcPickupFCol = col('GC Material Pick-up (F)')
     const gcPickupACol = col('GC Material Pick-up (A)')
     const cxNotesCol   = headers.findIndex(h => String(h).trim().replace(/^'+|'+$/g, '') === 'CX Notes:')
@@ -1591,6 +1597,9 @@ export default function GCCallPage() {
         cm:        String(row[siteCmCol] || '').trim() || String(row2?.[siteCmCol] || '').trim(),
         mss:       fmtDate(parseDateAny(row[mssCol])),
         powerUp:   fmtDate(parseDateAny(row[powerCol])),
+        mainCutover: fmtDate(parseDateAny(row[mainCutCol])),
+        divCutover:  fmtDate(parseDateAny(row[divCutCol])),
+        decom:       fmtDate(parseDateAny(row[decomCol])),
         gcPickupF: fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA: fmtDate(parseDateAny(row[gcPickupACol])),
         cxNotes:   String(row[cxNotesCol] || '').trim()
@@ -2229,9 +2238,14 @@ export default function GCCallPage() {
                               <th className="text-left p-2">Days Elapsed</th>
                               <th className="text-left p-2">Status</th>
                               <th className="text-left p-2">SPO Issued</th>
+                              <th className="text-left p-2">MSS</th>
+                              <th className="text-left p-2">Power-Up</th>
+                              <th className="text-left p-2">Main Cutover</th>
+                              <th className="text-left p-2">Diversity Cutover</th>
                               <th className="text-left p-2">MS16 Fc</th>
                               <th className="text-left p-2">Edit MS16 Fc</th>
                               <th className="text-left p-2">MS16 Act</th>
+                              <th className="text-left p-2">Decom</th>
                               <th className="text-left p-2">Call Notes (Today)</th>
                               <th className="text-left p-2">Notes History</th>
                               <th className="text-left p-2">CX Notes</th>
@@ -2271,6 +2285,10 @@ export default function GCCallPage() {
                                       : <span className="text-red-400 font-bold text-sm">✗</span>
                                   }
                                 </td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.mss || '—'}</td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.powerUp || '—'}</td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.mainCutover || '—'}</td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.divCutover || '—'}</td>
                                 <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.ms16f || '—'}</td>
                                 <td className="p-2">
                                   <GCEditableDate hop={h.hop} field="MS16 Implementation Ends F" value={h.ms16f} editedDates={editedDates} logDateEdit={logDateEdit} />
@@ -2278,6 +2296,7 @@ export default function GCCallPage() {
                                 <td className="p-2">
                                   <GCEditableDate hop={h.hop} field="MS16 Implementation Ends A" value={h.ms16a} editedDates={editedDates} logDateEdit={logDateEdit} />
                                 </td>
+                                <td className="p-2 text-gray-300 text-xs whitespace-nowrap">{h.decom || '—'}</td>
                                 <td className="p-2">
                                   <div className="flex gap-1">
                                     <input type="text" placeholder="Note..." value={sessionNotes[h.hop] || ''}
