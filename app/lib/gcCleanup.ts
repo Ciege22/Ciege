@@ -11,6 +11,7 @@ import {
   type GrRow, type DecomScopStatus, type TrackerDates,
   buildTrackerDateMap, buildDecomScopCompleteMap, buildGrRows,
 } from './grTracker'
+import { type HopCoord, buildHopCoordMap } from './hopCoords'
 
 export type CleanupBucket = 'not_started' | 'mid_construction' | 'cleanup_only'
 
@@ -40,6 +41,9 @@ export interface CleanupHop {
   unpaidTiers: UnpaidTier[]
   decomComplete: boolean
   scopComplete: boolean
+  // null when the tracker had no valid Latt./Long. for this HOP's sites —
+  // excluded from the map and from clustering, never guessed at.
+  coord: HopCoord | null
 }
 
 export interface CleanupGroups {
@@ -61,6 +65,7 @@ export function buildCleanupHops(
   grRows: GrRow[],
   departedGcs: string[],
   decomScopMap: Map<string, DecomScopStatus>,
+  coordMap: Map<string, HopCoord> = new Map(),
 ): CleanupGroups {
   const departedSet = new Set(departedGcs.map(g => g.trim().toLowerCase()))
   const byHop = new Map<string, GrRow[]>()
@@ -100,6 +105,7 @@ export function buildCleanupHops(
       unpaidTiers,
       decomComplete: status?.decomComplete ?? false,
       scopComplete: status?.scopComplete ?? false,
+      coord: coordMap.get(hop) ?? null,
     }
 
     if (unpaidValue <= 0) {
@@ -135,8 +141,9 @@ export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupG
   const spoRows: unknown[][] = spoResult.data?.data ? JSON.parse(spoResult.data.data) : []
   const trackerDateMap = trackerSnap ? buildTrackerDateMap(trackerSnap.data) : new Map<string, TrackerDates>()
   const decomScopMap = buildDecomScopCompleteMap(decomReport?.rows ?? [], scopReport?.rows ?? [])
+  const coordMap = trackerSnap ? buildHopCoordMap(trackerSnap.data) : new Map<string, HopCoord>()
   const grRows = buildGrRows(spoRows, trackerDateMap, decomScopMap)
-  return buildCleanupHops(grRows, departedGcs, decomScopMap)
+  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap)
 }
 
 // ─────────────────────────────────────────────

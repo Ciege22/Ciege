@@ -3,7 +3,9 @@
 export const dynamic = 'force-dynamic'
 
 import { useEffect, useMemo, useState } from 'react'
+import dynamicImport from 'next/dynamic'
 import BackToDashboard from '../components/BackToDashboard'
+import ColumnFilterMenu from '../components/ColumnFilterMenu'
 import { GC_CONFIG } from '../lib/gcConfig'
 import { fmtMoney } from '../lib/grTracker'
 import { loadDepartedGcs, saveDepartedGcs } from '../lib/settings'
@@ -12,8 +14,26 @@ import {
   BUCKET_LABELS, CLEANUP_STATUS_OPTIONS,
   loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
+import { clusterByDistance, type GeoCluster } from '../lib/hopCoords'
+
+// Leaflet touches `window` at import time — see app/map/page.tsx for the
+// same ssr:false pattern this mirrors.
+const CleanupMap = dynamicImport(() => import('./CleanupMap'), {
+  ssr: false,
+  loading: () => <div className="flex items-center justify-center h-[60vh] text-gray-400 text-sm">Loading map…</div>,
+})
 
 const BUCKET_ORDER: CleanupBucket[] = ['cleanup_only', 'mid_construction', 'not_started']
+const BUCKET_EMOJI: Record<CleanupBucket, string> = { cleanup_only: '🧾', mid_construction: '🏗️', not_started: '🚧' }
+const DEFAULT_RADIUS_MILES = 100
+
+type FilterCol = 'gc' | 'decom' | 'scop' | 'status'
+const FILTER_COLS: { key: FilterCol; label: string }[] = [
+  { key: 'gc', label: 'Original GC' },
+  { key: 'decom', label: 'Decom' },
+  { key: 'scop', label: 'SCOP' },
+  { key: 'status', label: 'Status' },
+]
 
 export default function GcCleanupPage() {
   const [loading, setLoading] = useState(true)
@@ -22,6 +42,9 @@ export default function GcCleanupPage() {
   const [savingGcList, setSavingGcList] = useState(false)
   const [groups, setGroups] = useState<CleanupGroups | null>(null)
   const [assignments, setAssignments] = useState<Record<string, CleanupAssignment>>({})
+  const [openBucket, setOpenBucket] = useState<CleanupBucket | 'fullyPaidButIncomplete' | null>(null)
+  const [mapOpen, setMapOpen] = useState(false)
+  const [radiusMiles, setRadiusMiles] = useState(DEFAULT_RADIUS_MILES)
 
   async function loadAll(gcs: string[]) {
     setLoading(true)
@@ -53,15 +76,14 @@ export default function GcCleanupPage() {
     }
   }
 
-  const totals = useMemo(() => {
-    if (!groups) return null
-    const all = [...groups.not_started, ...groups.mid_construction, ...groups.cleanup_only]
-    return {
-      hops: all.length,
-      unpaid: all.reduce((s, h) => s + h.unpaidValue, 0),
-      incomplete: groups.fullyPaidButIncomplete.length,
-    }
-  }, [groups])
+  const allHops = useMemo(() => groups ? [...groups.not_started, ...groups.mid_construction, ...groups.cleanup_only] : [], [groups])
+  const totalUnpaid = useMemo(() => allHops.reduce((s, h) => s + h.unpaidValue, 0), [allHops])
+
+  const clusters = useMemo<GeoCluster<CleanupHop>[]>(() => {
+    const points = allHops.filter(h => h.coord).map(h => ({ item: h, coord: h.coord! }))
+    return clusterByDistance(points, radiusMiles)
+  }, [allHops, radiusMiles])
+  const unmapped = allHops.length - clusters.reduce((s, c) => s + c.members.length, 0)
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-4 md:p-6">
@@ -94,111 +116,227 @@ export default function GcCleanupPage() {
         <p className="text-gray-500 text-sm">Check off a departed GC above to see their outstanding HOPs.</p>
       )}
 
-      {!loading && groups && departedGcs.length > 0 && totals && (
-        <>
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-6">
-            <Tile label="HOPs needing cleanup" value={String(totals.hops)} />
-            <Tile label="Unpaid $ available to reassign" value={fmtMoney(totals.unpaid)} />
-            <Tile label="Fully paid but Decom/SCOP incomplete" value={String(totals.incomplete)} warn={totals.incomplete > 0} />
-          </div>
-
+      {!loading && groups && departedGcs.length > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
           {BUCKET_ORDER.map(bucket => (
-            <BucketSection
-              key={bucket}
-              bucket={bucket}
-              rows={groups[bucket]}
-              assignments={assignments}
-              onSaved={(hop, a) => setAssignments(prev => ({ ...prev, [hop]: a }))}
-            />
+            <Tile key={bucket} emoji={BUCKET_EMOJI[bucket]} label={BUCKET_LABELS[bucket]} count={groups[bucket].length}
+              sub={fmtMoney(groups[bucket].reduce((s, h) => s + h.unpaidValue, 0))}
+              onClick={() => setOpenBucket(bucket)} />
           ))}
+          <Tile emoji="⚠️" label="Fully paid, Decom/SCOP incomplete" count={groups.fullyPaidButIncomplete.length}
+            sub="no money left to reassign" warn={groups.fullyPaidButIncomplete.length > 0}
+            onClick={() => setOpenBucket('fullyPaidButIncomplete')} />
+          <Tile emoji="💰" label="Total unpaid $ available" count={null} sub={fmtMoney(totalUnpaid)}
+            onClick={() => setOpenBucket('cleanup_only')} />
+          <Tile emoji="🗺️" label="Map & distance clusters" count={clusters.length || null}
+            sub={unmapped > 0 ? `${unmapped} HOP(s) have no coordinates` : `within ${radiusMiles}mi`}
+            onClick={() => setMapOpen(true)} />
+        </div>
+      )}
 
-          {groups.fullyPaidButIncomplete.length > 0 && (
-            <div className="mb-8">
-              <h2 className="text-lg font-semibold text-amber-300 mb-2">⚠️ Fully paid, but Decom/SCOP still incomplete</h2>
-              <p className="text-gray-500 text-xs mb-3">The original GC was paid in full — there&apos;s no unpaid tier to fund a replacement, so this needs a different fix (follow up with the GC, or absorb the cost of having someone else close it out).</p>
-              <SimpleHopList rows={groups.fullyPaidButIncomplete} />
+      {!loading && groups && openBucket && (
+        <BucketModal
+          title={openBucket === 'fullyPaidButIncomplete' ? '⚠️ Fully paid, Decom/SCOP still incomplete' : BUCKET_LABELS[openBucket]}
+          rows={groups[openBucket]}
+          editable={openBucket !== 'fullyPaidButIncomplete'}
+          assignments={assignments}
+          onSaved={(hop, a) => setAssignments(prev => ({ ...prev, [hop]: a }))}
+          onClose={() => setOpenBucket(null)}
+        />
+      )}
+
+      {mapOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={() => setMapOpen(false)}>
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 sticky top-0 bg-gray-900">
+              <h2 className="text-white font-semibold text-lg">🗺️ Map & distance clusters</h2>
+              <button onClick={() => setMapOpen(false)} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
             </div>
-          )}
-        </>
+            <div className="p-6">
+              <div className="flex items-center gap-3 mb-4">
+                <label className="text-sm text-gray-300">Cluster radius</label>
+                <input type="number" min={5} step={5} value={radiusMiles}
+                  onChange={e => setRadiusMiles(Math.max(5, Number(e.target.value) || DEFAULT_RADIUS_MILES))}
+                  className="w-24 bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+                <span className="text-sm text-gray-400">miles</span>
+                <span className="text-xs text-gray-500 ml-2">
+                  Greedy grouping by distance — HOPs within {radiusMiles}mi of a cluster&apos;s center get pulled in. Not an optimal grouping, just a practical way to bundle nearby work for one GC.
+                </span>
+              </div>
+              {unmapped > 0 && (
+                <p className="text-amber-400 text-xs mb-3">{unmapped} HOP(s) have no valid Latt./Long. in the tracker and are left off the map.</p>
+              )}
+              <CleanupMap clusters={clusters} radiusMiles={radiusMiles} />
+              <div className="mt-4 grid md:grid-cols-2 gap-3">
+                {clusters.map(c => (
+                  <div key={c.id} className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+                    <p className="text-sm font-semibold text-white mb-1">
+                      Cluster {c.id} — {c.members.length} HOP{c.members.length === 1 ? '' : 's'} · {fmtMoney(c.members.reduce((s, h) => s + h.unpaidValue, 0))}
+                    </p>
+                    <ul className="text-xs text-gray-400 space-y-0.5 max-h-32 overflow-y-auto">
+                      {c.members.map(h => <li key={h.hop}>{h.hopDisplay} <span className="text-gray-600">({h.gc})</span></li>)}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )
 }
 
-function Tile({ label, value, warn }: { label: string; value: string; warn?: boolean }) {
+function Tile({ emoji, label, count, sub, warn, onClick }: { emoji: string; label: string; count: number | null; sub: string; warn?: boolean; onClick: () => void }) {
   return (
-    <div className={`rounded-xl border p-4 text-center ${warn ? 'bg-amber-950 border-amber-700' : 'bg-gray-900 border-gray-700'}`}>
-      <p className={`text-2xl font-bold ${warn ? 'text-amber-300' : 'text-white'}`}>{value}</p>
-      <p className="text-xs text-gray-400 mt-1">{label}</p>
-    </div>
+    <button onClick={onClick}
+      className={`text-left rounded-xl border p-4 hover:border-blue-500 transition-colors ${warn ? 'bg-amber-950 border-amber-700' : 'bg-gray-900 border-gray-700'}`}>
+      <p className="text-2xl mb-1">{emoji}</p>
+      {count != null && <p className={`text-2xl font-bold ${warn ? 'text-amber-300' : 'text-white'}`}>{count}</p>}
+      <p className={`text-sm font-semibold ${warn ? 'text-amber-200' : 'text-gray-200'}`}>{sub}</p>
+      <p className="text-xs text-gray-500 mt-1">{label}</p>
+    </button>
   )
 }
 
-function SimpleHopList({ rows }: { rows: CleanupHop[] }) {
-  return (
-    <div className="overflow-x-auto rounded-xl border border-gray-700">
-      <table className="w-full text-xs">
-        <thead>
-          <tr className="bg-gray-800 text-gray-400">
-            <th className="text-left p-2">HOP</th>
-            <th className="text-left p-2">Original GC</th>
-            <th className="text-left p-2">Decom</th>
-            <th className="text-left p-2">SCOP</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map(h => (
-            <tr key={h.hop} className="border-t border-gray-800 bg-gray-900">
-              <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hopDisplay}</td>
-              <td className="p-2 text-gray-300">{h.gc}</td>
-              <td className="p-2">{h.decomComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
-              <td className="p-2">{h.scopComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  )
+function cellValue(h: CleanupHop, col: FilterCol, assignments: Record<string, CleanupAssignment>): string {
+  if (col === 'gc') return h.gc
+  if (col === 'decom') return h.decomComplete ? 'Complete' : 'Incomplete'
+  if (col === 'scop') return h.scopComplete ? 'Complete' : 'Incomplete'
+  return assignments[h.hop]?.status ?? 'Needs Quote'
 }
 
-function BucketSection({ bucket, rows, assignments, onSaved }: {
-  bucket: CleanupBucket
+function BucketModal({ title, rows, editable, assignments, onSaved, onClose }: {
+  title: string
   rows: CleanupHop[]
+  editable: boolean
   assignments: Record<string, CleanupAssignment>
   onSaved: (hop: string, a: CleanupAssignment) => void
+  onClose: () => void
 }) {
-  if (rows.length === 0) return null
+  const [search, setSearch] = useState('')
+  const [filters, setFilters] = useState<Partial<Record<FilterCol, Set<string>>>>({})
+  const [openCol, setOpenCol] = useState<FilterCol | null>(null)
+
+  const valuesByCol = useMemo(() => {
+    const out = {} as Record<FilterCol, string[]>
+    FILTER_COLS.forEach(c => {
+      out[c.key] = Array.from(new Set(rows.map(h => cellValue(h, c.key, assignments)))).sort()
+    })
+    return out
+    // Intentionally keyed on rows only — recomputing live off `assignments` on every
+    // keystroke would reshuffle the filter's own value list out from under an open menu.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rows])
+
+  const visible = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return rows.filter(h => {
+      for (const key of Object.keys(filters) as FilterCol[]) {
+        const allowed = filters[key]
+        if (allowed && !allowed.has(cellValue(h, key, assignments))) return false
+      }
+      return !q || [h.hopDisplay, h.pathId, h.gc].some(v => v.toLowerCase().includes(q))
+    })
+  }, [rows, filters, search, assignments])
+
+  function setColumnFilter(key: FilterCol, selected: Set<string> | null) {
+    setFilters(prev => {
+      const next = { ...prev }
+      if (selected === null || selected.size === valuesByCol[key].length) delete next[key]
+      else next[key] = selected
+      return next
+    })
+  }
+
   return (
-    <div className="mb-8">
-      <h2 className="text-lg font-semibold text-white mb-2">{BUCKET_LABELS[bucket]} ({rows.length})</h2>
-      <div className="overflow-x-auto rounded-xl border border-gray-700">
-        <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-gray-800 text-gray-400">
-              <th className="text-left p-2">HOP</th>
-              <th className="text-left p-2">Path ID</th>
-              <th className="text-left p-2">Original GC</th>
-              <th className="text-left p-2">Paid / Total</th>
-              <th className="text-left p-2">Unpaid $ available</th>
-              <th className="text-left p-2">Unpaid tiers</th>
-              <th className="text-left p-2">Decom</th>
-              <th className="text-left p-2">SCOP</th>
-              <th className="text-left p-2">Assign new GC</th>
-              <th className="text-left p-2">Their quote</th>
-              <th className="text-left p-2">Gap</th>
-              <th className="text-left p-2">Status</th>
-              <th className="text-left p-2">Comment</th>
-              <th className="text-left p-2">Save</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map(h => (
-              <CleanupRow key={h.hop} hop={h} assignment={assignments[h.hop]} onSaved={a => onSaved(h.hop, a)} />
-            ))}
-          </tbody>
-        </table>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-[96vw] max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+          <h2 className="text-white font-semibold text-lg">
+            {title} <span className="text-gray-400 text-sm ml-2">({visible.length === rows.length ? `${rows.length} HOPs` : `${visible.length} of ${rows.length} HOPs`})</span>
+          </h2>
+          <div className="flex items-center gap-3">
+            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search HOP, Path ID, GC"
+              className="w-56 bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+            {Object.keys(filters).length > 0 && (
+              <button onClick={() => setFilters({})} className="text-gray-400 hover:text-white text-xs underline">✕ Clear filters</button>
+            )}
+            <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          </div>
+        </div>
+        <div className="overflow-auto p-4">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-gray-800 text-gray-400">
+                <th className="text-left p-2">HOP</th>
+                <th className="text-left p-2">Path ID</th>
+                <FilterableHeader label="Original GC" col="gc" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.gc} filters={filters} onApply={setColumnFilter} />
+                <th className="text-left p-2">Paid / Total</th>
+                <th className="text-left p-2">Unpaid $ available</th>
+                <th className="text-left p-2">Unpaid tiers</th>
+                <FilterableHeader label="Decom" col="decom" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.decom} filters={filters} onApply={setColumnFilter} />
+                <FilterableHeader label="SCOP" col="scop" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.scop} filters={filters} onApply={setColumnFilter} />
+                {editable && <th className="text-left p-2">Assign new GC</th>}
+                {editable && <th className="text-left p-2">Their quote</th>}
+                {editable && <th className="text-left p-2">Gap</th>}
+                {editable && <FilterableHeader label="Status" col="status" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.status} filters={filters} onApply={setColumnFilter} />}
+                {editable && <th className="text-left p-2">Comment</th>}
+                {editable && <th className="text-left p-2">Save</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {visible.map(h => (
+                editable
+                  ? <CleanupRow key={h.hop} hop={h} assignment={assignments[h.hop]} onSaved={a => onSaved(h.hop, a)} />
+                  : <ReadOnlyRow key={h.hop} hop={h} />
+              ))}
+              {visible.length === 0 && (
+                <tr><td colSpan={13} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
+  )
+}
+
+function FilterableHeader({ label, col, openCol, setOpenCol, values, filters, onApply }: {
+  label: string
+  col: FilterCol
+  openCol: FilterCol | null
+  setOpenCol: (c: FilterCol | null) => void
+  values: string[]
+  filters: Partial<Record<FilterCol, Set<string>>>
+  onApply: (col: FilterCol, sel: Set<string> | null) => void
+}) {
+  const active = !!filters[col]
+  return (
+    <th className="relative text-left p-2 whitespace-nowrap">
+      <button type="button" onClick={() => setOpenCol(openCol === col ? null : col)} className="inline-flex items-center gap-1 hover:text-white">
+        {label}<span className={active ? 'text-emerald-400' : 'text-gray-600'}>{active ? ' ⏷' : ' ▾'}</span>
+      </button>
+      {openCol === col && (
+        <ColumnFilterMenu values={values} selected={filters[col] ?? null} sort={null} onSort={() => {}}
+          onApply={sel => onApply(col, sel)} onClose={() => setOpenCol(null)} />
+      )}
+    </th>
+  )
+}
+
+function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
+  return (
+    <tr className="border-t border-gray-800 bg-gray-900">
+      <td className="p-2 font-semibold text-white whitespace-nowrap">{hop.hopDisplay}</td>
+      <td className="p-2 text-gray-400 whitespace-nowrap">{hop.pathId || '—'}</td>
+      <td className="p-2 text-gray-300 whitespace-nowrap">{hop.gc}</td>
+      <td className="p-2 text-gray-300 whitespace-nowrap">{fmtMoney(hop.paidValue)} / {fmtMoney(hop.totalValue)} ({hop.paidPct}%)</td>
+      <td className="p-2 text-gray-500">—</td>
+      <td className="p-2 text-gray-600">—</td>
+      <td className="p-2">{hop.decomComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+      <td className="p-2">{hop.scopComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+    </tr>
   )
 }
 
@@ -247,8 +385,6 @@ function CleanupRow({ hop, assignment, onSaved }: {
       <td className="p-2 text-emerald-300 font-semibold whitespace-nowrap">{fmtMoney(hop.unpaidValue)}</td>
       <td className="p-2 max-w-[14rem]">
         {hop.unpaidTiers.map(t => {
-          // "Ready to release" means the work is already done — this is just
-          // sitting in CJ's own GR queue, not something a new GC needs to fix.
           const readyToRelease = t.reason.startsWith('Ready to release')
           return (
             <div key={t.tier} className="whitespace-nowrap text-gray-400">
