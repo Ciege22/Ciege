@@ -383,11 +383,14 @@ function CleanupRow({ hop, assignment, onSaved }: {
       <td className="p-2 text-gray-300 whitespace-nowrap">{hop.gc}</td>
       <td className="p-2 text-gray-300 whitespace-nowrap">{fmtMoney(hop.paidValue)} / {fmtMoney(hop.totalValue)} ({hop.paidPct}%)</td>
       <td className="p-2 text-emerald-300 font-semibold whitespace-nowrap">{fmtMoney(hop.unpaidValue)}</td>
-      <td className="p-2 max-w-[14rem]">
+      <td className="p-2 w-56 max-w-[14rem] overflow-hidden">
         {hop.unpaidTiers.map(t => {
           const readyToRelease = t.reason.startsWith('Ready to release')
+          const full = `${t.tierLabel}: ${fmtMoney(t.value)}${t.reason ? ` — ${t.reason}` : ''}`
           return (
-            <div key={t.tier} className="whitespace-nowrap text-gray-400">
+            // title gives the full text on hover; nothing is cut from the DOM
+            // so a drag-select still copies the whole line, only the ellipsis is visual.
+            <div key={t.tier} title={full} className="max-w-[14rem] overflow-hidden text-ellipsis whitespace-nowrap text-gray-400">
               {t.tierLabel}: {fmtMoney(t.value)}
               {t.reason && <span className={readyToRelease ? ' text-sky-400' : ' text-amber-400'}> — {t.reason}</span>}
             </div>
