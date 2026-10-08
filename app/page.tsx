@@ -25,6 +25,7 @@ const navItems = [
   { label: "GC Call View", href: "/gc-call", emoji: "🏗️" },
   { label: "CM Call View", href: "/cm-view", emoji: "👷" },
   { label: "GR Tracker", href: "/gr-tracker", emoji: "💰" },
+  { label: "GC Clean-Up", href: "/gc-cleanup", emoji: "🧹" },
   { label: "Schedule Optimizer", href: "/schedule", emoji: "📅" },
   { label: "NTP Tracker", href: "/ntp-tracker", emoji: "⏱️" },
   { label: "Change Log", href: "/change-log", emoji: "📜" },

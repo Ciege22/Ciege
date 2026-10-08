@@ -218,6 +218,12 @@ export const DEFAULT_DISPLAY: DisplaySettings = {
   defaultSortOrder: 'trigger',
 }
 
+// GCs no longer working the program — a plain checklist CJ maintains by
+// hand (nothing in the tracker or SPO report marks a GC as departed). Drives
+// the GC Clean-Up view (app/gc-cleanup/page.tsx): their HOPs with unpaid SPO
+// tiers are what's available to reassign.
+export const DEFAULT_DEPARTED_GCS: string[] = []
+
 // SCOP checklist item labels — kept here so DEFAULT_SCOP and the settings UI
 // can reference the full 8-item Pathwave set without importing app/lib/scop.ts
 // (which pulls in the whole calc engine).
@@ -273,6 +279,22 @@ export const loadProgramSettings = () => loadSection('program', DEFAULT_PROGRAM)
 export const saveProgramSettings = (v: ProgramSettings) => saveSection('program', v)
 
 export const loadThresholdSettings = () => loadSection('thresholds', DEFAULT_THRESHOLDS)
+
+// Not loadSection: that helper does `{ ...fallback, ...parsed }`, which turns
+// an array into an index-keyed object. An array section needs a plain
+// load/replace instead of the object sections' shallow-merge-forward semantics.
+export async function loadDepartedGcs(): Promise<string[]> {
+  const { data } = await supabase.from('pm_updates_cache').select('updates').eq('id', 'settings-departedGcs').single()
+  if (!data?.updates) return DEFAULT_DEPARTED_GCS
+  try {
+    const parsed = JSON.parse(data.updates)
+    return Array.isArray(parsed) ? parsed : DEFAULT_DEPARTED_GCS
+  } catch {
+    return DEFAULT_DEPARTED_GCS
+  }
+}
+
+export const saveDepartedGcs = (v: string[]) => saveSection('departedGcs', v)
 export const saveThresholdSettings = (v: ThresholdSettings) => saveSection('thresholds', v)
 
 export const loadEmailSettings = () => loadSection('email', DEFAULT_EMAIL)
