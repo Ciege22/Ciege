@@ -267,22 +267,22 @@ function BucketModal({ title, rows, editable, assignments, onSaved, onClose }: {
         </div>
         <div className="overflow-auto p-4">
           <table className="w-full text-xs">
-            <thead>
+            <thead className="sticky top-0 z-10 bg-gray-800">
               <tr className="bg-gray-800 text-gray-400">
-                <th className="text-left p-2">HOP</th>
-                <th className="text-left p-2">Path ID</th>
+                <th className="text-left p-2 bg-gray-800">HOP</th>
+                <th className="text-left p-2 bg-gray-800">Path ID</th>
                 <FilterableHeader label="Original GC" col="gc" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.gc} filters={filters} onApply={setColumnFilter} />
-                <th className="text-left p-2">Paid / Total</th>
-                <th className="text-left p-2">Unpaid $ available</th>
-                <th className="text-left p-2">Unpaid tiers</th>
+                <th className="text-left p-2 bg-gray-800">Paid / Total</th>
+                <th className="text-left p-2 bg-gray-800">Unpaid $ available</th>
+                <th className="text-left p-2 bg-gray-800">Unpaid tiers</th>
                 <FilterableHeader label="Decom" col="decom" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.decom} filters={filters} onApply={setColumnFilter} />
                 <FilterableHeader label="SCOP" col="scop" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.scop} filters={filters} onApply={setColumnFilter} />
-                {editable && <th className="text-left p-2">Assign new GC</th>}
-                {editable && <th className="text-left p-2">Their quote</th>}
-                {editable && <th className="text-left p-2">Gap</th>}
+                {editable && <th className="text-left p-2 bg-gray-800">Assign new GC</th>}
+                {editable && <th className="text-left p-2 bg-gray-800">Their quote</th>}
+                {editable && <th className="text-left p-2 bg-gray-800">Gap</th>}
                 {editable && <FilterableHeader label="Status" col="status" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.status} filters={filters} onApply={setColumnFilter} />}
-                {editable && <th className="text-left p-2">Comment</th>}
-                {editable && <th className="text-left p-2">Save</th>}
+                {editable && <th className="text-left p-2 bg-gray-800">Comment</th>}
+                {editable && <th className="text-left p-2 bg-gray-800">Save</th>}
               </tr>
             </thead>
             <tbody>
@@ -313,7 +313,7 @@ function FilterableHeader({ label, col, openCol, setOpenCol, values, filters, on
 }) {
   const active = !!filters[col]
   return (
-    <th className="relative text-left p-2 whitespace-nowrap">
+    <th className="relative text-left p-2 whitespace-nowrap bg-gray-800">
       <button type="button" onClick={() => setOpenCol(openCol === col ? null : col)} className="inline-flex items-center gap-1 hover:text-white">
         {label}<span className={active ? 'text-emerald-400' : 'text-gray-600'}>{active ? ' ⏷' : ' ▾'}</span>
       </button>
