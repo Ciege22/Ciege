@@ -325,6 +325,27 @@ function FilterableHeader({ label, col, openCol, setOpenCol, values, filters, on
   )
 }
 
+// Decom is tracked per physical site (a HOP has two) — the checkmark stays
+// HOP-level since that's what's quoted, but the pending site name(s) show
+// underneath so it's clear which end of the HOP still needs the work.
+function DecomCell({ hop }: { hop: CleanupHop }) {
+  if (hop.decomComplete) return <td className="p-2"><span className="text-green-400">✓</span></td>
+  return (
+    <td className="p-2 max-w-[10rem]">
+      <span className="text-red-400">✗</span>
+      {hop.decomPendingSites.length > 0 && (
+        <div className="mt-0.5 text-[10px] text-gray-500 leading-tight">
+          {hop.decomPendingSites.map(s => (
+            <div key={s.siteName} title={`${s.siteName}: ${s.statusLabel}`} className="max-w-[10rem] overflow-hidden text-ellipsis whitespace-nowrap">
+              {s.siteName}: {s.statusLabel}
+            </div>
+          ))}
+        </div>
+      )}
+    </td>
+  )
+}
+
 function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
   return (
     <tr className="border-t border-gray-800 bg-gray-900">
@@ -334,7 +355,7 @@ function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
       <td className="p-2 text-gray-300 whitespace-nowrap">{fmtMoney(hop.paidValue)} / {fmtMoney(hop.totalValue)} ({hop.paidPct}%)</td>
       <td className="p-2 text-gray-500">—</td>
       <td className="p-2 text-gray-600">—</td>
-      <td className="p-2">{hop.decomComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+      <DecomCell hop={hop} />
       <td className="p-2">{hop.scopComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
     </tr>
   )
@@ -397,7 +418,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
           )
         })}
       </td>
-      <td className="p-2">{hop.decomComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+      <DecomCell hop={hop} />
       <td className="p-2">{hop.scopComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
       <td className="p-2">
         <input list="gc-cleanup-roster" value={newGc} onChange={e => setNewGc(e.target.value)} placeholder="New GC…"

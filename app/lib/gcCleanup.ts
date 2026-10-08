@@ -9,9 +9,14 @@ import { supabase, loadTrackerSnapshot } from './supabase'
 import { loadChunkedReport } from './reportChunks'
 import {
   type GrRow, type DecomScopStatus, type TrackerDates,
-  buildTrackerDateMap, buildDecomScopCompleteMap, buildGrRows,
+  buildTrackerDateMap, buildDecomScopCompleteMap, buildGrRows, normalizeTrackerHop,
 } from './grTracker'
 import { type HopCoord, buildHopCoordMap } from './hopCoords'
+import { parseDecomRows, STATUS_DISPLAY_LABEL } from './decom'
+
+function matchKey(s: string): string {
+  return s.trim().toLowerCase()
+}
 
 export type CleanupBucket = 'not_started' | 'mid_construction' | 'cleanup_only'
 
@@ -28,6 +33,25 @@ export interface UnpaidTier {
   reason: string
 }
 
+export interface DecomSiteNote {
+  siteName: string
+  statusLabel: string
+}
+
+// Decom is tracked per physical site (a HOP has two), so decomComplete above
+// is already the HOP-level AND of both — this is the detail behind that
+// boolean: which site(s) are actually still outstanding. SCOP has no
+// equivalent — a SCOP row is already one per HOP, not per site.
+export function buildDecomSiteNotes(decomRawRows: unknown[][]): Map<string, DecomSiteNote[]> {
+  const out = new Map<string, DecomSiteNote[]>()
+  parseDecomRows(decomRawRows).forEach(r => {
+    if (!r.hop || r.status === 'complete') return
+    const key = matchKey(normalizeTrackerHop(r.hop))
+    out.set(key, [...(out.get(key) ?? []), { siteName: r.siteName, statusLabel: STATUS_DISPLAY_LABEL[r.status] }])
+  })
+  return out
+}
+
 export interface CleanupHop {
   hop: string
   hopDisplay: string
@@ -41,6 +65,9 @@ export interface CleanupHop {
   unpaidTiers: UnpaidTier[]
   decomComplete: boolean
   scopComplete: boolean
+  // Which site(s) still need Decom, when decomComplete is false — empty if
+  // the HOP isn't in the Decom tracker at all (not the same as complete).
+  decomPendingSites: DecomSiteNote[]
   // null when the tracker had no valid Latt./Long. for this HOP's sites —
   // excluded from the map and from clustering, never guessed at.
   coord: HopCoord | null
@@ -66,11 +93,17 @@ export function buildCleanupHops(
   departedGcs: string[],
   decomScopMap: Map<string, DecomScopStatus>,
   coordMap: Map<string, HopCoord> = new Map(),
+  // Current DON 444 HOPs (tracker-keyed, same key space as GrRow.hop). A HOP
+  // dropped from DON 444 — a cancelled/removed site — has no business on a
+  // quoting list even if old unpaid SPO rows for it still exist.
+  don444Hops: Set<string> | null = null,
+  decomSiteNotes: Map<string, DecomSiteNote[]> = new Map(),
 ): CleanupGroups {
   const departedSet = new Set(departedGcs.map(g => g.trim().toLowerCase()))
   const byHop = new Map<string, GrRow[]>()
   grRows.forEach(r => {
     if (!departedSet.has(r.gc.trim().toLowerCase())) return
+    if (don444Hops && !don444Hops.has(r.hop)) return
     byHop.set(r.hop, [...(byHop.get(r.hop) ?? []), r])
   })
 
@@ -105,6 +138,7 @@ export function buildCleanupHops(
       unpaidTiers,
       decomComplete: status?.decomComplete ?? false,
       scopComplete: status?.scopComplete ?? false,
+      decomPendingSites: decomSiteNotes.get(hop) ?? [],
       coord: coordMap.get(hop) ?? null,
     }
 
@@ -142,8 +176,13 @@ export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupG
   const trackerDateMap = trackerSnap ? buildTrackerDateMap(trackerSnap.data) : new Map<string, TrackerDates>()
   const decomScopMap = buildDecomScopCompleteMap(decomReport?.rows ?? [], scopReport?.rows ?? [])
   const coordMap = trackerSnap ? buildHopCoordMap(trackerSnap.data) : new Map<string, HopCoord>()
+  const decomSiteNotes = buildDecomSiteNotes(decomReport?.rows ?? [])
   const grRows = buildGrRows(spoRows, trackerDateMap, decomScopMap)
-  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap)
+  // trackerDateMap is already DON 444-only and keyed the same way GrRow.hop
+  // is (see buildTrackerDateMap in grTracker.ts), so its key set is exactly
+  // "current DON 444 HOPs."
+  const don444Hops = new Set(trackerDateMap.keys())
+  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes)
 }
 
 // ─────────────────────────────────────────────
