@@ -91,13 +91,15 @@ export function openCancellationEmail(
   const subject = `SPO Cancellation Request — Reassigned Clean-Up Work — ${todayStr()}`
   let body = `Please cancel the SPOs below — this scope is being reassigned to a new contractor for clean-up, `
     + `so the original vendor's SPO should not also be paid out.\n\n`
-  // Bullet is the HOP + Path ID + Vendor (same vendor for every tier under
-  // it, so it's only stated once); each unpaid tier for that HOP stacks
-  // underneath as its own line, since a HOP can have more than one.
+  // Bullet is the HOP + Path ID + the HOP's current (departed) GC per the
+  // tracker; each unpaid tier stacks underneath with its OWN vendor, since a
+  // HOP can carry SPO lines from more than one vendor (a small CR issued to
+  // an unrelated sub, say) even though the tracker attributes the HOP itself
+  // to one GC — Finance needs to know exactly whose SPO each line cancels.
   items.forEach(({ hop }) => {
-    body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  Vendor: ${hop.gc}\n`
+    body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  HOP's GC: ${hop.gc}\n`
     hop.unpaidTiers.forEach(t => {
-      body += `    SPO #: ${t.spoNumber || '—'}  |  %: ${tierPercent(t.tier)}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
+      body += `    SPO #: ${t.spoNumber || '—'}  |  Vendor: ${t.vendor}  |  %: ${tierPercent(t.tier)}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
     })
     body += `\n`
   })

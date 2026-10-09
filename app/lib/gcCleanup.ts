@@ -50,6 +50,47 @@ export interface UnpaidTier {
   // The original (departed) GC's own SPO for this tier — what Finance
   // cancels once the work is reassigned, so it isn't paid out twice.
   spoNumber: string
+  // The vendor on THIS specific SPO line — not always the same as the HOP's
+  // tracker GC. A HOP can carry small CR lines issued to an unrelated vendor
+  // (a trenching sub, a miscellaneous change order) alongside its real
+  // construction SPOs, so Finance needs the exact vendor per line, not just
+  // whichever GC the HOP is attributed to overall.
+  vendor: string
+}
+
+// The tracker's own General Contractor column, per HOP — the authoritative
+// answer to "who is this HOP's GC," independent of which vendor happens to
+// be on any one SPO line. A HOP can carry SPO rows from several vendors (a
+// small CR issued to an unrelated sub, say), so picking "the GC" from an
+// arbitrary SPO row was wrong — it could attribute a HOP to a GC who only
+// touched one minor line item, while the tracker says someone else (often
+// still-active) actually owns it. Same header/DON444-row scanning as
+// buildTrackerDateMap in grTracker.ts, first-seen value wins per HOP.
+export function buildHopGcMap(rows: unknown[][]): Map<string, string> {
+  const out = new Map<string, string>()
+  let headerRow = -1
+  for (let i = 0; i < 10; i++) {
+    if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+  }
+  if (headerRow === -1) return out
+  const headers = (rows[headerRow] as unknown[]).map(h => String(h ?? '').trim())
+  const col = (name: string) => headers.indexOf(name)
+  const hopCol = col('HOP')
+  const don444Col = col('DON 444')
+  const gcCol = col('General Contractor')
+  if (hopCol === -1 || gcCol === -1) return out
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i] as unknown[]
+    if (!row) continue
+    if (String(row[don444Col] ?? '').trim().toUpperCase() !== 'DON 444') continue
+    const hop = String(row[hopCol] ?? '').trim()
+    if (!hop || hop === 'undefined') continue
+    const key = matchKey(normalizeTrackerHop(hop))
+    if (out.has(key)) continue
+    const gc = String(row[gcCol] ?? '').trim()
+    if (gc) out.set(key, gc)
+  }
+  return out
 }
 
 export interface SiteNote {
@@ -138,11 +179,18 @@ export function buildCleanupHops(
   // started buckets below) is a different problem from construction being
   // incomplete, and this gate is specifically about the latter.
   ms16aCompleteHops: Set<string> | null = null,
+  // Tracker-authoritative GC per HOP (buildHopGcMap) — this, not any single
+  // SPO row's vendor, decides whether a HOP belongs to a departed GC. A HOP
+  // whose tracker GC is still active is excluded even if one of its SPO
+  // lines happens to be with a departed GC.
+  hopGcMap: Map<string, string> | null = null,
 ): CleanupGroups {
   const departedSet = new Set(departedGcs.map(g => g.trim().toLowerCase()))
   const byHop = new Map<string, GrRow[]>()
   grRows.forEach(r => {
-    if (!departedSet.has(r.gc.trim().toLowerCase())) return
+    const trackerGc = hopGcMap?.get(r.hop)
+    const isDeparted = trackerGc ? departedSet.has(trackerGc.trim().toLowerCase()) : departedSet.has(r.gc.trim().toLowerCase())
+    if (!isDeparted) return
     if (don444Hops && !don444Hops.has(r.hop)) return
     if (ms16aCompleteHops && !ms16aCompleteHops.has(r.hop)) return
     byHop.set(r.hop, [...(byHop.get(r.hop) ?? []), r])
@@ -165,13 +213,14 @@ export function buildCleanupHops(
         value: r.spoValue,
         reason: r.pendingReason || (r.status === 'Ready to Release' ? 'Ready to release — not yet submitted' : ''),
         spoNumber: r.spoNumber,
+        vendor: r.gc,
       }))
     const status = decomScopMap.get(hop)
     const cleanupHop: CleanupHop = {
       hop,
       hopDisplay: rows[0].hopDisplay,
       pathId: rows[0].pathId,
-      gc: rows[0].gc,
+      gc: hopGcMap?.get(hop) || rows[0].gc,
       bucket: 'cleanup_only', // placeholder, set below
       totalValue,
       paidValue,
@@ -233,7 +282,8 @@ export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupG
   const ms16aCompleteHops = new Set(
     Array.from(trackerDateMap.entries()).filter(([, d]) => d.ms16a !== null).map(([key]) => key)
   )
-  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes, ms16aCompleteHops)
+  const hopGcMap = trackerSnap ? buildHopGcMap(trackerSnap.data) : new Map<string, string>()
+  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes, ms16aCompleteHops, hopGcMap)
 }
 
 // ─────────────────────────────────────────────

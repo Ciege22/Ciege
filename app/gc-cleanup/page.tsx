@@ -408,7 +408,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                         <ul className="text-xs text-gray-400 space-y-0.5">
                           {pending.map(({ hop }) => (
                             <li key={hop.hop} className="flex justify-between gap-2">
-                              <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)})`).join(', ')} (vendor: {hop.gc})</span>
+                              <span>{hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}</span>
                               <span className="text-amber-400">not sent</span>
                             </li>
                           ))}
@@ -418,7 +418,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                         <ul className={`text-xs text-gray-500 space-y-0.5 ${pending.length > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}`}>
                           {sent.map(({ hop, assignment }) => (
                             <li key={hop.hop} className="flex justify-between gap-2">
-                              <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)})`).join(', ')} (vendor: {hop.gc})</span>
+                              <span>{hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}</span>
                               <span className="text-emerald-400">{fmtSent(assignment.financeEmailSentAt)}</span>
                             </li>
                           ))}
