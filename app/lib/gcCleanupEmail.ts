@@ -65,6 +65,21 @@ export function cancellableHops(items: QuotedHop[]): QuotedHop[] {
   return items.filter(i => i.hop.unpaidTiers.length > 0)
 }
 
+// The clean percentage a tier code represents, separate from tierLabel
+// (which is the fuller "60% — MS16A (CX Complete)" description) — Finance
+// needs the plain % to know which split of the SPO is being cancelled.
+export function tierPercent(tier: string): string {
+  switch (tier) {
+    case 'init20': return '20%'
+    case '60': return '60%'
+    case '70': return '70%'
+    case '20': return '20%'
+    case '30': return '30%'
+    case 'CR': return 'CR (no %)'
+    default: return tier || '—'
+  }
+}
+
 export function openCancellationEmail(
   items: QuotedHop[],
   financeEmails: string[],
@@ -75,7 +90,7 @@ export function openCancellationEmail(
     + `so the original vendor's SPO should not also be paid out.\n\n`
   items.forEach(({ hop }) => {
     hop.unpaidTiers.forEach(t => {
-      body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  SPO #: ${t.spoNumber || '—'}  |  Vendor: ${hop.gc}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
+      body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  SPO #: ${t.spoNumber || '—'}  |  Vendor: ${hop.gc}  |  %: ${tierPercent(t.tier)}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
     })
   })
   body += `\nThank you,\nCJ`

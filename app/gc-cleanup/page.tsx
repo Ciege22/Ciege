@@ -15,7 +15,7 @@ import {
   loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
 import {
-  type QuotedHop, quotedHops, groupByNewGc, cancellableHops, openGcQuoteEmail, openCancellationEmail,
+  type QuotedHop, quotedHops, groupByNewGc, cancellableHops, openGcQuoteEmail, openCancellationEmail, tierPercent,
 } from '../lib/gcCleanupEmail'
 import { clusterByDistance, type GeoCluster } from '../lib/hopCoords'
 
@@ -333,7 +333,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                   <ul className="text-xs text-gray-400 space-y-0.5">
                     {cancellable.map(({ hop, assignment }) => (
                       <li key={hop.hop} className="flex justify-between gap-2">
-                        <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => t.spoNumber || '—').join(', ')} (vendor: {hop.gc})</span>
+                        <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)})`).join(', ')} (vendor: {hop.gc})</span>
                         <span className={assignment.financeEmailSentAt ? 'text-emerald-400' : 'text-amber-400'}>{fmtSent(assignment.financeEmailSentAt)}</span>
                       </li>
                     ))}
