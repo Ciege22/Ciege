@@ -43,7 +43,7 @@ export default function GcCleanupPage() {
   const [savingGcList, setSavingGcList] = useState(false)
   const [groups, setGroups] = useState<CleanupGroups | null>(null)
   const [assignments, setAssignments] = useState<Record<string, CleanupAssignment>>({})
-  const [openBucket, setOpenBucket] = useState<'fullyPaidButIncomplete' | 'all' | 'unpaid' | 'quoted' | 'pendingQuoting' | null>(null)
+  const [openBucket, setOpenBucket] = useState<'fullyPaidButIncomplete' | 'readyToRelease' | 'all' | 'unpaid' | 'quoted' | 'pendingQuoting' | null>(null)
   const [mapOpen, setMapOpen] = useState(false)
   const [emailCenterOpen, setEmailCenterOpen] = useState(false)
   const [radiusMiles, setRadiusMiles] = useState(DEFAULT_RADIUS_MILES)
@@ -150,6 +150,9 @@ export default function GcCleanupPage() {
           <Tile emoji="⚠️" label="Fully paid, Decom/SCOP incomplete" count={groups.fullyPaidButIncomplete.length}
             sub="no money left to reassign" warn={groups.fullyPaidButIncomplete.length > 0}
             onClick={() => setOpenBucket('fullyPaidButIncomplete')} />
+          <Tile emoji="📮" label="Ready to Release — just submit the GR" count={groups.readyToRelease.length}
+            sub={groups.readyToRelease.length === 0 ? 'nothing waiting' : `${fmtMoney(groups.readyToRelease.reduce((s, h) => s + h.unpaidValue, 0))} — Decom/SCOP already done`}
+            onClick={() => setOpenBucket('readyToRelease')} />
           <Tile emoji="💰" label="Total unpaid $ available" count={allHops.length} sub={fmtMoney(totalUnpaid)}
             onClick={() => setOpenBucket('unpaid')} />
           <Tile emoji="🗺️" label="Map & distance clusters" count={clusters.length || null}
@@ -166,6 +169,7 @@ export default function GcCleanupPage() {
           title={
             openBucket === 'all' ? `📋 All ${everyHop.length} HOPs`
             : openBucket === 'fullyPaidButIncomplete' ? '⚠️ Fully paid, Decom/SCOP still incomplete'
+            : openBucket === 'readyToRelease' ? '📮 Ready to Release — Decom/SCOP already done, just submit the GR'
             : openBucket === 'unpaid' ? '💰 Total unpaid $ available'
             : openBucket === 'quoted' ? '✅ Quoted'
             : '📝 Pending Quoting'
@@ -173,6 +177,7 @@ export default function GcCleanupPage() {
           rows={
             openBucket === 'all' ? everyHop
             : openBucket === 'fullyPaidButIncomplete' ? groups.fullyPaidButIncomplete
+            : openBucket === 'readyToRelease' ? groups.readyToRelease
             : openBucket === 'unpaid' ? allHops
             : openBucket === 'quoted' ? quotedCleanupHops
             : pendingQuotingHops
@@ -535,7 +540,7 @@ function BucketModal({ title, rows, assignments, onSaved, onClose }: {
             </thead>
             <tbody>
               {visible.map(h => (
-                h.unpaidValue > 0
+                h.needsReassignment
                   ? <CleanupRow key={h.hop} hop={h} assignment={assignments[h.hop]} onSaved={a => onSaved(h.hop, a)} />
                   : <ReadOnlyRow key={h.hop} hop={h} />
               ))}
@@ -602,18 +607,53 @@ function ScopCell({ hop }: { hop: CleanupHop }) {
   return <SiteStatusCell complete={hop.scopComplete} pendingSites={hop.scopPendingSites} />
 }
 
+// Unpaid $ + the itemized tier list — shared between the editable row and
+// the read-only one, since a "ready to release" HOP still has real unpaid $
+// and tiers to show, just nothing for a new GC to do about them.
+function UnpaidCells({ hop }: { hop: CleanupHop }) {
+  if (hop.unpaidTiers.length === 0) {
+    return (
+      <>
+        <td className="p-2 text-gray-500">—</td>
+        <td className="p-2 text-gray-600">—</td>
+      </>
+    )
+  }
+  return (
+    <>
+      <td className="p-2 text-emerald-300 font-semibold whitespace-nowrap">{fmtMoney(hop.unpaidValue)}</td>
+      <td className="p-2 w-56 max-w-[14rem] overflow-hidden">
+        {hop.unpaidTiers.map(t => {
+          const readyToRelease = t.reason.startsWith('Ready to release')
+          const full = `${t.tierLabel}: ${fmtMoney(t.value)}${t.reason ? ` — ${t.reason}` : ''}`
+          return (
+            // title gives the full text on hover; nothing is cut from the DOM
+            // so a drag-select still copies the whole line, only the ellipsis is visual.
+            <div key={t.tier} title={full} className="max-w-[14rem] overflow-hidden text-ellipsis whitespace-nowrap text-gray-400">
+              {t.tierLabel}: {fmtMoney(t.value)}
+              {t.reason && <span className={readyToRelease ? ' text-sky-400' : ' text-amber-400'}> — {t.reason}</span>}
+            </div>
+          )
+        })}
+      </td>
+    </>
+  )
+}
+
 function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
+  const note = hop.unpaidValue > 0
+    ? 'Decom + SCOP already complete — just needs the GR submitted, no new GC needed'
+    : 'Fully paid — no unpaid tier to reassign money against'
   return (
     <tr className="border-t border-gray-800 bg-gray-900">
       <td className="p-2 font-semibold text-white whitespace-nowrap">{hop.hopDisplay}</td>
       <td className="p-2 text-gray-400 whitespace-nowrap">{hop.pathId || '—'}</td>
       <td className="p-2 text-gray-300 whitespace-nowrap">{hop.gc}</td>
       <td className="p-2 text-gray-300 whitespace-nowrap">{fmtMoney(hop.paidValue)} / {fmtMoney(hop.totalValue)} ({hop.paidPct}%)</td>
-      <td className="p-2 text-gray-500">—</td>
-      <td className="p-2 text-gray-600">—</td>
+      <UnpaidCells hop={hop} />
       <DecomCell hop={hop} />
       <ScopCell hop={hop} />
-      <td colSpan={6} className="p-2 text-gray-600 text-center italic">Fully paid — no unpaid tier to reassign money against</td>
+      <td colSpan={6} className="p-2 text-gray-600 text-center italic">{note}</td>
     </tr>
   )
 }
@@ -660,21 +700,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
       <td className="p-2 text-gray-400 whitespace-nowrap">{hop.pathId || '—'}</td>
       <td className="p-2 text-gray-300 whitespace-nowrap">{hop.gc}</td>
       <td className="p-2 text-gray-300 whitespace-nowrap">{fmtMoney(hop.paidValue)} / {fmtMoney(hop.totalValue)} ({hop.paidPct}%)</td>
-      <td className="p-2 text-emerald-300 font-semibold whitespace-nowrap">{fmtMoney(hop.unpaidValue)}</td>
-      <td className="p-2 w-56 max-w-[14rem] overflow-hidden">
-        {hop.unpaidTiers.map(t => {
-          const readyToRelease = t.reason.startsWith('Ready to release')
-          const full = `${t.tierLabel}: ${fmtMoney(t.value)}${t.reason ? ` — ${t.reason}` : ''}`
-          return (
-            // title gives the full text on hover; nothing is cut from the DOM
-            // so a drag-select still copies the whole line, only the ellipsis is visual.
-            <div key={t.tier} title={full} className="max-w-[14rem] overflow-hidden text-ellipsis whitespace-nowrap text-gray-400">
-              {t.tierLabel}: {fmtMoney(t.value)}
-              {t.reason && <span className={readyToRelease ? ' text-sky-400' : ' text-amber-400'}> — {t.reason}</span>}
-            </div>
-          )
-        })}
-      </td>
+      <UnpaidCells hop={hop} />
       <DecomCell hop={hop} />
       <ScopCell hop={hop} />
       <td className="p-2">

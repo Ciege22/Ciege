@@ -145,6 +145,11 @@ export interface CleanupHop {
   // null when the tracker had no valid Latt./Long. for this HOP's sites —
   // excluded from the map and from clustering, never guessed at.
   coord: HopCoord | null
+  // False for fullyPaidButIncomplete (nothing unpaid to fund a new GC with)
+  // and readyToRelease (Decom + SCOP already both done — nothing left for a
+  // new GC to do, just a GR CJ submits himself). Drives whether a HOP's row
+  // is editable (Assign/Quote) or read-only.
+  needsReassignment: boolean
 }
 
 export interface CleanupGroups {
@@ -156,6 +161,12 @@ export interface CleanupGroups {
   // nobody is left to finish the paperwork. Not a money problem, but worth
   // surfacing so it doesn't quietly fall through the cracks.
   fullyPaidButIncomplete: CleanupHop[]
+  // The opposite case: Decom AND SCOP are both already complete, but the
+  // unpaid tier is still sitting there because nobody's submitted the GR
+  // yet. There's no clean-up work to reassign here — it only needs CJ to
+  // release the payment, so these are kept out of the quoting workflow
+  // entirely rather than looking like open work for a new GC.
+  readyToRelease: CleanupHop[]
 }
 
 function tierSortRank(tier: string): number {
@@ -196,7 +207,7 @@ export function buildCleanupHops(
     byHop.set(r.hop, [...(byHop.get(r.hop) ?? []), r])
   })
 
-  const groups: CleanupGroups = { not_started: [], mid_construction: [], cleanup_only: [], fullyPaidButIncomplete: [] }
+  const groups: CleanupGroups = { not_started: [], mid_construction: [], cleanup_only: [], fullyPaidButIncomplete: [], readyToRelease: [] }
 
   byHop.forEach((rows, hop) => {
     const totalValue = rows.reduce((s, r) => s + r.spoValue, 0)
@@ -232,10 +243,22 @@ export function buildCleanupHops(
       decomPendingSites: decomSiteNotes.get(hop) ?? [],
       scopPendingSites: scopSiteNotes.get(hop) ?? [],
       coord: coordMap.get(hop) ?? null,
+      needsReassignment: true, // default; the two early-exit branches below override it
     }
 
     if (unpaidValue <= 0) {
-      if (!cleanupHop.decomComplete || !cleanupHop.scopComplete) groups.fullyPaidButIncomplete.push(cleanupHop)
+      if (!cleanupHop.decomComplete || !cleanupHop.scopComplete) {
+        cleanupHop.needsReassignment = false
+        groups.fullyPaidButIncomplete.push(cleanupHop)
+      }
+      return
+    }
+    // Every unpaid tier is sitting there only because it hasn't been
+    // submitted yet — Decom and SCOP are both already done, so there's no
+    // actual clean-up work for a new GC, just a GR CJ needs to release.
+    if (cleanupHop.decomComplete && cleanupHop.scopComplete && unpaidTiers.every(t => t.reason.startsWith('Ready to release'))) {
+      cleanupHop.needsReassignment = false
+      groups.readyToRelease.push(cleanupHop)
       return
     }
     const hasUnpaidTier = (t: string) => unpaidTiers.some(u => u.tier === t)
@@ -250,6 +273,7 @@ export function buildCleanupHops(
   groups.mid_construction.sort(byValueDesc)
   groups.cleanup_only.sort(byValueDesc)
   groups.fullyPaidButIncomplete.sort((a, b) => a.hopDisplay.localeCompare(b.hopDisplay))
+  groups.readyToRelease.sort(byValueDesc)
   return groups
 }
 
