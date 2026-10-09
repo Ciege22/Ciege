@@ -42,7 +42,7 @@ export default function GcCleanupPage() {
   const [savingGcList, setSavingGcList] = useState(false)
   const [groups, setGroups] = useState<CleanupGroups | null>(null)
   const [assignments, setAssignments] = useState<Record<string, CleanupAssignment>>({})
-  const [openBucket, setOpenBucket] = useState<CleanupBucket | 'fullyPaidButIncomplete' | null>(null)
+  const [openBucket, setOpenBucket] = useState<CleanupBucket | 'fullyPaidButIncomplete' | 'all' | null>(null)
   const [mapOpen, setMapOpen] = useState(false)
   const [radiusMiles, setRadiusMiles] = useState(DEFAULT_RADIUS_MILES)
 
@@ -78,6 +78,9 @@ export default function GcCleanupPage() {
 
   const allHops = useMemo(() => groups ? [...groups.not_started, ...groups.mid_construction, ...groups.cleanup_only] : [], [groups])
   const totalUnpaid = useMemo(() => allHops.reduce((s, h) => s + h.unpaidValue, 0), [allHops])
+  // Every HOP the page shows anywhere, across all four tiles — the number
+  // CJ would otherwise have to add up from the tiles himself.
+  const everyHop = useMemo(() => groups ? [...allHops, ...groups.fullyPaidButIncomplete] : [], [groups, allHops])
 
   const clusters = useMemo<GeoCluster<CleanupHop>[]>(() => {
     const points = allHops.filter(h => h.coord).map(h => ({ item: h, coord: h.coord! }))
@@ -118,6 +121,9 @@ export default function GcCleanupPage() {
 
       {!loading && groups && departedGcs.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          <Tile emoji="📋" label="Total HOPs across every tile below" count={everyHop.length}
+            sub={`${departedGcs.length} GC${departedGcs.length === 1 ? '' : 's'} departed`}
+            onClick={() => setOpenBucket('all')} />
           {BUCKET_ORDER.map(bucket => (
             <Tile key={bucket} emoji={BUCKET_EMOJI[bucket]} label={BUCKET_LABELS[bucket]} count={groups[bucket].length}
               sub={fmtMoney(groups[bucket].reduce((s, h) => s + h.unpaidValue, 0))}
@@ -136,9 +142,12 @@ export default function GcCleanupPage() {
 
       {!loading && groups && openBucket && (
         <BucketModal
-          title={openBucket === 'fullyPaidButIncomplete' ? '⚠️ Fully paid, Decom/SCOP still incomplete' : BUCKET_LABELS[openBucket]}
-          rows={groups[openBucket]}
-          editable={openBucket !== 'fullyPaidButIncomplete'}
+          title={
+            openBucket === 'all' ? `📋 All ${everyHop.length} HOPs`
+            : openBucket === 'fullyPaidButIncomplete' ? '⚠️ Fully paid, Decom/SCOP still incomplete'
+            : BUCKET_LABELS[openBucket]
+          }
+          rows={openBucket === 'all' ? everyHop : groups[openBucket]}
           assignments={assignments}
           onSaved={(hop, a) => setAssignments(prev => ({ ...prev, [hop]: a }))}
           onClose={() => setOpenBucket(null)}
@@ -206,10 +215,9 @@ function cellValue(h: CleanupHop, col: FilterCol, assignments: Record<string, Cl
   return assignments[h.hop]?.status ?? 'Needs Quote'
 }
 
-function BucketModal({ title, rows, editable, assignments, onSaved, onClose }: {
+function BucketModal({ title, rows, assignments, onSaved, onClose }: {
   title: string
   rows: CleanupHop[]
-  editable: boolean
   assignments: Record<string, CleanupAssignment>
   onSaved: (hop: string, a: CleanupAssignment) => void
   onClose: () => void
@@ -277,22 +285,22 @@ function BucketModal({ title, rows, editable, assignments, onSaved, onClose }: {
                 <th className="text-left p-2 bg-gray-800">Unpaid tiers</th>
                 <FilterableHeader label="Decom" col="decom" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.decom} filters={filters} onApply={setColumnFilter} />
                 <FilterableHeader label="SCOP" col="scop" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.scop} filters={filters} onApply={setColumnFilter} />
-                {editable && <th className="text-left p-2 bg-gray-800">Assign new GC</th>}
-                {editable && <th className="text-left p-2 bg-gray-800">Their quote</th>}
-                {editable && <th className="text-left p-2 bg-gray-800">Gap</th>}
-                {editable && <FilterableHeader label="Status" col="status" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.status} filters={filters} onApply={setColumnFilter} />}
-                {editable && <th className="text-left p-2 bg-gray-800">Comment</th>}
-                {editable && <th className="text-left p-2 bg-gray-800">Save</th>}
+                <th className="text-left p-2 bg-gray-800">Assign new GC</th>
+                <th className="text-left p-2 bg-gray-800">Their quote</th>
+                <th className="text-left p-2 bg-gray-800">Gap</th>
+                <FilterableHeader label="Status" col="status" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.status} filters={filters} onApply={setColumnFilter} />
+                <th className="text-left p-2 bg-gray-800">Comment</th>
+                <th className="text-left p-2 bg-gray-800">Save</th>
               </tr>
             </thead>
             <tbody>
               {visible.map(h => (
-                editable
+                h.unpaidValue > 0
                   ? <CleanupRow key={h.hop} hop={h} assignment={assignments[h.hop]} onSaved={a => onSaved(h.hop, a)} />
                   : <ReadOnlyRow key={h.hop} hop={h} />
               ))}
               {visible.length === 0 && (
-                <tr><td colSpan={13} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
+                <tr><td colSpan={14} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
               )}
             </tbody>
           </table>
@@ -365,6 +373,7 @@ function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
       <td className="p-2 text-gray-600">—</td>
       <DecomCell hop={hop} />
       <ScopCell hop={hop} />
+      <td colSpan={6} className="p-2 text-gray-600 text-center italic">Fully paid — no unpaid tier to reassign money against</td>
     </tr>
   )
 }
