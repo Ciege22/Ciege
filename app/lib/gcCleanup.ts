@@ -132,12 +132,19 @@ export function buildCleanupHops(
   don444Hops: Set<string> | null = null,
   decomSiteNotes: Map<string, SiteNote[]> = new Map(),
   scopSiteNotes: Map<string, SiteNote[]> = new Map(),
+  // HOPs with an actual MS16 (Construction Complete) date in the tracker.
+  // CJ isn't ready to hold a GC accountable for Decom/SCOP on a HOP that
+  // isn't physically built yet — construction being unpaid (the mid/not-
+  // started buckets below) is a different problem from construction being
+  // incomplete, and this gate is specifically about the latter.
+  ms16aCompleteHops: Set<string> | null = null,
 ): CleanupGroups {
   const departedSet = new Set(departedGcs.map(g => g.trim().toLowerCase()))
   const byHop = new Map<string, GrRow[]>()
   grRows.forEach(r => {
     if (!departedSet.has(r.gc.trim().toLowerCase())) return
     if (don444Hops && !don444Hops.has(r.hop)) return
+    if (ms16aCompleteHops && !ms16aCompleteHops.has(r.hop)) return
     byHop.set(r.hop, [...(byHop.get(r.hop) ?? []), r])
   })
 
@@ -223,7 +230,10 @@ export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupG
   // is (see buildTrackerDateMap in grTracker.ts), so its key set is exactly
   // "current DON 444 HOPs."
   const don444Hops = new Set(trackerDateMap.keys())
-  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes)
+  const ms16aCompleteHops = new Set(
+    Array.from(trackerDateMap.entries()).filter(([, d]) => d.ms16a !== null).map(([key]) => key)
+  )
+  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes, ms16aCompleteHops)
 }
 
 // ─────────────────────────────────────────────

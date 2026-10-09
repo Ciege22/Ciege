@@ -102,7 +102,9 @@ export default function GcCleanupPage() {
       <h1 className="text-2xl font-bold mb-1">🧹 GC Clean-Up</h1>
       <p className="text-gray-400 text-sm mb-6">
         HOPs that belonged to a GC no longer on the program, with whatever SPO money is still unpaid on them —
-        that unpaid $ is what&apos;s available to pay someone else to finish the work.
+        that unpaid $ is what&apos;s available to pay someone else to finish the work. Only HOPs with an actual
+        MS16 Construction Complete date show up here — until construction is physically done, there&apos;s
+        nothing to hold a GC accountable for on Decom/SCOP yet.
       </p>
 
       <div className="bg-gray-900 rounded-xl border border-gray-700 p-4 mb-6">
