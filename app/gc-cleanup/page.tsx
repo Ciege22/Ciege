@@ -43,7 +43,7 @@ export default function GcCleanupPage() {
   const [savingGcList, setSavingGcList] = useState(false)
   const [groups, setGroups] = useState<CleanupGroups | null>(null)
   const [assignments, setAssignments] = useState<Record<string, CleanupAssignment>>({})
-  const [openBucket, setOpenBucket] = useState<'fullyPaidButIncomplete' | 'readyToRelease' | 'all' | 'unpaid' | 'quoted' | 'pendingQuoting' | null>(null)
+  const [openBucket, setOpenBucket] = useState<'fullyPaidButIncomplete' | 'all' | 'unpaid' | 'quoted' | 'pendingQuoting' | null>(null)
   const [mapOpen, setMapOpen] = useState(false)
   const [emailCenterOpen, setEmailCenterOpen] = useState(false)
   const [radiusMiles, setRadiusMiles] = useState(DEFAULT_RADIUS_MILES)
@@ -150,9 +150,6 @@ export default function GcCleanupPage() {
           <Tile emoji="⚠️" label="Fully paid, Decom/SCOP incomplete" count={groups.fullyPaidButIncomplete.length}
             sub="no money left to reassign" warn={groups.fullyPaidButIncomplete.length > 0}
             onClick={() => setOpenBucket('fullyPaidButIncomplete')} />
-          <Tile emoji="📮" label="Ready to Release — just submit the GR" count={groups.readyToRelease.length}
-            sub={groups.readyToRelease.length === 0 ? 'nothing waiting' : `${fmtMoney(groups.readyToRelease.reduce((s, h) => s + h.unpaidValue, 0))} — Decom/SCOP already done`}
-            onClick={() => setOpenBucket('readyToRelease')} />
           <Tile emoji="💰" label="Total unpaid $ available" count={allHops.length} sub={fmtMoney(totalUnpaid)}
             onClick={() => setOpenBucket('unpaid')} />
           <Tile emoji="🗺️" label="Map & distance clusters" count={clusters.length || null}
@@ -169,7 +166,6 @@ export default function GcCleanupPage() {
           title={
             openBucket === 'all' ? `📋 All ${everyHop.length} HOPs`
             : openBucket === 'fullyPaidButIncomplete' ? '⚠️ Fully paid, Decom/SCOP still incomplete'
-            : openBucket === 'readyToRelease' ? '📮 Ready to Release — Decom/SCOP already done, just submit the GR'
             : openBucket === 'unpaid' ? '💰 Total unpaid $ available'
             : openBucket === 'quoted' ? '✅ Quoted'
             : '📝 Pending Quoting'
@@ -177,7 +173,6 @@ export default function GcCleanupPage() {
           rows={
             openBucket === 'all' ? everyHop
             : openBucket === 'fullyPaidButIncomplete' ? groups.fullyPaidButIncomplete
-            : openBucket === 'readyToRelease' ? groups.readyToRelease
             : openBucket === 'unpaid' ? allHops
             : openBucket === 'quoted' ? quotedCleanupHops
             : pendingQuotingHops
