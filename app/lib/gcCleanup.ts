@@ -13,10 +13,26 @@ import {
 } from './grTracker'
 import { type HopCoord, buildHopCoordMap } from './hopCoords'
 import { parseDecomRows, STATUS_DISPLAY_LABEL } from './decom'
+import {
+  type ScopRow, buildScopDataset, keyScopRows, resolveScopCalcSettings,
+  buildItemizedMissingItems, PATHWAVE_ALL_ITEMS, QUICKBASE_ALL_ITEMS,
+} from './scop'
+import { DEFAULT_SCOP } from './settings'
 
 function matchKey(s: string): string {
   return s.trim().toLowerCase()
 }
+
+// Same combined list buildGCReport's internal engineering view would use —
+// every Pathwave and QuickBase item, not just the GC-owned subset, since
+// this page is CJ squaring things away himself, not a GC-facing report.
+// QuickBase items are prefixed: a few labels (e.g. "POD") exist in both
+// lists for genuinely different columns, and without the prefix they'd
+// show as an unreadable duplicate like "POD, POD".
+const ALL_SCOP_ITEMS = [
+  ...PATHWAVE_ALL_ITEMS,
+  ...QUICKBASE_ALL_ITEMS.map(item => ({ ...item, label: `QB: ${item.label}` })),
+]
 
 export type CleanupBucket = 'not_started' | 'mid_construction' | 'cleanup_only'
 
@@ -33,21 +49,32 @@ export interface UnpaidTier {
   reason: string
 }
 
-export interface DecomSiteNote {
+export interface SiteNote {
   siteName: string
   statusLabel: string
 }
 
 // Decom is tracked per physical site (a HOP has two), so decomComplete above
 // is already the HOP-level AND of both — this is the detail behind that
-// boolean: which site(s) are actually still outstanding. SCOP has no
-// equivalent — a SCOP row is already one per HOP, not per site.
-export function buildDecomSiteNotes(decomRawRows: unknown[][]): Map<string, DecomSiteNote[]> {
-  const out = new Map<string, DecomSiteNote[]>()
+// boolean: which site(s) are actually still outstanding.
+export function buildDecomSiteNotes(decomRawRows: unknown[][]): Map<string, SiteNote[]> {
+  const out = new Map<string, SiteNote[]>()
   parseDecomRows(decomRawRows).forEach(r => {
     if (!r.hop || r.status === 'complete') return
     const key = matchKey(normalizeTrackerHop(r.hop))
     out.set(key, [...(out.get(key) ?? []), { siteName: r.siteName, statusLabel: STATUS_DISPLAY_LABEL[r.status] }])
+  })
+  return out
+}
+
+// SCOP is one row per HOP (not per site), but each row still has a Site A
+// and Site B half of the checklist — this is which items are actually
+// outstanding on each half, the same itemization buildGCReport's email uses.
+export function buildScopSiteNotes(scopDataset: ScopRow[]): Map<string, SiteNote[]> {
+  const out = new Map<string, SiteNote[]>()
+  buildItemizedMissingItems(scopDataset.filter(r => !r.fullyComplete), ALL_SCOP_ITEMS).forEach(row => {
+    const key = matchKey(normalizeTrackerHop(row.hop))
+    out.set(key, [...(out.get(key) ?? []), { siteName: row.site, statusLabel: row.missingItems }])
   })
   return out
 }
@@ -67,7 +94,10 @@ export interface CleanupHop {
   scopComplete: boolean
   // Which site(s) still need Decom, when decomComplete is false — empty if
   // the HOP isn't in the Decom tracker at all (not the same as complete).
-  decomPendingSites: DecomSiteNote[]
+  decomPendingSites: SiteNote[]
+  // Which SCOP checklist item(s) are still outstanding, per site, when
+  // scopComplete is false.
+  scopPendingSites: SiteNote[]
   // null when the tracker had no valid Latt./Long. for this HOP's sites —
   // excluded from the map and from clustering, never guessed at.
   coord: HopCoord | null
@@ -97,7 +127,8 @@ export function buildCleanupHops(
   // dropped from DON 444 — a cancelled/removed site — has no business on a
   // quoting list even if old unpaid SPO rows for it still exist.
   don444Hops: Set<string> | null = null,
-  decomSiteNotes: Map<string, DecomSiteNote[]> = new Map(),
+  decomSiteNotes: Map<string, SiteNote[]> = new Map(),
+  scopSiteNotes: Map<string, SiteNote[]> = new Map(),
 ): CleanupGroups {
   const departedSet = new Set(departedGcs.map(g => g.trim().toLowerCase()))
   const byHop = new Map<string, GrRow[]>()
@@ -139,6 +170,7 @@ export function buildCleanupHops(
       decomComplete: status?.decomComplete ?? false,
       scopComplete: status?.scopComplete ?? false,
       decomPendingSites: decomSiteNotes.get(hop) ?? [],
+      scopPendingSites: scopSiteNotes.get(hop) ?? [],
       coord: coordMap.get(hop) ?? null,
     }
 
@@ -174,15 +206,20 @@ export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupG
   ])
   const spoRows: unknown[][] = spoResult.data?.data ? JSON.parse(spoResult.data.data) : []
   const trackerDateMap = trackerSnap ? buildTrackerDateMap(trackerSnap.data) : new Map<string, TrackerDates>()
-  const decomScopMap = buildDecomScopCompleteMap(decomReport?.rows ?? [], scopReport?.rows ?? [])
+  // Same calc settings fed to both the complete/incomplete boolean and the
+  // itemized detail below, so they can never disagree with each other.
+  const calc = resolveScopCalcSettings(DEFAULT_SCOP)
+  const decomScopMap = buildDecomScopCompleteMap(decomReport?.rows ?? [], scopReport?.rows ?? [], DEFAULT_SCOP)
   const coordMap = trackerSnap ? buildHopCoordMap(trackerSnap.data) : new Map<string, HopCoord>()
   const decomSiteNotes = buildDecomSiteNotes(decomReport?.rows ?? [])
+  const scopDataset = scopReport && scopReport.rows.length >= 2 ? buildScopDataset(keyScopRows(scopReport.rows), calc) : []
+  const scopSiteNotes = buildScopSiteNotes(scopDataset)
   const grRows = buildGrRows(spoRows, trackerDateMap, decomScopMap)
   // trackerDateMap is already DON 444-only and keyed the same way GrRow.hop
   // is (see buildTrackerDateMap in grTracker.ts), so its key set is exactly
   // "current DON 444 HOPs."
   const don444Hops = new Set(trackerDateMap.keys())
-  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes)
+  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes)
 }
 
 // ─────────────────────────────────────────────

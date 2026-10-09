@@ -10,7 +10,7 @@ import { GC_CONFIG } from '../lib/gcConfig'
 import { fmtMoney } from '../lib/grTracker'
 import { loadDepartedGcs, saveDepartedGcs } from '../lib/settings'
 import {
-  type CleanupBucket, type CleanupHop, type CleanupGroups, type CleanupAssignment,
+  type CleanupBucket, type CleanupHop, type CleanupGroups, type CleanupAssignment, type SiteNote,
   BUCKET_LABELS, CLEANUP_STATUS_OPTIONS,
   loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
@@ -328,15 +328,15 @@ function FilterableHeader({ label, col, openCol, setOpenCol, values, filters, on
 // Decom is tracked per physical site (a HOP has two) — the checkmark stays
 // HOP-level since that's what's quoted, but the pending site name(s) show
 // underneath so it's clear which end of the HOP still needs the work.
-function DecomCell({ hop }: { hop: CleanupHop }) {
-  if (hop.decomComplete) return <td className="p-2"><span className="text-green-400">✓</span></td>
+function SiteStatusCell({ complete, pendingSites }: { complete: boolean; pendingSites: SiteNote[] }) {
+  if (complete) return <td className="p-2"><span className="text-green-400">✓</span></td>
   return (
-    <td className="p-2 max-w-[10rem]">
+    <td className="p-2 max-w-[12rem]">
       <span className="text-red-400">✗</span>
-      {hop.decomPendingSites.length > 0 && (
+      {pendingSites.length > 0 && (
         <div className="mt-0.5 text-[10px] text-gray-500 leading-tight">
-          {hop.decomPendingSites.map(s => (
-            <div key={s.siteName} title={`${s.siteName}: ${s.statusLabel}`} className="max-w-[10rem] overflow-hidden text-ellipsis whitespace-nowrap">
+          {pendingSites.map((s, i) => (
+            <div key={`${s.siteName}-${i}`} title={`${s.siteName}: ${s.statusLabel}`} className="max-w-[12rem] overflow-hidden text-ellipsis whitespace-nowrap">
               {s.siteName}: {s.statusLabel}
             </div>
           ))}
@@ -344,6 +344,14 @@ function DecomCell({ hop }: { hop: CleanupHop }) {
       )}
     </td>
   )
+}
+
+function DecomCell({ hop }: { hop: CleanupHop }) {
+  return <SiteStatusCell complete={hop.decomComplete} pendingSites={hop.decomPendingSites} />
+}
+
+function ScopCell({ hop }: { hop: CleanupHop }) {
+  return <SiteStatusCell complete={hop.scopComplete} pendingSites={hop.scopPendingSites} />
 }
 
 function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
@@ -356,7 +364,7 @@ function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
       <td className="p-2 text-gray-500">—</td>
       <td className="p-2 text-gray-600">—</td>
       <DecomCell hop={hop} />
-      <td className="p-2">{hop.scopComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+      <ScopCell hop={hop} />
     </tr>
   )
 }
@@ -419,7 +427,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
         })}
       </td>
       <DecomCell hop={hop} />
-      <td className="p-2">{hop.scopComplete ? <span className="text-green-400">✓</span> : <span className="text-red-400">✗</span>}</td>
+      <ScopCell hop={hop} />
       <td className="p-2">
         <input list="gc-cleanup-roster" value={newGc} onChange={e => setNewGc(e.target.value)} placeholder="New GC…"
           className="w-36 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
