@@ -10,8 +10,8 @@ import { GC_CONFIG } from '../lib/gcConfig'
 import { fmtMoney } from '../lib/grTracker'
 import { loadDepartedGcs, saveDepartedGcs, loadEmailSettings, type EmailSettings } from '../lib/settings'
 import {
-  type CleanupBucket, type CleanupHop, type CleanupGroups, type CleanupAssignment, type SiteNote,
-  BUCKET_LABELS, CLEANUP_STATUS_OPTIONS,
+  type CleanupHop, type CleanupGroups, type CleanupAssignment, type SiteNote,
+  CLEANUP_STATUS_OPTIONS,
   loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
 import {
@@ -26,8 +26,6 @@ const CleanupMap = dynamicImport(() => import('./CleanupMap'), {
   loading: () => <div className="flex items-center justify-center h-[60vh] text-gray-400 text-sm">Loading map…</div>,
 })
 
-const BUCKET_ORDER: CleanupBucket[] = ['cleanup_only', 'mid_construction', 'not_started']
-const BUCKET_EMOJI: Record<CleanupBucket, string> = { cleanup_only: '🧾', mid_construction: '🏗️', not_started: '🚧' }
 const DEFAULT_RADIUS_MILES = 100
 
 type FilterCol = 'gc' | 'decom' | 'scop' | 'status'
@@ -45,7 +43,7 @@ export default function GcCleanupPage() {
   const [savingGcList, setSavingGcList] = useState(false)
   const [groups, setGroups] = useState<CleanupGroups | null>(null)
   const [assignments, setAssignments] = useState<Record<string, CleanupAssignment>>({})
-  const [openBucket, setOpenBucket] = useState<CleanupBucket | 'fullyPaidButIncomplete' | 'all' | null>(null)
+  const [openBucket, setOpenBucket] = useState<'fullyPaidButIncomplete' | 'all' | 'unpaid' | 'quoted' | 'pendingQuoting' | null>(null)
   const [mapOpen, setMapOpen] = useState(false)
   const [emailCenterOpen, setEmailCenterOpen] = useState(false)
   const [radiusMiles, setRadiusMiles] = useState(DEFAULT_RADIUS_MILES)
@@ -90,6 +88,14 @@ export default function GcCleanupPage() {
   // visible inside the Email Center (so nothing's lost) but shouldn't inflate
   // the "needs action" badge.
   const notYetGcEmailed = useMemo(() => quoted.filter(q => !q.assignment.gcEmailSentAt), [quoted])
+  // "Quoted" / "Pending Quoting" is a strict partition of every HOP on the
+  // page — same quote-entered definition the Email Center uses — so the two
+  // always add up to the Total HOPs tile.
+  const quotedCleanupHops = useMemo(() => quoted.map(q => q.hop), [quoted])
+  const pendingQuotingHops = useMemo(() => {
+    const quotedKeys = new Set(quotedCleanupHops.map(h => h.hop))
+    return everyHop.filter(h => !quotedKeys.has(h.hop))
+  }, [everyHop, quotedCleanupHops])
 
   const clusters = useMemo<GeoCluster<CleanupHop>[]>(() => {
     const points = allHops.filter(h => h.coord).map(h => ({ item: h, coord: h.coord! }))
@@ -135,16 +141,17 @@ export default function GcCleanupPage() {
           <Tile emoji="📋" label="Total HOPs across every tile below" count={everyHop.length}
             sub={`${departedGcs.length} GC${departedGcs.length === 1 ? '' : 's'} departed`}
             onClick={() => setOpenBucket('all')} />
-          {BUCKET_ORDER.map(bucket => (
-            <Tile key={bucket} emoji={BUCKET_EMOJI[bucket]} label={BUCKET_LABELS[bucket]} count={groups[bucket].length}
-              sub={fmtMoney(groups[bucket].reduce((s, h) => s + h.unpaidValue, 0))}
-              onClick={() => setOpenBucket(bucket)} />
-          ))}
+          <Tile emoji="✅" label="Quoted" count={quotedCleanupHops.length}
+            sub={fmtMoney(quoted.reduce((s, q) => s + (q.assignment.quote ?? 0), 0))}
+            onClick={() => setOpenBucket('quoted')} />
+          <Tile emoji="📝" label="Pending Quoting" count={pendingQuotingHops.length}
+            sub={fmtMoney(pendingQuotingHops.reduce((s, h) => s + h.unpaidValue, 0))}
+            onClick={() => setOpenBucket('pendingQuoting')} />
           <Tile emoji="⚠️" label="Fully paid, Decom/SCOP incomplete" count={groups.fullyPaidButIncomplete.length}
             sub="no money left to reassign" warn={groups.fullyPaidButIncomplete.length > 0}
             onClick={() => setOpenBucket('fullyPaidButIncomplete')} />
-          <Tile emoji="💰" label="Total unpaid $ available" count={null} sub={fmtMoney(totalUnpaid)}
-            onClick={() => setOpenBucket('cleanup_only')} />
+          <Tile emoji="💰" label="Total unpaid $ available" count={allHops.length} sub={fmtMoney(totalUnpaid)}
+            onClick={() => setOpenBucket('unpaid')} />
           <Tile emoji="🗺️" label="Map & distance clusters" count={clusters.length || null}
             sub={unmapped > 0 ? `${unmapped} HOP(s) have no coordinates` : `within ${radiusMiles}mi`}
             onClick={() => setMapOpen(true)} />
@@ -159,9 +166,17 @@ export default function GcCleanupPage() {
           title={
             openBucket === 'all' ? `📋 All ${everyHop.length} HOPs`
             : openBucket === 'fullyPaidButIncomplete' ? '⚠️ Fully paid, Decom/SCOP still incomplete'
-            : BUCKET_LABELS[openBucket]
+            : openBucket === 'unpaid' ? '💰 Total unpaid $ available'
+            : openBucket === 'quoted' ? '✅ Quoted'
+            : '📝 Pending Quoting'
           }
-          rows={openBucket === 'all' ? everyHop : groups[openBucket]}
+          rows={
+            openBucket === 'all' ? everyHop
+            : openBucket === 'fullyPaidButIncomplete' ? groups.fullyPaidButIncomplete
+            : openBucket === 'unpaid' ? allHops
+            : openBucket === 'quoted' ? quotedCleanupHops
+            : pendingQuotingHops
+          }
           assignments={assignments}
           onSaved={(hop, a) => setAssignments(prev => ({ ...prev, [hop]: a }))}
           onClose={() => setOpenBucket(null)}
