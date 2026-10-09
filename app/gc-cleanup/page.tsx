@@ -88,6 +88,7 @@ export default function GcCleanupPage() {
   // visible inside the Email Center (so nothing's lost) but shouldn't inflate
   // the "needs action" badge.
   const notYetGcEmailed = useMemo(() => quoted.filter(q => !q.assignment.gcEmailSentAt), [quoted])
+  const readyToReleaseToNewGcCount = useMemo(() => quoted.filter(q => q.assignment.newGcSpoNumber?.trim()).length, [quoted])
   // "Quoted" / "Pending Quoting" is a strict partition of every HOP on the
   // page — same quote-entered definition the Email Center uses — so the two
   // always add up to the Total HOPs tile.
@@ -142,7 +143,7 @@ export default function GcCleanupPage() {
             sub={`${departedGcs.length} GC${departedGcs.length === 1 ? '' : 's'} departed`}
             onClick={() => setOpenBucket('all')} />
           <Tile emoji="✅" label="Quoted" count={quotedCleanupHops.length}
-            sub={fmtMoney(quoted.reduce((s, q) => s + (q.assignment.quote ?? 0), 0))}
+            sub={`${fmtMoney(quoted.reduce((s, q) => s + (q.assignment.quote ?? 0), 0))}${readyToReleaseToNewGcCount > 0 ? ` · ${readyToReleaseToNewGcCount} ready to release` : ''}`}
             onClick={() => setOpenBucket('quoted')} />
           <Tile emoji="📝" label="Pending Quoting" count={pendingQuotingHops.length}
             sub={fmtMoney(pendingQuotingHops.reduce((s, h) => s + h.unpaidValue, 0))}
@@ -527,6 +528,7 @@ function BucketModal({ title, rows, assignments, onSaved, onClose }: {
                 <FilterableHeader label="SCOP" col="scop" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.scop} filters={filters} onApply={setColumnFilter} />
                 <th className="text-left p-2 bg-gray-800">Assign new GC</th>
                 <th className="text-left p-2 bg-gray-800">Their quote</th>
+                <th className="text-left p-2 bg-gray-800">New GC SPO #</th>
                 <th className="text-left p-2 bg-gray-800">Gap</th>
                 <FilterableHeader label="Status" col="status" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.status} filters={filters} onApply={setColumnFilter} />
                 <th className="text-left p-2 bg-gray-800">Comment</th>
@@ -540,7 +542,7 @@ function BucketModal({ title, rows, assignments, onSaved, onClose }: {
                   : <ReadOnlyRow key={h.hop} hop={h} />
               ))}
               {visible.length === 0 && (
-                <tr><td colSpan={14} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
+                <tr><td colSpan={15} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
               )}
             </tbody>
           </table>
@@ -648,7 +650,7 @@ function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
       <UnpaidCells hop={hop} />
       <DecomCell hop={hop} />
       <ScopCell hop={hop} />
-      <td colSpan={6} className="p-2 text-gray-600 text-center italic">{note}</td>
+      <td colSpan={7} className="p-2 text-gray-600 text-center italic">{note}</td>
     </tr>
   )
 }
@@ -660,6 +662,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
 }) {
   const [newGc, setNewGc] = useState(assignment?.newGc ?? '')
   const [quote, setQuote] = useState(assignment?.quote != null ? String(assignment.quote) : '')
+  const [newGcSpoNumber, setNewGcSpoNumber] = useState(assignment?.newGcSpoNumber ?? '')
   const [status, setStatus] = useState(assignment?.status ?? 'Needs Quote')
   const [comment, setComment] = useState(assignment?.comment ?? '')
   const [saving, setSaving] = useState(false)
@@ -668,7 +671,9 @@ function CleanupRow({ hop, assignment, onSaved }: {
 
   const quoteNum = quote.trim() === '' ? null : Number(quote)
   const gap = quoteNum != null && !Number.isNaN(quoteNum) ? quoteNum - hop.unpaidValue : null
+  const readyToReleaseToNewGc = newGcSpoNumber.trim() !== '' && quoteNum != null
   const isDirty = newGc !== (assignment?.newGc ?? '') || quote !== (assignment?.quote != null ? String(assignment.quote) : '')
+    || newGcSpoNumber !== (assignment?.newGcSpoNumber ?? '')
     || status !== (assignment?.status ?? 'Needs Quote') || comment !== (assignment?.comment ?? '')
 
   async function save() {
@@ -676,7 +681,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
     setSaveError(null)
     try {
       const saved = await saveCleanupAssignment(hop.hop, {
-        newGc, status,
+        newGc, status, newGcSpoNumber,
         quote: quoteNum != null && !Number.isNaN(quoteNum) ? quoteNum : null,
         comment,
       })
@@ -705,6 +710,13 @@ function CleanupRow({ hop, assignment, onSaved }: {
       <td className="p-2">
         <input type="number" value={quote} onChange={e => setQuote(e.target.value)} placeholder="$"
           className="w-24 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+        {readyToReleaseToNewGc && (
+          <div className="mt-1 text-[10px] text-emerald-400 whitespace-nowrap">✅ Ready to release to {newGc || 'new GC'}</div>
+        )}
+      </td>
+      <td className="p-2">
+        <input value={newGcSpoNumber} onChange={e => setNewGcSpoNumber(e.target.value)} placeholder="SPO #…"
+          className="w-28 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
       </td>
       <td className={`p-2 font-semibold whitespace-nowrap ${gap == null ? 'text-gray-600' : gap > 0 ? 'text-red-400' : 'text-green-400'}`}>
         {gap == null ? '—' : gap > 0 ? `Short ${fmtMoney(gap)}` : `Covers +${fmtMoney(-gap)}`}

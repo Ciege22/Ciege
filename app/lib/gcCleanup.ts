@@ -332,10 +332,15 @@ export interface CleanupAssignment {
   // against, not just a form field.
   gcEmailSentAt: string
   financeEmailSentAt: string
+  // The SPO Nokia issues to the NEW GC once they're confirmed on the quoted
+  // clean-up work — separate from the ORIGINAL GC's SPO (what the
+  // cancellation email targets). Once this is filled in, the quoted $ is
+  // money ready to release to the new GC.
+  newGcSpoNumber: string
 }
 
 export const EMPTY_ASSIGNMENT: CleanupAssignment = {
-  newGc: '', quote: null, comment: '', status: 'Needs Quote', updatedAt: '',
+  newGc: '', quote: null, comment: '', status: 'Needs Quote', updatedAt: '', newGcSpoNumber: '',
   gcEmailSentAt: '', financeEmailSentAt: '',
 }
 
