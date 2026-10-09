@@ -86,6 +86,10 @@ export default function GcCleanupPage() {
   // CJ would otherwise have to add up from the tiles himself.
   const everyHop = useMemo(() => groups ? [...allHops, ...groups.fullyPaidButIncomplete] : [], [groups, allHops])
   const quoted = useMemo(() => quotedHops(everyHop, assignments), [everyHop, assignments])
+  // The tile only counts what still needs a GC email — already-sent ones stay
+  // visible inside the Email Center (so nothing's lost) but shouldn't inflate
+  // the "needs action" badge.
+  const notYetGcEmailed = useMemo(() => quoted.filter(q => !q.assignment.gcEmailSentAt), [quoted])
 
   const clusters = useMemo<GeoCluster<CleanupHop>[]>(() => {
     const points = allHops.filter(h => h.coord).map(h => ({ item: h, coord: h.coord! }))
@@ -144,8 +148,8 @@ export default function GcCleanupPage() {
           <Tile emoji="🗺️" label="Map & distance clusters" count={clusters.length || null}
             sub={unmapped > 0 ? `${unmapped} HOP(s) have no coordinates` : `within ${radiusMiles}mi`}
             onClick={() => setMapOpen(true)} />
-          <Tile emoji="📧" label="Ready to email — quoted HOPs" count={quoted.length}
-            sub={quoted.length === 0 ? 'assign a GC + quote first' : `${groupByNewGc(quoted).length} GC(s) to email`}
+          <Tile emoji="📧" label="Ready to email — quoted HOPs" count={notYetGcEmailed.length}
+            sub={notYetGcEmailed.length === 0 ? (quoted.length === 0 ? 'assign a GC + quote first' : 'all caught up — nothing new to email') : `${groupByNewGc(notYetGcEmailed).length} GC(s) to email`}
             onClick={() => setEmailCenterOpen(true)} />
         </div>
       )}
@@ -228,24 +232,30 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
   const [sendingGc, setSendingGc] = useState<string | null>(null)
   const [sendingFinance, setSendingFinance] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // Off by default: once a HOP's been emailed it drops out of view instead of
+  // piling up here, so this stays "what's new" rather than a growing log.
+  const [showSent, setShowSent] = useState(false)
 
   useEffect(() => {
     loadEmailSettings().then(setEmailSettings).catch(() => setEmailSettings(null))
   }, [])
 
   const gcGroups = groupByNewGc(quoted)
-  const cancellable = cancellableHops(quoted)
+  const cancellableAll = cancellableHops(quoted)
 
+  // Sending an email is also CJ's own signal that this HOP moved past "just
+  // quoted" — advances status unless he's already manually marked it Complete.
   async function stampSent(items: QuotedHop[], field: 'gcEmailSentAt' | 'financeEmailSentAt') {
     const stampedAt = new Date().toISOString()
-    for (const { hop } of items) {
-      const saved = await saveCleanupAssignment(hop.hop, { [field]: stampedAt })
+    for (const { hop, assignment } of items) {
+      const status = assignment.status === 'Complete' ? 'Complete' : 'Assigned'
+      const saved = await saveCleanupAssignment(hop.hop, { [field]: stampedAt, status })
       onSaved(hop.hop, saved)
     }
   }
 
   async function handleEmailGc(newGc: string, items: QuotedHop[]) {
-    if (!emailSettings) return
+    if (!emailSettings || items.length === 0) return
     setSendingGc(newGc)
     setError(null)
     try {
@@ -258,13 +268,13 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
     }
   }
 
-  async function handleEmailFinance() {
-    if (!emailSettings) return
+  async function handleEmailFinance(items: QuotedHop[]) {
+    if (!emailSettings || items.length === 0) return
     setSendingFinance(true)
     setError(null)
     try {
-      openCancellationEmail(cancellable, emailSettings.financeEmails, emailSettings.routing)
-      await stampSent(cancellable, 'financeEmailSentAt')
+      openCancellationEmail(items, emailSettings.financeEmails, emailSettings.routing)
+      await stampSent(items, 'financeEmailSentAt')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'The email opened, but stamping it as sent failed — try again so it stays tracked.')
     } finally {
@@ -272,12 +282,21 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
     }
   }
 
+  const sentGcCount = quoted.filter(q => q.assignment.gcEmailSentAt).length
+  const sentFinanceCount = cancellableAll.filter(q => q.assignment.financeEmailSentAt).length
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 sticky top-0 bg-gray-900">
           <h2 className="text-white font-semibold text-lg">📧 Email Center — {quoted.length} quoted HOP{quoted.length === 1 ? '' : 's'}</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+              <input type="checkbox" checked={showSent} onChange={e => setShowSent(e.target.checked)} />
+              Show already-emailed ({sentGcCount} GC, {sentFinanceCount} finance)
+            </label>
+            <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+          </div>
         </div>
         <div className="p-6 space-y-6">
           {error && <p className="bg-red-950 border border-red-700 text-red-200 text-sm rounded-lg p-3">{error}</p>}
@@ -289,27 +308,52 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
             <div>
               <h3 className="text-sm font-semibold text-gray-300 mb-2">Quote confirmation — one email per GC</h3>
               <div className="space-y-3">
-                {gcGroups.map(({ newGc, items }) => (
-                  <div key={newGc} className="bg-gray-800 rounded-lg border border-gray-700 p-3">
-                    <div className="flex items-center justify-between mb-2">
-                      <p className="text-sm font-semibold text-white">
-                        {newGc} — {items.length} HOP{items.length === 1 ? '' : 's'} · {fmtMoney(items.reduce((s, i) => s + (i.assignment.quote ?? 0), 0))}
-                      </p>
-                      <button onClick={() => handleEmailGc(newGc, items)} disabled={sendingGc === newGc || !emailSettings}
-                        className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 rounded">
-                        {sendingGc === newGc ? 'Opening…' : `✉️ Email ${newGc}`}
-                      </button>
+                {gcGroups.map(({ newGc, items }) => {
+                  const pending = items.filter(i => !i.assignment.gcEmailSentAt)
+                  const sent = items.filter(i => i.assignment.gcEmailSentAt)
+                  if (pending.length === 0 && !showSent) return null
+                  return (
+                    <div key={newGc} className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+                      <div className="flex items-center justify-between mb-2 gap-3">
+                        <p className="text-sm font-semibold text-white">
+                          {newGc} — {pending.length} new{sent.length > 0 ? `, ${sent.length} already sent` : ''}
+                          {pending.length > 0 && <> · {fmtMoney(pending.reduce((s, i) => s + (i.assignment.quote ?? 0), 0))}</>}
+                        </p>
+                        {pending.length > 0 ? (
+                          <button onClick={() => handleEmailGc(newGc, pending)} disabled={sendingGc === newGc || !emailSettings}
+                            className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 rounded whitespace-nowrap">
+                            {sendingGc === newGc ? 'Opening…' : `✉️ Email ${newGc} (${pending.length})`}
+                          </button>
+                        ) : (
+                          <button onClick={() => handleEmailGc(newGc, sent)} disabled={sendingGc === newGc || !emailSettings}
+                            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-gray-200 text-xs font-semibold px-3 py-1.5 rounded whitespace-nowrap">
+                            {sendingGc === newGc ? 'Opening…' : 'Re-email anyway'}
+                          </button>
+                        )}
+                      </div>
+                      {pending.length > 0 && (
+                        <ul className="text-xs text-gray-400 space-y-0.5">
+                          {pending.map(({ hop, assignment }) => (
+                            <li key={hop.hop} className="flex justify-between gap-2">
+                              <span>{hop.hopDisplay} <span className="text-gray-600">({hop.pathId || '—'})</span> — {fmtMoney(assignment.quote ?? 0)}</span>
+                              <span className="text-amber-400">not sent</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {showSent && sent.length > 0 && (
+                        <ul className={`text-xs text-gray-500 space-y-0.5 ${pending.length > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}`}>
+                          {sent.map(({ hop, assignment }) => (
+                            <li key={hop.hop} className="flex justify-between gap-2">
+                              <span>{hop.hopDisplay} ({hop.pathId || '—'}) — {fmtMoney(assignment.quote ?? 0)}</span>
+                              <span className="text-emerald-400">{fmtSent(assignment.gcEmailSentAt)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
                     </div>
-                    <ul className="text-xs text-gray-400 space-y-0.5">
-                      {items.map(({ hop, assignment }) => (
-                        <li key={hop.hop} className="flex justify-between gap-2">
-                          <span>{hop.hopDisplay} <span className="text-gray-600">({hop.pathId || '—'})</span> — {fmtMoney(assignment.quote ?? 0)}</span>
-                          <span className={assignment.gcEmailSentAt ? 'text-emerald-400' : 'text-amber-400'}>{fmtSent(assignment.gcEmailSentAt)}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )}
@@ -317,28 +361,57 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
           {quoted.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold text-gray-300 mb-2">SPO cancellation — one email to Finance</h3>
-              {cancellable.length === 0 ? (
+              {cancellableAll.length === 0 ? (
                 <p className="text-gray-500 text-xs">None of the quoted HOPs have an unpaid SPO left — nothing for Finance to cancel.</p>
               ) : (
-                <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-sm font-semibold text-white">
-                      {cancellable.length} HOP{cancellable.length === 1 ? '' : 's'} · {cancellable.reduce((s, i) => s + i.hop.unpaidTiers.length, 0)} SPO(s) to cancel
-                    </p>
-                    <button onClick={handleEmailFinance} disabled={sendingFinance || !emailSettings}
-                      className="bg-red-800 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 rounded">
-                      {sendingFinance ? 'Opening…' : '✉️ Email Finance — cancel SPOs'}
-                    </button>
-                  </div>
-                  <ul className="text-xs text-gray-400 space-y-0.5">
-                    {cancellable.map(({ hop, assignment }) => (
-                      <li key={hop.hop} className="flex justify-between gap-2">
-                        <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)})`).join(', ')} (vendor: {hop.gc})</span>
-                        <span className={assignment.financeEmailSentAt ? 'text-emerald-400' : 'text-amber-400'}>{fmtSent(assignment.financeEmailSentAt)}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+                (() => {
+                  const pending = cancellableAll.filter(i => !i.assignment.financeEmailSentAt)
+                  const sent = cancellableAll.filter(i => i.assignment.financeEmailSentAt)
+                  if (pending.length === 0 && !showSent) {
+                    return <p className="text-gray-500 text-xs">All {sent.length} cancellable HOP{sent.length === 1 ? '' : 's'} already emailed to Finance — check &quot;Show already-emailed&quot; above to review or resend.</p>
+                  }
+                  return (
+                    <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+                      <div className="flex items-center justify-between mb-2 gap-3">
+                        <p className="text-sm font-semibold text-white">
+                          {pending.length} new{sent.length > 0 ? `, ${sent.length} already sent` : ''}
+                          {pending.length > 0 && <> · {pending.reduce((s, i) => s + i.hop.unpaidTiers.length, 0)} SPO(s) to cancel</>}
+                        </p>
+                        {pending.length > 0 ? (
+                          <button onClick={() => handleEmailFinance(pending)} disabled={sendingFinance || !emailSettings}
+                            className="bg-red-800 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 rounded whitespace-nowrap">
+                            {sendingFinance ? 'Opening…' : `✉️ Email Finance (${pending.length})`}
+                          </button>
+                        ) : (
+                          <button onClick={() => handleEmailFinance(sent)} disabled={sendingFinance || !emailSettings}
+                            className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-gray-200 text-xs font-semibold px-3 py-1.5 rounded whitespace-nowrap">
+                            {sendingFinance ? 'Opening…' : 'Re-email anyway'}
+                          </button>
+                        )}
+                      </div>
+                      {pending.length > 0 && (
+                        <ul className="text-xs text-gray-400 space-y-0.5">
+                          {pending.map(({ hop }) => (
+                            <li key={hop.hop} className="flex justify-between gap-2">
+                              <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)})`).join(', ')} (vendor: {hop.gc})</span>
+                              <span className="text-amber-400">not sent</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      {showSent && sent.length > 0 && (
+                        <ul className={`text-xs text-gray-500 space-y-0.5 ${pending.length > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}`}>
+                          {sent.map(({ hop, assignment }) => (
+                            <li key={hop.hop} className="flex justify-between gap-2">
+                              <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)})`).join(', ')} (vendor: {hop.gc})</span>
+                              <span className="text-emerald-400">{fmtSent(assignment.financeEmailSentAt)}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )
+                })()
               )}
             </div>
           )}
