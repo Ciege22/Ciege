@@ -47,6 +47,9 @@ export interface UnpaidTier {
   tierLabel: string
   value: number
   reason: string
+  // The original (departed) GC's own SPO for this tier — what Finance
+  // cancels once the work is reassigned, so it isn't paid out twice.
+  spoNumber: string
 }
 
 export interface SiteNote {
@@ -154,6 +157,7 @@ export function buildCleanupHops(
         tierLabel: r.tierLabel,
         value: r.spoValue,
         reason: r.pendingReason || (r.status === 'Ready to Release' ? 'Ready to release — not yet submitted' : ''),
+        spoNumber: r.spoNumber,
       }))
     const status = decomScopMap.get(hop)
     const cleanupHop: CleanupHop = {
@@ -238,9 +242,18 @@ export interface CleanupAssignment {
   comment: string
   status: CleanupStatus
   updatedAt: string
+  // '' until the quote-confirmation email to the new GC / the SPO-cancellation
+  // email to Finance has actually been sent — stamped by gcCleanupEmail.ts
+  // right after the mailto opens, so these read as a sent log to follow up
+  // against, not just a form field.
+  gcEmailSentAt: string
+  financeEmailSentAt: string
 }
 
-export const EMPTY_ASSIGNMENT: CleanupAssignment = { newGc: '', quote: null, comment: '', status: 'Needs Quote', updatedAt: '' }
+export const EMPTY_ASSIGNMENT: CleanupAssignment = {
+  newGc: '', quote: null, comment: '', status: 'Needs Quote', updatedAt: '',
+  gcEmailSentAt: '', financeEmailSentAt: '',
+}
 
 const ASSIGNMENTS_ID = 'gc-cleanup-assignments'
 

@@ -58,6 +58,8 @@ export const EMAIL_TYPES: EmailTypeConfig[] = [
   { id: 'ntpEmailNokia', label: 'NTP Tracker — Nokia Action Required', hasBaseTo: false },
   { id: 'ntpEmailItw', label: 'NTP Tracker — ITW/Samsung Action Required', hasBaseTo: false },
   { id: 'spoRequestEmail', label: 'SPO Requests — Batch Email to Team', hasBaseTo: false },
+  { id: 'gcCleanupQuoteEmail', label: 'GC Clean-Up — Quote Confirmation to New GC', hasBaseTo: false },
+  { id: 'gcCleanupCancelEmail', label: 'GC Clean-Up — SPO Cancellation to Finance', hasBaseTo: true },
 ]
 
 export interface EmailRouting {

@@ -8,12 +8,15 @@ import BackToDashboard from '../components/BackToDashboard'
 import ColumnFilterMenu from '../components/ColumnFilterMenu'
 import { GC_CONFIG } from '../lib/gcConfig'
 import { fmtMoney } from '../lib/grTracker'
-import { loadDepartedGcs, saveDepartedGcs } from '../lib/settings'
+import { loadDepartedGcs, saveDepartedGcs, loadEmailSettings, type EmailSettings } from '../lib/settings'
 import {
   type CleanupBucket, type CleanupHop, type CleanupGroups, type CleanupAssignment, type SiteNote,
   BUCKET_LABELS, CLEANUP_STATUS_OPTIONS,
   loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
+import {
+  type QuotedHop, quotedHops, groupByNewGc, cancellableHops, openGcQuoteEmail, openCancellationEmail,
+} from '../lib/gcCleanupEmail'
 import { clusterByDistance, type GeoCluster } from '../lib/hopCoords'
 
 // Leaflet touches `window` at import time — see app/map/page.tsx for the
@@ -44,6 +47,7 @@ export default function GcCleanupPage() {
   const [assignments, setAssignments] = useState<Record<string, CleanupAssignment>>({})
   const [openBucket, setOpenBucket] = useState<CleanupBucket | 'fullyPaidButIncomplete' | 'all' | null>(null)
   const [mapOpen, setMapOpen] = useState(false)
+  const [emailCenterOpen, setEmailCenterOpen] = useState(false)
   const [radiusMiles, setRadiusMiles] = useState(DEFAULT_RADIUS_MILES)
 
   async function loadAll(gcs: string[]) {
@@ -81,6 +85,7 @@ export default function GcCleanupPage() {
   // Every HOP the page shows anywhere, across all four tiles — the number
   // CJ would otherwise have to add up from the tiles himself.
   const everyHop = useMemo(() => groups ? [...allHops, ...groups.fullyPaidButIncomplete] : [], [groups, allHops])
+  const quoted = useMemo(() => quotedHops(everyHop, assignments), [everyHop, assignments])
 
   const clusters = useMemo<GeoCluster<CleanupHop>[]>(() => {
     const points = allHops.filter(h => h.coord).map(h => ({ item: h, coord: h.coord! }))
@@ -137,6 +142,9 @@ export default function GcCleanupPage() {
           <Tile emoji="🗺️" label="Map & distance clusters" count={clusters.length || null}
             sub={unmapped > 0 ? `${unmapped} HOP(s) have no coordinates` : `within ${radiusMiles}mi`}
             onClick={() => setMapOpen(true)} />
+          <Tile emoji="📧" label="Ready to email — quoted HOPs" count={quoted.length}
+            sub={quoted.length === 0 ? 'assign a GC + quote first' : `${groupByNewGc(quoted).length} GC(s) to email`}
+            onClick={() => setEmailCenterOpen(true)} />
         </div>
       )}
 
@@ -192,6 +200,148 @@ export default function GcCleanupPage() {
           </div>
         </div>
       )}
+
+      {emailCenterOpen && (
+        <EmailCenterModal
+          quoted={quoted}
+          onSaved={(hop, a) => setAssignments(prev => ({ ...prev, [hop]: a }))}
+          onClose={() => setEmailCenterOpen(false)}
+        />
+      )}
+    </div>
+  )
+}
+
+function fmtSent(iso: string): string {
+  if (!iso) return 'not sent'
+  return new Date(iso).toLocaleString([], { month: 'numeric', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+function EmailCenterModal({ quoted, onSaved, onClose }: {
+  quoted: QuotedHop[]
+  onSaved: (hop: string, a: CleanupAssignment) => void
+  onClose: () => void
+}) {
+  const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null)
+  const [sendingGc, setSendingGc] = useState<string | null>(null)
+  const [sendingFinance, setSendingFinance] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    loadEmailSettings().then(setEmailSettings).catch(() => setEmailSettings(null))
+  }, [])
+
+  const gcGroups = groupByNewGc(quoted)
+  const cancellable = cancellableHops(quoted)
+
+  async function stampSent(items: QuotedHop[], field: 'gcEmailSentAt' | 'financeEmailSentAt') {
+    const stampedAt = new Date().toISOString()
+    for (const { hop } of items) {
+      const saved = await saveCleanupAssignment(hop.hop, { [field]: stampedAt })
+      onSaved(hop.hop, saved)
+    }
+  }
+
+  async function handleEmailGc(newGc: string, items: QuotedHop[]) {
+    if (!emailSettings) return
+    setSendingGc(newGc)
+    setError(null)
+    try {
+      openGcQuoteEmail(newGc, items, emailSettings.gcContactEmails, emailSettings.ccList, emailSettings.routing)
+      await stampSent(items, 'gcEmailSentAt')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The email opened, but stamping it as sent failed — try again so it stays tracked.')
+    } finally {
+      setSendingGc(null)
+    }
+  }
+
+  async function handleEmailFinance() {
+    if (!emailSettings) return
+    setSendingFinance(true)
+    setError(null)
+    try {
+      openCancellationEmail(cancellable, emailSettings.financeEmails, emailSettings.routing)
+      await stampSent(cancellable, 'financeEmailSentAt')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The email opened, but stamping it as sent failed — try again so it stays tracked.')
+    } finally {
+      setSendingFinance(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+      <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700 sticky top-0 bg-gray-900">
+          <h2 className="text-white font-semibold text-lg">📧 Email Center — {quoted.length} quoted HOP{quoted.length === 1 ? '' : 's'}</h2>
+          <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
+        </div>
+        <div className="p-6 space-y-6">
+          {error && <p className="bg-red-950 border border-red-700 text-red-200 text-sm rounded-lg p-3">{error}</p>}
+          {quoted.length === 0 && (
+            <p className="text-gray-500 text-sm">No HOPs have both a new GC and a quote entered yet — fill those in from a tile&apos;s table first.</p>
+          )}
+
+          {gcGroups.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-300 mb-2">Quote confirmation — one email per GC</h3>
+              <div className="space-y-3">
+                {gcGroups.map(({ newGc, items }) => (
+                  <div key={newGc} className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-sm font-semibold text-white">
+                        {newGc} — {items.length} HOP{items.length === 1 ? '' : 's'} · {fmtMoney(items.reduce((s, i) => s + (i.assignment.quote ?? 0), 0))}
+                      </p>
+                      <button onClick={() => handleEmailGc(newGc, items)} disabled={sendingGc === newGc || !emailSettings}
+                        className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 rounded">
+                        {sendingGc === newGc ? 'Opening…' : `✉️ Email ${newGc}`}
+                      </button>
+                    </div>
+                    <ul className="text-xs text-gray-400 space-y-0.5">
+                      {items.map(({ hop, assignment }) => (
+                        <li key={hop.hop} className="flex justify-between gap-2">
+                          <span>{hop.hopDisplay} <span className="text-gray-600">({hop.pathId || '—'})</span> — {fmtMoney(assignment.quote ?? 0)}</span>
+                          <span className={assignment.gcEmailSentAt ? 'text-emerald-400' : 'text-amber-400'}>{fmtSent(assignment.gcEmailSentAt)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {quoted.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-300 mb-2">SPO cancellation — one email to Finance</h3>
+              {cancellable.length === 0 ? (
+                <p className="text-gray-500 text-xs">None of the quoted HOPs have an unpaid SPO left — nothing for Finance to cancel.</p>
+              ) : (
+                <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-white">
+                      {cancellable.length} HOP{cancellable.length === 1 ? '' : 's'} · {cancellable.reduce((s, i) => s + i.hop.unpaidTiers.length, 0)} SPO(s) to cancel
+                    </p>
+                    <button onClick={handleEmailFinance} disabled={sendingFinance || !emailSettings}
+                      className="bg-red-800 hover:bg-red-700 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 rounded">
+                      {sendingFinance ? 'Opening…' : '✉️ Email Finance — cancel SPOs'}
+                    </button>
+                  </div>
+                  <ul className="text-xs text-gray-400 space-y-0.5">
+                    {cancellable.map(({ hop, assignment }) => (
+                      <li key={hop.hop} className="flex justify-between gap-2">
+                        <span>{hop.hopDisplay} — {hop.unpaidTiers.map(t => t.spoNumber || '—').join(', ')} (vendor: {hop.gc})</span>
+                        <span className={assignment.financeEmailSentAt ? 'text-emerald-400' : 'text-amber-400'}>{fmtSent(assignment.financeEmailSentAt)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }
