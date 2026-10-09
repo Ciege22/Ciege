@@ -49,10 +49,13 @@ export function openGcQuoteEmail(
   const total = items.reduce((s, i) => s + (i.assignment.quote ?? 0), 0)
   const subject = `Site Clean-Up — Quote Confirmation — ${newGc} — ${todayStr()}`
   let body = `Hi ${newGc},\n\nPlease confirm you're ready to proceed on the following site clean-up at the quoted price:\n\n`
+  // Bullet is just the HOP so it reads at a glance; every detail stacks
+  // underneath it instead of running into one long line.
   items.forEach(({ hop, assignment }) => {
-    body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  Quoted Price: ${fmtMoney(assignment.quote ?? 0)}\n`
+    body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}\n`
+    body += `    Quoted Price: ${fmtMoney(assignment.quote ?? 0)}\n\n`
   })
-  body += `\nTotal: ${fmtMoney(total)}\n\nThank you,\nCJ`
+  body += `Total: ${fmtMoney(total)}\n\nThank you,\nCJ`
 
   const contact = lookupContactEmail(gcContactEmails, newGc)
   const { to, cc } = applyEmailRouting(routing, 'gcCleanupQuoteEmail', contact ? [contact] : [], ccList)
@@ -88,12 +91,17 @@ export function openCancellationEmail(
   const subject = `SPO Cancellation Request — Reassigned Clean-Up Work — ${todayStr()}`
   let body = `Please cancel the SPOs below — this scope is being reassigned to a new contractor for clean-up, `
     + `so the original vendor's SPO should not also be paid out.\n\n`
+  // Bullet is the HOP + Path ID + Vendor (same vendor for every tier under
+  // it, so it's only stated once); each unpaid tier for that HOP stacks
+  // underneath as its own line, since a HOP can have more than one.
   items.forEach(({ hop }) => {
+    body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  Vendor: ${hop.gc}\n`
     hop.unpaidTiers.forEach(t => {
-      body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  SPO #: ${t.spoNumber || '—'}  |  Vendor: ${hop.gc}  |  %: ${tierPercent(t.tier)}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
+      body += `    SPO #: ${t.spoNumber || '—'}  |  %: ${tierPercent(t.tier)}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
     })
+    body += `\n`
   })
-  body += `\nThank you,\nCJ`
+  body += `Thank you,\nCJ`
 
   const baseCc = financeEmails.length > 0 ? financeEmails : GR_EMAIL_CC_BASE
   const { to, cc } = applyEmailRouting(routing, 'gcCleanupCancelEmail', GR_EMAIL_TO, baseCc)
