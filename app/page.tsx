@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
 import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
@@ -477,7 +476,6 @@ function HopsModal({ title, hops, onClose, footer }: { title: string; hops: HopD
 }
 
 export default function Home() {
-  const router = useRouter()
   const [snapshotInfo, setSnapshotInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
   // Columns whose populated-rate collapsed vs. the previous snapshot — see
   // detectColumnPopulationDrops. Persists across page loads (recomputed
@@ -1514,16 +1512,6 @@ export default function Home() {
                 </a>
               ))}
             </nav>
-
-            <button
-              onClick={() => router.push('/settings')}
-              aria-label="Settings"
-              title="Settings"
-              type="button"
-              className="mt-4 flex h-9 w-9 items-center justify-center rounded-full text-zinc-500 transition hover:bg-white/10 hover:text-zinc-300"
-            >
-              ⚙️
-            </button>
           </aside>
 
           <main className="space-y-6">
