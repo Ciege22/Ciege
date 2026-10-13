@@ -20,12 +20,12 @@ import {
 import { buildScopDeckBlob } from '../lib/scopDeck'
 import { loadScopSettings } from '../lib/settings'
 
-// Deck Builder V2 — a completely separate page and backend route from
-// /deck-builder (see backend/build_deck_v2.py's module docstring for the
-// full list of behavioral differences). Nothing here touches /deck-builder's
-// page, its Supabase reads, or backend/build_deck.py — this is intentionally
-// isolated so CJ can test it for a few weeks before anyone considers
-// switching over.
+// Deck Builder V2 — now the primary deck builder (confirmed by CJ
+// 10/13/2026, first real weekly build and comparison baseline out the
+// door). Still a completely separate page and backend route from the
+// legacy /deck-builder (see backend/build_deck_v2.py's module docstring
+// for the full list of behavioral differences) — kept isolated so the old
+// one stays available as a fallback, not because this is still in testing.
 
 export default function DeckBuilderV2Page() {
   const [loading, setLoading] = useState(false)
@@ -157,14 +157,14 @@ export default function DeckBuilderV2Page() {
       <div className={`mx-auto px-6 py-8 ${tab === 'ntp' ? 'max-w-[96vw]' : 'max-w-3xl'}`}>
         <BackToDashboard />
 
-        <section className="rounded-[32px] border border-amber-400/20 bg-amber-400/5 p-6 mb-6">
-          <p className="text-xs uppercase tracking-[0.4em] text-amber-300/80">Testing</p>
-          <h1 className="mt-2 text-2xl font-semibold text-white">Deck Builder — V2 (In Progress)</h1>
+        <section className="rounded-[32px] border border-emerald-400/20 bg-emerald-400/5 p-6 mb-6">
+          <p className="text-xs uppercase tracking-[0.4em] text-emerald-300/80">Deck Builder</p>
+          <h1 className="mt-2 text-2xl font-semibold text-white">Weekly Construction Update</h1>
           <p className="mt-2 text-sm leading-6 text-zinc-400">
-            Separate from the production Deck Builder — nothing here affects it. Auto-merges the Decom Dashboard
-            and SCOP Status Deck slides, uses a rolling POR window, keeps Plan numbers exactly as you last set
-            them on the Cx Start/Complete charts, and compares &quot;What Changed&quot; against this tool&apos;s own
-            last build instead of an unrelated tracker upload.
+            Auto-merges the Decom Dashboard and SCOP Status Deck slides, uses a rolling POR window, keeps Plan
+            numbers exactly as you last set them on the Cx Start/Complete charts, and compares &quot;What
+            Changed&quot; against this tool&apos;s own last build. Upload your previous build as the Previous
+            Deck each Tuesday, and the next week&apos;s comparison carries forward automatically.
           </p>
         </section>
 

@@ -17,8 +17,8 @@ import { SpoBatchForHops } from './components/SpoBatchBar'
 // — a dedicated "Decom" link would either duplicate Reports or 404.
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", emoji: "🎯" },
-  { label: "Deck Builder", href: "/deck-builder", emoji: "🃏" },
-  { label: "Deck Builder V2 (beta)", href: "/deck-builder-v2", emoji: "🧪" },
+  { label: "Deck Builder", href: "/deck-builder-v2", emoji: "🃏" },
+  { label: "Deck Builder (Legacy)", href: "/deck-builder", emoji: "🗄️" },
   { label: "Map", href: "/map", emoji: "🗺️" },
   { label: "SPO Requests", href: "/spo-request", emoji: "📨" },
   { label: "Deck Preview", href: "/deck-preview", emoji: "🔍" },

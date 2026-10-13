@@ -231,10 +231,12 @@ export default function DeckBuilderPage() {
           <main className="space-y-6">
             <section className="rounded-[32px] border border-white/10 bg-white/5 p-8 shadow-[0_24px_120px_-80px_rgba(0,0,0,0.55)] backdrop-blur-xl">
               <BackToDashboard />
-              <p className="text-sm uppercase tracking-[0.4em] text-emerald-300/80">Tools</p>
-              <h2 className="mt-3 text-3xl font-semibold text-white">Deck Builder</h2>
+              <p className="text-sm uppercase tracking-[0.4em] text-amber-300/80">Legacy</p>
+              <h2 className="mt-3 text-3xl font-semibold text-white">Deck Builder (V1)</h2>
               <p className="mt-2 text-sm leading-6 text-zinc-400">
-                Upload your source files and set a deck date. Tracker and snapshot status shown below — upload manually to override.
+                Superseded by <a href="/deck-builder-v2" className="text-emerald-300 underline">Deck Builder</a> as
+                of 10/13/2026 — kept here as a fallback. Upload your source files and set a deck date. Tracker and
+                snapshot status shown below — upload manually to override.
               </p>
             </section>
 
