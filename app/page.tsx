@@ -18,10 +18,10 @@ import { SpoBatchForHops } from './components/SpoBatchBar'
 const navItems = [
   { label: "HOP Readiness", href: "/weekly-focus", emoji: "🎯" },
   { label: "Deck Builder", href: "/deck-builder-v2", emoji: "🃏" },
+  { label: "Deck Preview", href: "/deck-preview", emoji: "🔍" },
   { label: "Deck Builder (Legacy)", href: "/deck-builder", emoji: "🗄️" },
   { label: "Map", href: "/map", emoji: "🗺️" },
   { label: "SPO Requests", href: "/spo-request", emoji: "📨" },
-  { label: "Deck Preview", href: "/deck-preview", emoji: "🔍" },
   { label: "GC Call View", href: "/gc-call", emoji: "🏗️" },
   { label: "CM Call View", href: "/cm-view", emoji: "👷" },
   { label: "GR Tracker", href: "/gr-tracker", emoji: "💰" },
