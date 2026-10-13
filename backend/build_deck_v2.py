@@ -80,13 +80,18 @@ SNAPSHOT_PREFIX = 'deck-v2-snapshot-'
 
 # Plan values as they stand on the Cx Start / Cx Complete slides (checked
 # against my_working_version.pptx and the V2 template). Used only when the
-# previous deck is missing a month's Plan point.
+# previous deck is missing a month's Plan point. CJ revises these by hand as
+# the plan changes — confirmed current as of 10/13/2026 (Sep starts 25, not
+# 28; Jan/27 starts 6, not 8; Sep complete 24, not 28; Jan/27 complete 2, not
+# 4; Feb/27 complete dropped — now blank, not 4). This is a stopgap and will
+# drift again — the real fix is finding why the real Plan pass-through isn't
+# engaging for CJ's current previous-deck file.
 PLAN_BASELINE_STARTS = {'Jan/26+': 24, 'Feb/26': 7, 'Mar/26': 18, 'Apr/26': 23, 'May/26': 22,
-                        'Jun/26': 26, 'Jul/26': 28, 'Aug/26': 13, 'Sep/26': 28, 'Oct/26': 20,
-                        'Nov/26': 20, 'Dec/26': 10, 'Jan/27': 8}
+                        'Jun/26': 26, 'Jul/26': 28, 'Aug/26': 13, 'Sep/26': 25, 'Oct/26': 20,
+                        'Nov/26': 20, 'Dec/26': 10, 'Jan/27': 6}
 PLAN_BASELINE_COMPLETE = {'Jan/26+': 13, 'Feb/26': 7, 'Mar/26': 8, 'Apr/26': 14, 'May/26': 29,
-                          'Jun/26': 31, 'Jul/26': 30, 'Aug/26': 19, 'Sep/26': 28, 'Oct/26': 22,
-                          'Nov/26': 20, 'Dec/26': 15, 'Jan/27': 10, 'Feb/27': 4}
+                          'Jun/26': 31, 'Jul/26': 30, 'Aug/26': 19, 'Sep/26': 24, 'Oct/26': 22,
+                          'Nov/26': 20, 'Dec/26': 15, 'Jan/27': 10, 'Feb/27': 2}
 
 
 def call_tuesday(deck_date_str: str) -> datetime:
@@ -567,6 +572,24 @@ def relabel_months(slide, mo_name):
                 run.text = re.sub(MONTHS_RE + r'(?=\s+(?:POR|Plan of Record))', mo_name, run.text)
 
 
+def relabel_agenda_por_items(slide, month_labels):
+    """The Agenda has one 'Month POR' line per POR trio group, stacked
+    top-to-bottom in the same order as the trios on the deck. Used to be one
+    relabel_months() call for the whole slide, which set every one of those
+    lines to the same (first) month. Matches each line to its own trio by
+    vertical position and gives inactive trios '—' instead of a stale month."""
+    matches = []
+    for sh in slide.shapes:
+        if not sh.has_text_frame:
+            continue
+        for para in sh.text_frame.paragraphs:
+            if re.search(MONTHS_RE + r'\s+(?:POR|Plan of Record)', para.text):
+                matches.append((sh.top, para))
+    matches.sort(key=lambda t: t[0])
+    for (_, para), mo_name in zip(matches, month_labels):
+        set_para_text(para, re.sub(MONTHS_RE, mo_name, para.text) if mo_name else '—')
+
+
 def set_para_text(para, text):
     runs = para.runs
     if runs:
@@ -899,10 +922,23 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                 set_shape_text(shape, NEW_DATE)
 
     def slide_by_title(fragment):
+        # Only the slide's own title — its first non-empty text shape —
+        # counts as a match. Matching against ANY shape on the slide let
+        # unrelated text collide with the real target: the Agenda's own item
+        # labels ("MSS Readiness", "HOPs in Progress", ...) and other
+        # slides' KPI tile labels (What Changed Dashboard has a tile
+        # literally labeled "HOPs In Progress") both silently matched before
+        # the real slide was ever reached, so a lookup pointed at the wrong
+        # slide and left the real one (and every table/count on it)
+        # completely untouched. Confirmed on two real slides (MSS Readiness,
+        # Hops in Progress) that had been carrying forward whatever the
+        # previous deck already had, build after build.
         for s in prs.slides:
             for sh in s.shapes:
-                if sh.has_text_frame and fragment.lower() in sh.text_frame.text.lower():
-                    return s
+                if sh.has_text_frame and sh.text_frame.text.strip():
+                    if fragment.lower() in sh.text_frame.text.lower():
+                        return s
+                    break
         return None
 
     # ── Delta slide ("What Changed Dashboard") ──
@@ -983,7 +1019,11 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
         # each number (label shapes don't change build to build).
         label_to_val = {
             'POR HOPs': p['total'], 'With NTP': p['ntp'], 'Pending NTP': p['pending'],
-            'Green - High Confidence': p['ntp'], 'Yellow - Medium Risk': len(p['prog_team']) + len(p['other']),
+            # Every pending-NTP HOP goes to Yellow regardless of category
+            # (External/Program/Other) — it used to only count Program Team
+            # + Other, silently dropping External pending HOPs from the
+            # total. Red stays untouched; CJ sets that by hand on the call.
+            'Green - High Confidence': p['ntp'], 'Yellow - Medium Risk': p['pending'],
         }
         for sh in texts:
             t = sh.text_frame.text.strip()
@@ -1104,10 +1144,25 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     # Group POR-related slides into trios by their position (overview, then
     # the next slide with an NTP-count-of-POR subtitle but no "pending"
     # wording = confirmed list, then the "pending" one).
+    #
+    # Detecting EVERY trio's overview slide by its own live "X Forecasted
+    # POR" text breaks once a trio has already been blanked to "0 Forecasted
+    # —" in an earlier build — that text no longer contains "POR" at all, so
+    # the slide silently falls out of detection and the whole group (confirmed
+    # + pending included) never gets touched again, compounding build over
+    # build. The template always has exactly 3 trios (9 slides) — confirmed
+    # by the Agenda's 3 numbered POR lines — so anchor on the first live
+    # match and derive the rest positionally instead.
+    POR_TRIO_COUNT = 3
     por_overview_slides = [s for s in prs.slides if any(
         sh.has_text_frame and re.search(r'\d+\s+Forecasted\s+\S+\s+POR', sh.text_frame.text) for sh in s.shapes)]
     all_slides = list(prs.slides)
+    if por_overview_slides:
+        first_idx = all_slides.index(por_overview_slides[0])
+        por_overview_slides = [all_slides[first_idx + i * 3] for i in range(POR_TRIO_COUNT)
+                                if first_idx + i * 3 < len(all_slides)]
     blank_trio_bases = []
+    agenda_month_labels = []  # one per trio, in order; '' for an inactive one
     for i, ov_slide in enumerate(por_overview_slides):
         base_idx = all_slides.index(ov_slide)
         confirmed_slide = all_slides[base_idx + 1] if base_idx + 1 < len(all_slides) else None
@@ -1122,23 +1177,41 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                 update_por_confirmed(confirmed_slide, mo_name, mo_key, sheet_key)
             if pending_slide is not None:
                 update_por_pending(pending_slide, mo_name, mo_key, sheet_key)
+            agenda_month_labels.append(mo_name)
         else:
             # No active month for this template group (project nearly done) —
             # the whole 3-slide group is removed after the save below.
             blank_trio_bases.append(base_idx)
+            agenda_month_labels.append('')
 
-    if por_order and por_overview_slides:
-        relabel_months(slide_by_title('Agenda') or prs.slides[1], por_order[0][1])
+    # One Agenda line per trio, in the same top-to-bottom order as the trios
+    # — was a single blanket relabel using only the first active month, so
+    # every POR line on the Agenda read the same month.
+    if por_overview_slides:
+        relabel_agenda_por_items(slide_by_title('Agenda') or prs.slides[1], agenda_month_labels)
 
     # ── MSS Readiness / Look-ahead / In Progress — header-driven, resilient
     #    to CJ's already-simplified column sets on these tables. ──
     mss_slide = slide_by_title('MSS Readiness')
     if mss_slide is not None:
-        mss_sorted = d['mss'].sort_values('MS15 Implementation Start A', ascending=True)
+        # d['mss'] (from build_deck.py's extract_data) also requires
+        # in_progress (started & not complete), which silently drops any HOP
+        # that both started AND completed within the same 7-day window — this
+        # slide is just "did CX Start happen in the last 7 days," independent
+        # of whether it's already wrapped up.
+        mss_today = pd.Timestamp(datetime.strptime(NEW_DATE, '%m/%d/%Y'))
+        mss_df = d['df'][
+            (d['df']['MS15 Implementation Start A'] >= mss_today - timedelta(days=7)) &
+            (d['df']['MS15 Implementation Start A'] <= mss_today)
+        ]
+        mss_sorted = mss_df.sort_values('MS15 Implementation Start A', ascending=True)
         mss_count = len(mss_sorted)
         for sh in mss_slide.shapes:
             if sh.has_text_frame and re.search(r'started \(last 7 days\)', sh.text_frame.text):
-                set_shape_text(sh, re.sub(r'^\d+', str(mss_count), sh.text_frame.text))
+                # Was a regex substitution on the leading number only, which left the
+                # template's stale "· N forecast (next 7 days)" clause untouched —
+                # CJ asked for that half dropped entirely, not just its number updated.
+                set_shape_text(sh, f'{mss_count} started (last 7 days)')
             if sh.has_text_frame and re.search(r'Sites Started', sh.text_frame.text):
                 set_shape_text(sh, f'Sites Started — MSS Ready or Ready Soon ({mss_count})')
         tbl_shape, hdrs = find_table(mss_slide, ['HOP'])
