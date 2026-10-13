@@ -6,7 +6,6 @@ import { useState, useEffect } from 'react'
 import { loadTrackerSnapshot } from '../lib/supabase'
 import { loadChunkedReport } from '../lib/reportChunks'
 import BackToDashboard from '../components/BackToDashboard'
-import DeckPreview from '../components/DeckPreview'
 import NtpCommentsV2 from '../components/NtpCommentsV2'
 import CustomerSlideDeckNav from '../components/CustomerSlideDeckNav'
 import {
@@ -31,10 +30,6 @@ import { loadScopSettings } from '../lib/settings'
 export default function DeckBuilderV2Page() {
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
-  // Bumped on every successful build so <DeckPreview key={previewRefresh}> remounts
-  // and refetches — it only loads on mount otherwise, so without this it kept
-  // showing whatever was "latest" when the page first opened.
-  const [previewRefresh, setPreviewRefresh] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const [statusMsg, setStatusMsg] = useState('')
 
@@ -144,7 +139,6 @@ export default function DeckBuilderV2Page() {
       URL.revokeObjectURL(url)
 
       setSuccess(true)
-      setPreviewRefresh(n => n + 1)
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Something went wrong.')
     } finally {
@@ -259,9 +253,6 @@ export default function DeckBuilderV2Page() {
               {loading && statusMsg && <p className="text-sm text-zinc-400">{statusMsg}</p>}
             </div>
           </form>
-        </section>
-        <section className="mt-6 rounded-[32px] border border-white/10 bg-white/5 p-6">
-          <DeckPreview key={previewRefresh} />
         </section>
         </>)}
         </div>
