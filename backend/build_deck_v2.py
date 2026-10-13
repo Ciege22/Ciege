@@ -1006,17 +1006,28 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     def update_por_overview(slide, mo_name, mo_key):
         p = por[mo_key]
         shapes = list(slide.shapes)
-        for sh in shapes:
-            if sh.has_text_frame and re.search(r'\d+\s+Forecasted\s+\S+\s+POR', sh.text_frame.text):
-                set_shape_text(sh, f'{p["total"]} Forecasted {mo_name} POR')
-                break
-        for sh in shapes:
-            if sh.has_text_frame and re.search(r'\S+\s+Plan of Record', sh.text_frame.text):
-                set_shape_text(sh, f'{mo_name} Plan of Record')
-                break
+        # The headline ("X Forecasted Month POR") and subtitle ("Month Plan
+        # of Record") used to be found by matching "POR"/"Plan of Record" in
+        # their OWN current text — which breaks the moment either one has
+        # already been degenerated to something like "0 Forecasted —" by an
+        # earlier build (no "POR" left to match), leaving it stuck that way
+        # forever even once this month has real data again. They're
+        # reliably the first two non-empty text shapes on this slide
+        # (confirmed across every overview slide, degenerated or not), so
+        # find them by position instead of by content.
+        non_empty = [sh for sh in shapes if sh.has_text_frame and sh.text_frame.text.strip()]
+        if len(non_empty) > 0:
+            set_shape_text(non_empty[0], f'{p["total"]} Forecasted {mo_name} POR')
+        if len(non_empty) > 1:
+            set_shape_text(non_empty[1], f'{mo_name} Plan of Record')
         texts = [sh for sh in shapes if sh.has_text_frame]
         # Numeric KPI cards: match by the static label text directly beneath
-        # each number (label shapes don't change build to build).
+        # each number (label shapes don't change build to build). endswith,
+        # not ==: the "POR HOPs" label's actual text is month-prefixed
+        # ("October POR HOPs"), so an exact match against the bare label
+        # always missed it and left that one tile frozen on stale data —
+        # the other labels aren't prefixed, so endswith still matches them
+        # exactly as before.
         label_to_val = {
             'POR HOPs': p['total'], 'With NTP': p['ntp'], 'Pending NTP': p['pending'],
             # Every pending-NTP HOP goes to Yellow regardless of category
@@ -1028,7 +1039,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
         for sh in texts:
             t = sh.text_frame.text.strip()
             for label, val in label_to_val.items():
-                if t == label:
+                if t.endswith(label):
                     # the number lives in the text shape immediately preceding this one in z-order
                     idx = shapes.index(sh)
                     if idx > 0 and shapes[idx - 1].has_text_frame:
