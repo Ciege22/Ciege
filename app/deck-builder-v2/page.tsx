@@ -8,6 +8,7 @@ import { loadChunkedReport } from '../lib/reportChunks'
 import BackToDashboard from '../components/BackToDashboard'
 import DeckPreview from '../components/DeckPreview'
 import NtpCommentsV2 from '../components/NtpCommentsV2'
+import CustomerSlideDeckNav from '../components/CustomerSlideDeckNav'
 import {
   parseDecomRows, parseTrackerHopsForDecom, findMissingDecom,
   countDroppedOffWithoutCxComplete,
@@ -154,7 +155,9 @@ export default function DeckBuilderV2Page() {
 
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100">
-      <div className={`mx-auto px-6 py-8 ${tab === 'ntp' ? 'max-w-[96vw]' : 'max-w-3xl'}`}>
+      <div className="flex gap-6 px-6 py-8">
+        <CustomerSlideDeckNav active="builder" />
+        <div className={`flex-1 min-w-0 ${tab === 'ntp' ? '' : 'max-w-3xl mx-auto'}`}>
         <BackToDashboard />
 
         <section className="rounded-[32px] border border-emerald-400/20 bg-emerald-400/5 p-6 mb-6">
@@ -261,6 +264,7 @@ export default function DeckBuilderV2Page() {
           <DeckPreview key={previewRefresh} />
         </section>
         </>)}
+        </div>
       </div>
     </div>
   )

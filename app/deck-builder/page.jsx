@@ -200,8 +200,9 @@ export default function DeckBuilderPage() {
             <nav className="space-y-2">
               {[
                 { label: 'Dashboard', href: '/' },
-                { label: 'HOP Readiness', href: '/weekly-focus' },
-                { label: 'Deck Builder', href: '/deck-builder', active: true },
+                { label: 'Deck Builder', href: '/deck-builder-v2' },
+                { label: 'Deck Preview', href: '/deck-preview' },
+                { label: 'Deck Builder (Legacy)', href: '/deck-builder', active: true },
                 { label: 'GC Call View', href: '/gc-call' },
                 { label: 'CM Call View', href: '/cm-view' },
                 { label: 'NTP Tracker', href: '/ntp-tracker' },
