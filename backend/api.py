@@ -409,8 +409,21 @@ def _ntp_months(deck_date_str: str):
 	tracker_rows = json.loads(latest.data['data'])
 	call_dt = build_deck_v2.call_tuesday(deck_date_str)
 	data = build_deck.extract_data('', '', '', call_dt.strftime('%m/%d/%Y'), tracker_rows=tracker_rows, prev_snapshot_data=None)
-	# Start three months back so Jul–Sep show up even though the call is in Oct.
-	por, order = build_deck_v2.compute_por_window(data['df'], pd.Timestamp(call_dt - timedelta(days=90)), window_months=12, max_active=12)
+	# A fixed 90-day lookback silently dropped any pending-NTP HOP whose
+	# forecast start is older than that — confirmed on a real HOP forecast in
+	# June while the call was in October (~115 days back), which had no month
+	# tab to land in at all and vanished from the tab entirely, not just
+	# undercounted. Start from whichever is earlier: 90 days back, or the
+	# oldest pending HOP's own forecast month, so nothing overdue falls out.
+	window_start = pd.Timestamp(call_dt - timedelta(days=90))
+	ms15f_col = 'MS15 Implementation Start F'
+	pending_dates = data['df'].loc[~data['df']['has_ntp'], ms15f_col].dropna()
+	if len(pending_dates) > 0:
+		earliest_pending = pd.Timestamp(pending_dates.min()).normalize().replace(day=1)
+		if earliest_pending < window_start:
+			window_start = earliest_pending
+	months_span = (call_dt.year - window_start.year) * 12 + (call_dt.month - window_start.month) + 6
+	por, order = build_deck_v2.compute_por_window(data['df'], window_start, window_months=max(12, months_span), max_active=24)
 	store = ntp_comments_v2.load_store(supabase_client)
 	months = []
 	for mo_key, mo_name, sheet in order:
