@@ -16,7 +16,6 @@ import { SpoBatchForHops } from './components/SpoBatchBar'
 // GC Call View's Decom tab), so it isn't listed as a separate nav card here
 // — a dedicated "Decom" link would either duplicate Reports or 404.
 const navItems = [
-  { label: "HOP Readiness", href: "/weekly-focus", emoji: "🎯" },
   { label: "Deck Builder", href: "/deck-builder-v2", emoji: "🃏" },
   { label: "Deck Preview", href: "/deck-preview", emoji: "🔍" },
   { label: "Deck Builder (Legacy)", href: "/deck-builder", emoji: "🗄️" },
