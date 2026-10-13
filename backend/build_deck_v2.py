@@ -558,6 +558,57 @@ def clear_extra_rows(shape, hdrs, from_row):
             set_table_cell(shape, ri, ci, '')
 
 
+def fix_row_banding(tbl_shape):
+    """expand_table_rows() (build_deck.py) clones the table's LAST existing
+    row for every new row it needs to add, so once a table needs more data
+    rows than the template had, every new row inherits whatever fill color
+    that last row happened to have instead of continuing the alternation —
+    confirmed on a real table: template had 10 data rows alternating white/
+    green correctly, 4 more were cloned to reach 14, and all 4 came out
+    green because row 10 (the clone source) was green. Re-derives the two
+    real band colors from the template's own first two data rows and
+    re-applies them by strict position parity to every data row, cloned or
+    not. Only ever edits an existing solidFill's color value — never adds
+    or reorders XML — so a table that doesn't match this exact shape is
+    left untouched rather than risked.
+    """
+    tbl_el = tbl_shape.table._tbl
+    trs = tbl_el.findall(qn('a:tr'))
+    if len(trs) < 3:
+        return
+
+    def cell_fill_srgb(tr):
+        tcs = tr.findall(qn('a:tc'))
+        if not tcs:
+            return None
+        tcPr = tcs[0].find(qn('a:tcPr'))
+        if tcPr is None:
+            return None
+        sf = tcPr.find(qn('a:solidFill'))
+        if sf is None:
+            return None
+        srgb = sf.find(qn('a:srgbClr'))
+        return srgb.get('val') if srgb is not None else None
+
+    color_odd = cell_fill_srgb(trs[1])   # first data row
+    color_even = cell_fill_srgb(trs[2])  # second data row
+    if not color_odd or not color_even or color_odd == color_even:
+        return  # can't reliably tell the two band colors apart — leave it alone
+
+    for i, tr in enumerate(trs[1:], start=1):
+        target = color_odd if i % 2 == 1 else color_even
+        for tc in tr.findall(qn('a:tc')):
+            tcPr = tc.find(qn('a:tcPr'))
+            if tcPr is None:
+                continue
+            sf = tcPr.find(qn('a:solidFill'))
+            if sf is None:
+                continue
+            srgb = sf.find(qn('a:srgbClr'))
+            if srgb is not None:
+                srgb.set('val', target)
+
+
 MONTHS_RE = r'(January|February|March|April|May|June|July|August|September|October|November|December)'
 TABLE_BOTTOM_EMU = 4850000  # footer bar starts at 4885403
 
@@ -1071,6 +1122,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             if h.get('MS15 Implementation Start F') and pd.notna(h.get('MS15 Implementation Start F'))
             else pd.Timestamp('2099-01-01')))
         expand_table_rows(tbl_shape, len(ntp_hops))
+        fix_row_banding(tbl_shape)
         for ri in range(1, len(tbl_shape.table.rows)):
             if ri - 1 < len(ntp_hops):
                 h = ntp_hops[ri - 1]; hop = str(h['HOP'])
@@ -1134,6 +1186,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             # matches the slide's left/right layout convention.
             rows = p['external'] if tbl_shapes.index(tbl_shape) == 0 else (p['prog_team'] + p['other'])
             expand_table_rows(tbl_shape, len(rows))
+            fix_row_banding(tbl_shape)
             for ri in range(1, len(tbl_shape.table.rows)):
                 if ri - 1 < len(rows):
                     r = rows[ri - 1]
@@ -1234,6 +1287,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             start_col = col_idx(hdrs, 'Cx Start', 'Start')
             notes_col = col_idx(hdrs, 'Notes', 'Status', 'Comments')
             expand_table_rows(tbl_shape, mss_count)
+            fix_row_banding(tbl_shape)
             for ri in range(1, len(tbl_shape.table.rows)):
                 if ri - 1 < mss_count:
                     r = mss_sorted.iloc[ri - 1]; hop = r['HOP']
@@ -1264,6 +1318,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             wait_col = col_idx(hdrs, 'Waiting')
             comment_col = col_idx(hdrs, 'Comment')
             expand_table_rows(tbl_shape, la_count)
+            fix_row_banding(tbl_shape)
             for ri in range(1, len(tbl_shape.table.rows)):
                 if ri - 1 < la_count:
                     r = la_sorted.iloc[ri - 1]; hop = r['HOP']
@@ -1294,6 +1349,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             risk_col = col_idx(hdrs, 'Risk')
             notes_col = col_idx(hdrs, 'Comments', 'Live Status', 'Notes')
             expand_table_rows(tbl_shape, len(ip_sorted))
+            fix_row_banding(tbl_shape)
             new_starts_set = set(d['new_starts'])
             for ri in range(1, len(tbl_shape.table.rows)):
                 if ri - 1 < len(ip_sorted):
@@ -1321,6 +1377,7 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
         for i, tbl_shape in enumerate(sorted(tbl_shapes, key=lambda s: s.left)):
             rows = new_starts_rows if i == 0 else completions_rows
             expand_table_rows(tbl_shape, max(len(rows), 1))
+            fix_row_banding(tbl_shape)
             for ri in range(1, len(tbl_shape.table.rows)):
                 if ri - 1 < len(rows):
                     r = rows[ri - 1]
