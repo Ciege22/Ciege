@@ -130,9 +130,8 @@ export default function DeckBuilderV2Page() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      const disposition = res.headers.get('content-disposition')
-      const match = disposition?.match(/filename="?([^"]+)"?/)
-      a.download = match?.[1] ?? 'deck_v2.pptx'
+      const dateLabel = `${month.padStart(2, '0')}-${day.padStart(2, '0')}-${year}`
+      a.download = `Nokia Viaero - Construction Schedule Tracker - ${dateLabel}.pptx`
       document.body.appendChild(a)
       a.click()
       a.remove()
