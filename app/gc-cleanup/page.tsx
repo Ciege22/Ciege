@@ -15,7 +15,8 @@ import {
   loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
 import {
-  type QuotedHop, quotedHops, groupByNewGc, cancellableHops, openGcQuoteEmail, openCancellationEmail, tierPercent,
+  type QuotedHop, quotedHops, groupByNewGc, cancellableHops, openGcQuoteEmail, openCancellationEmail,
+  openCpoRequestEmail, tierPercent,
 } from '../lib/gcCleanupEmail'
 import { clusterByDistance, type GeoCluster } from '../lib/hopCoords'
 
@@ -248,6 +249,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
   const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null)
   const [sendingGc, setSendingGc] = useState<string | null>(null)
   const [sendingFinance, setSendingFinance] = useState(false)
+  const [sendingCpo, setSendingCpo] = useState(false)
   const [error, setError] = useState<string | null>(null)
   // Off by default: once a HOP's been emailed it drops out of view instead of
   // piling up here, so this stays "what's new" rather than a growing log.
@@ -262,7 +264,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
 
   // Sending an email is also CJ's own signal that this HOP moved past "just
   // quoted" — advances status unless he's already manually marked it Complete.
-  async function stampSent(items: QuotedHop[], field: 'gcEmailSentAt' | 'financeEmailSentAt') {
+  async function stampSent(items: QuotedHop[], field: 'gcEmailSentAt' | 'financeEmailSentAt' | 'cpoEmailSentAt') {
     const stampedAt = new Date().toISOString()
     for (const { hop, assignment } of items) {
       const status = assignment.status === 'Complete' ? 'Complete' : 'Assigned'
@@ -299,8 +301,23 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
     }
   }
 
+  async function handleEmailCpo(items: QuotedHop[]) {
+    if (!emailSettings || items.length === 0) return
+    setSendingCpo(true)
+    setError(null)
+    try {
+      openCpoRequestEmail(items, emailSettings.financeEmails, emailSettings.routing)
+      await stampSent(items, 'cpoEmailSentAt')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'The email opened, but stamping it as sent failed — try again so it stays tracked.')
+    } finally {
+      setSendingCpo(false)
+    }
+  }
+
   const sentGcCount = quoted.filter(q => q.assignment.gcEmailSentAt).length
   const sentFinanceCount = cancellableAll.filter(q => q.assignment.financeEmailSentAt).length
+  const sentCpoCount = quoted.filter(q => q.assignment.cpoEmailSentAt).length
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
@@ -310,7 +327,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
           <div className="flex items-center gap-4">
             <label className="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
               <input type="checkbox" checked={showSent} onChange={e => setShowSent(e.target.checked)} />
-              Show already-emailed ({sentGcCount} GC, {sentFinanceCount} finance)
+              Show already-emailed ({sentGcCount} GC, {sentFinanceCount} cancel, {sentCpoCount} CPO)
             </label>
             <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
           </div>
@@ -408,12 +425,9 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                       </div>
                       {pending.length > 0 && (
                         <ul className="text-xs text-gray-400 space-y-0.5">
-                          {pending.map(({ hop, assignment }) => (
+                          {pending.map(({ hop }) => (
                             <li key={hop.hop} className="flex justify-between gap-2">
-                              <span>
-                                {hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}
-                                <span className="text-emerald-400"> → {assignment.newGc}, {fmtMoney(assignment.quote ?? 0)}, new SPO {assignment.newGcSpoNumber || '—'}</span>
-                              </span>
+                              <span>{hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}</span>
                               <span className="text-amber-400">not sent</span>
                             </li>
                           ))}
@@ -423,10 +437,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                         <ul className={`text-xs text-gray-500 space-y-0.5 ${pending.length > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}`}>
                           {sent.map(({ hop, assignment }) => (
                             <li key={hop.hop} className="flex justify-between gap-2">
-                              <span>
-                                {hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}
-                                <span className="text-emerald-500"> → {assignment.newGc}, {fmtMoney(assignment.quote ?? 0)}, new SPO {assignment.newGcSpoNumber || '—'}</span>
-                              </span>
+                              <span>{hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}</span>
                               <span className="text-emerald-400">{fmtSent(assignment.financeEmailSentAt)}</span>
                             </li>
                           ))}
@@ -436,6 +447,65 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                   )
                 })()
               )}
+            </div>
+          )}
+
+          {quoted.length > 0 && (
+            <div>
+              <h3 className="text-sm font-semibold text-gray-300 mb-2">CPO submission — one email to Finance to create the new SPO</h3>
+              {(() => {
+                const pending = quoted.filter(i => !i.assignment.cpoEmailSentAt)
+                const sent = quoted.filter(i => i.assignment.cpoEmailSentAt)
+                if (pending.length === 0 && !showSent) {
+                  return <p className="text-gray-500 text-xs">All {sent.length} quoted HOP{sent.length === 1 ? '' : 's'} already submitted to Finance — check &quot;Show already-emailed&quot; above to review or resend.</p>
+                }
+                const missingCpo = pending.filter(i => !i.assignment.cpoNumber?.trim()).length
+                return (
+                  <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
+                    <div className="flex items-center justify-between mb-2 gap-3">
+                      <p className="text-sm font-semibold text-white">
+                        {pending.length} new{sent.length > 0 ? `, ${sent.length} already sent` : ''}
+                        {pending.length > 0 && <> · {fmtMoney(pending.reduce((s, i) => s + (i.assignment.quote ?? 0), 0))}</>}
+                        {missingCpo > 0 && <span className="text-amber-400"> · {missingCpo} missing a CPO #</span>}
+                      </p>
+                      {pending.length > 0 ? (
+                        <button onClick={() => handleEmailCpo(pending)} disabled={sendingCpo || !emailSettings}
+                          className="bg-purple-800 hover:bg-purple-700 disabled:opacity-40 text-white text-xs font-semibold px-3 py-1.5 rounded whitespace-nowrap">
+                          {sendingCpo ? 'Opening…' : `✉️ Email Finance (${pending.length})`}
+                        </button>
+                      ) : (
+                        <button onClick={() => handleEmailCpo(sent)} disabled={sendingCpo || !emailSettings}
+                          className="bg-gray-700 hover:bg-gray-600 disabled:opacity-40 text-gray-200 text-xs font-semibold px-3 py-1.5 rounded whitespace-nowrap">
+                          {sendingCpo ? 'Opening…' : 'Re-email anyway'}
+                        </button>
+                      )}
+                    </div>
+                    {pending.length > 0 && (
+                      <ul className="text-xs text-gray-400 space-y-0.5">
+                        {pending.map(({ hop, assignment }) => (
+                          <li key={hop.hop} className="flex justify-between gap-2">
+                            <span>
+                              {hop.hopDisplay} — Vendor: {assignment.newGc}, Quote: {fmtMoney(assignment.quote ?? 0)}, CPO #: {' '}
+                              {assignment.cpoNumber?.trim() ? assignment.cpoNumber : <span className="text-amber-400">missing</span>}
+                            </span>
+                            <span className="text-amber-400">not sent</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                    {showSent && sent.length > 0 && (
+                      <ul className={`text-xs text-gray-500 space-y-0.5 ${pending.length > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}`}>
+                        {sent.map(({ hop, assignment }) => (
+                          <li key={hop.hop} className="flex justify-between gap-2">
+                            <span>{hop.hopDisplay} — Vendor: {assignment.newGc}, Quote: {fmtMoney(assignment.quote ?? 0)}, CPO #: {assignment.cpoNumber || '—'}</span>
+                            <span className="text-emerald-400">{fmtSent(assignment.cpoEmailSentAt)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )
+              })()}
             </div>
           )}
         </div>
@@ -542,6 +612,7 @@ function BucketModal({ title, rows, assignments, onSaved, onClose, onEmailClick 
                 <FilterableHeader label="SCOP" col="scop" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.scop} filters={filters} onApply={setColumnFilter} />
                 <th className="text-left p-2 bg-gray-800">Assign new GC</th>
                 <th className="text-left p-2 bg-gray-800">Their quote</th>
+                <th className="text-left p-2 bg-gray-800">CPO #</th>
                 <th className="text-left p-2 bg-gray-800">New GC SPO #</th>
                 <th className="text-left p-2 bg-gray-800">Gap</th>
                 <FilterableHeader label="Status" col="status" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.status} filters={filters} onApply={setColumnFilter} />
@@ -556,7 +627,7 @@ function BucketModal({ title, rows, assignments, onSaved, onClose, onEmailClick 
                   : <ReadOnlyRow key={h.hop} hop={h} />
               ))}
               {visible.length === 0 && (
-                <tr><td colSpan={15} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
+                <tr><td colSpan={16} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
               )}
             </tbody>
           </table>
@@ -664,7 +735,7 @@ function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
       <UnpaidCells hop={hop} />
       <DecomCell hop={hop} />
       <ScopCell hop={hop} />
-      <td colSpan={7} className="p-2 text-gray-600 text-center italic">{note}</td>
+      <td colSpan={8} className="p-2 text-gray-600 text-center italic">{note}</td>
     </tr>
   )
 }
@@ -676,6 +747,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
 }) {
   const [newGc, setNewGc] = useState(assignment?.newGc ?? '')
   const [quote, setQuote] = useState(assignment?.quote != null ? String(assignment.quote) : '')
+  const [cpoNumber, setCpoNumber] = useState(assignment?.cpoNumber ?? '')
   const [newGcSpoNumber, setNewGcSpoNumber] = useState(assignment?.newGcSpoNumber ?? '')
   const [status, setStatus] = useState(assignment?.status ?? 'Needs Quote')
   const [comment, setComment] = useState(assignment?.comment ?? '')
@@ -687,7 +759,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
   const gap = quoteNum != null && !Number.isNaN(quoteNum) ? quoteNum - hop.unpaidValue : null
   const readyToReleaseToNewGc = newGcSpoNumber.trim() !== '' && quoteNum != null
   const isDirty = newGc !== (assignment?.newGc ?? '') || quote !== (assignment?.quote != null ? String(assignment.quote) : '')
-    || newGcSpoNumber !== (assignment?.newGcSpoNumber ?? '')
+    || cpoNumber !== (assignment?.cpoNumber ?? '') || newGcSpoNumber !== (assignment?.newGcSpoNumber ?? '')
     || status !== (assignment?.status ?? 'Needs Quote') || comment !== (assignment?.comment ?? '')
 
   async function save() {
@@ -695,7 +767,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
     setSaveError(null)
     try {
       const saved = await saveCleanupAssignment(hop.hop, {
-        newGc, status, newGcSpoNumber,
+        newGc, status, cpoNumber, newGcSpoNumber,
         quote: quoteNum != null && !Number.isNaN(quoteNum) ? quoteNum : null,
         comment,
       })
@@ -727,6 +799,10 @@ function CleanupRow({ hop, assignment, onSaved }: {
         {readyToReleaseToNewGc && (
           <div className="mt-1 text-[10px] text-emerald-400 whitespace-nowrap">✅ Ready to release to {newGc || 'new GC'}</div>
         )}
+      </td>
+      <td className="p-2">
+        <input value={cpoNumber} onChange={e => setCpoNumber(e.target.value)} placeholder="CPO #…"
+          className="w-28 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
       </td>
       <td className="p-2">
         <input value={newGcSpoNumber} onChange={e => setNewGcSpoNumber(e.target.value)} placeholder="SPO #…"

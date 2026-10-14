@@ -1,8 +1,15 @@
-// GC Clean-Up emails: a quote-confirmation email per new GC (one mailto per
-// GC, opened one click at a time — matches the SPO batch bar's convention,
-// since browsers block several mailto: navigations fired at once), and one
-// combined SPO-cancellation email to the internal finance team naming the
-// ORIGINAL (departed) GC's SPOs to cancel, never the new GC's.
+// GC Clean-Up emails — three, each with one job:
+//   1. Quote confirmation to the new GC (one mailto per GC, opened one click
+//      at a time — matches the SPO batch bar's convention, since browsers
+//      block several mailto: navigations fired at once).
+//   2. SPO cancellation to Finance, naming the ORIGINAL (departed) GC's
+//      SPOs to cancel — never the new GC's.
+//   3. CPO submission to Finance, so they can create the new GC's SPO — the
+//      CPO # here is CJ's own reference number INTO that process, the
+//      opposite direction from the SPO # Finance hands back once it exists
+//      (tracked separately as newGcSpoNumber).
+// Kept as three separate emails on purpose — mixing the new-GC details into
+// the cancellation email once made it unclear which email was for what.
 import { type EmailRouting, applyEmailRouting, lookupContactEmail } from './settings'
 import { GR_EMAIL_TO, GR_EMAIL_CC_BASE, fmtMoney } from './grTracker'
 import type { CleanupHop, CleanupAssignment } from './gcCleanup'
@@ -90,27 +97,46 @@ export function openCancellationEmail(
 ): void {
   const subject = `SPO Cancellation Request — Reassigned Clean-Up Work — ${todayStr()}`
   let body = `Please cancel the SPOs below — this scope is being reassigned to a new contractor for clean-up, `
-    + `so the original vendor's SPO should not also be paid out. The replacement contractor and their SPO are `
-    + `shown with each HOP.\n\n`
+    + `so the original vendor's SPO should not also be paid out.\n\n`
   // Bullet is the HOP + Path ID + the HOP's current (departed) GC per the
   // tracker; each unpaid tier stacks underneath with its OWN vendor, since a
   // HOP can carry SPO lines from more than one vendor (a small CR issued to
   // an unrelated sub, say) even though the tracker attributes the HOP itself
   // to one GC — Finance needs to know exactly whose SPO each line cancels.
-  // The new GC's own line (quote + their SPO #, once issued) stacks last, so
-  // Finance has the full before/after picture in one email instead of
-  // cross-referencing the separate quote-confirmation email.
-  items.forEach(({ hop, assignment }) => {
+  items.forEach(({ hop }) => {
     body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  HOP's GC: ${hop.gc}\n`
     hop.unpaidTiers.forEach(t => {
       body += `    SPO #: ${t.spoNumber || '—'}  |  Vendor: ${t.vendor}  |  %: ${tierPercent(t.tier)}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
     })
-    body += `    Reassigned to: ${assignment.newGc}  |  Quoted Price: ${fmtMoney(assignment.quote ?? 0)}  |  New SPO #: ${assignment.newGcSpoNumber || '— (not yet issued)'}\n`
     body += `\n`
   })
   body += `Thank you,\nCJ`
 
   const baseCc = financeEmails.length > 0 ? financeEmails : GR_EMAIL_CC_BASE
   const { to, cc } = applyEmailRouting(routing, 'gcCleanupCancelEmail', GR_EMAIL_TO, baseCc)
+  window.location.href = `mailto:${encodeURIComponent(to)}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
+// The third email: CJ sends Finance the CPO # (his own reference, not one
+// Finance has yet) and the quoted price so they can create the NEW GC's
+// SPO. Every quoted HOP belongs here, not just the ones with something to
+// cancel — a HOP that was already fully paid before reassignment still
+// needs a new SPO for the new GC to get paid against.
+export function openCpoRequestEmail(
+  items: QuotedHop[],
+  financeEmails: string[],
+  routing: Record<string, EmailRouting> | undefined,
+): void {
+  const total = items.reduce((s, i) => s + (i.assignment.quote ?? 0), 0)
+  const subject = `New SPO Request — Clean-Up Work — ${todayStr()}`
+  let body = `Please create a new SPO for the clean-up work below, using the CPO # provided for each HOP.\n\n`
+  items.forEach(({ hop, assignment }) => {
+    body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}\n`
+    body += `    Vendor: ${assignment.newGc}  |  CPO #: ${assignment.cpoNumber || '—'}  |  Quoted Price: ${fmtMoney(assignment.quote ?? 0)}\n\n`
+  })
+  body += `Total: ${fmtMoney(total)}\n\nThank you,\nCJ`
+
+  const baseCc = financeEmails.length > 0 ? financeEmails : GR_EMAIL_CC_BASE
+  const { to, cc } = applyEmailRouting(routing, 'gcCleanupCpoEmail', GR_EMAIL_TO, baseCc)
   window.location.href = `mailto:${encodeURIComponent(to)}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }

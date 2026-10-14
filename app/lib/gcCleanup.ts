@@ -332,16 +332,25 @@ export interface CleanupAssignment {
   // against, not just a form field.
   gcEmailSentAt: string
   financeEmailSentAt: string
+  // '' until the CPO-request email to Finance has been sent — tracked
+  // separately from the other two since it's its own email with its own
+  // audience (Finance, but for a different reason than the cancellation one).
+  cpoEmailSentAt: string
+  // Provided by CJ, not Finance — the reference number Finance needs FROM
+  // him to create the new GC's SPO. Opposite direction from newGcSpoNumber
+  // below: this is an input to that process, not its output.
+  cpoNumber: string
   // The SPO Nokia issues to the NEW GC once they're confirmed on the quoted
   // clean-up work — separate from the ORIGINAL GC's SPO (what the
-  // cancellation email targets). Once this is filled in, the quoted $ is
-  // money ready to release to the new GC.
+  // cancellation email targets) AND from cpoNumber above (what Finance used
+  // to create it). Once this is filled in, the quoted $ is money ready to
+  // release to the new GC.
   newGcSpoNumber: string
 }
 
 export const EMPTY_ASSIGNMENT: CleanupAssignment = {
-  newGc: '', quote: null, comment: '', status: 'Needs Quote', updatedAt: '', newGcSpoNumber: '',
-  gcEmailSentAt: '', financeEmailSentAt: '',
+  newGc: '', quote: null, comment: '', status: 'Needs Quote', updatedAt: '', newGcSpoNumber: '', cpoNumber: '',
+  gcEmailSentAt: '', financeEmailSentAt: '', cpoEmailSentAt: '',
 }
 
 const ASSIGNMENTS_ID = 'gc-cleanup-assignments'

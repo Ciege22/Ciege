@@ -60,6 +60,7 @@ export const EMAIL_TYPES: EmailTypeConfig[] = [
   { id: 'spoRequestEmail', label: 'SPO Requests — Batch Email to Team', hasBaseTo: false },
   { id: 'gcCleanupQuoteEmail', label: 'GC Clean-Up — Quote Confirmation to New GC', hasBaseTo: false },
   { id: 'gcCleanupCancelEmail', label: 'GC Clean-Up — SPO Cancellation to Finance', hasBaseTo: true },
+  { id: 'gcCleanupCpoEmail', label: 'GC Clean-Up — CPO Request to Finance (New SPO)', hasBaseTo: true },
 ]
 
 export interface EmailRouting {
