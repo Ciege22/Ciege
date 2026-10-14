@@ -5,14 +5,16 @@
 //   2. SPO cancellation to Finance, naming the ORIGINAL (departed) GC's
 //      SPOs to cancel — never the new GC's.
 //   3. CPO submission to Finance, so they can create the new GC's SPO — the
-//      CPO # here is CJ's own reference number INTO that process, the
-//      opposite direction from the SPO # Finance hands back once it exists
-//      (tracked separately as newGcSpoNumber).
+//      CPO # here is pulled straight from the tracker's own "Service CPO
+//      Received" column when it's on file (CleanupHop.cpoNumbers), falling
+//      back to a manually-typed one only when the tracker has nothing.
+//      Opposite direction from the SPO # Finance hands back once the new
+//      SPO exists (tracked separately as newGcSpoNumber).
 // Kept as three separate emails on purpose — mixing the new-GC details into
 // the cancellation email once made it unclear which email was for what.
 import { type EmailRouting, applyEmailRouting, lookupContactEmail } from './settings'
 import { GR_EMAIL_TO, GR_EMAIL_CC_BASE, fmtMoney } from './grTracker'
-import type { CleanupHop, CleanupAssignment } from './gcCleanup'
+import { formatCpoEntries, type CleanupHop, type CleanupAssignment } from './gcCleanup'
 
 export interface QuotedHop {
   hop: CleanupHop
@@ -131,8 +133,12 @@ export function openCpoRequestEmail(
   const subject = `New SPO Request — Clean-Up Work — ${todayStr()}`
   let body = `Please create a new SPO for the clean-up work below, using the CPO # provided for each HOP.\n\n`
   items.forEach(({ hop, assignment }) => {
+    // Prefer the tracker's own "Service CPO Received" numbers over the
+    // manually-typed fallback — they're the real numbers already on file,
+    // not something typed by hand.
+    const cpoText = hop.cpoNumbers.length > 0 ? formatCpoEntries(hop.cpoNumbers) : (assignment.cpoNumber || '—')
     body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}\n`
-    body += `    Vendor: ${assignment.newGc}  |  CPO #: ${assignment.cpoNumber || '—'}  |  Quoted Price: ${fmtMoney(assignment.quote ?? 0)}\n\n`
+    body += `    Vendor: ${assignment.newGc}  |  CPO #: ${cpoText}  |  Quoted Price: ${fmtMoney(assignment.quote ?? 0)}\n\n`
   })
   body += `Total: ${fmtMoney(total)}\n\nThank you,\nCJ`
 

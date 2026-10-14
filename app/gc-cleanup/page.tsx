@@ -11,7 +11,7 @@ import { fmtMoney } from '../lib/grTracker'
 import { loadDepartedGcs, saveDepartedGcs, loadEmailSettings, type EmailSettings } from '../lib/settings'
 import {
   type CleanupHop, type CleanupGroups, type CleanupAssignment, type SiteNote,
-  CLEANUP_STATUS_OPTIONS,
+  CLEANUP_STATUS_OPTIONS, formatCpoEntries,
   loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
 import {
@@ -459,7 +459,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                 if (pending.length === 0 && !showSent) {
                   return <p className="text-gray-500 text-xs">All {sent.length} quoted HOP{sent.length === 1 ? '' : 's'} already submitted to Finance — check &quot;Show already-emailed&quot; above to review or resend.</p>
                 }
-                const missingCpo = pending.filter(i => !i.assignment.cpoNumber?.trim()).length
+                const missingCpo = pending.filter(i => i.hop.cpoNumbers.length === 0 && !i.assignment.cpoNumber?.trim()).length
                 return (
                   <div className="bg-gray-800 rounded-lg border border-gray-700 p-3">
                     <div className="flex items-center justify-between mb-2 gap-3">
@@ -486,7 +486,9 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                           <li key={hop.hop} className="flex justify-between gap-2">
                             <span>
                               {hop.hopDisplay} — Vendor: {assignment.newGc}, Quote: {fmtMoney(assignment.quote ?? 0)}, CPO #: {' '}
-                              {assignment.cpoNumber?.trim() ? assignment.cpoNumber : <span className="text-amber-400">missing</span>}
+                              {hop.cpoNumbers.length > 0
+                                ? formatCpoEntries(hop.cpoNumbers)
+                                : assignment.cpoNumber?.trim() ? assignment.cpoNumber : <span className="text-amber-400">missing</span>}
                             </span>
                             <span className="text-amber-400">not sent</span>
                           </li>
@@ -497,7 +499,7 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                       <ul className={`text-xs text-gray-500 space-y-0.5 ${pending.length > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}`}>
                         {sent.map(({ hop, assignment }) => (
                           <li key={hop.hop} className="flex justify-between gap-2">
-                            <span>{hop.hopDisplay} — Vendor: {assignment.newGc}, Quote: {fmtMoney(assignment.quote ?? 0)}, CPO #: {assignment.cpoNumber || '—'}</span>
+                            <span>{hop.hopDisplay} — Vendor: {assignment.newGc}, Quote: {fmtMoney(assignment.quote ?? 0)}, CPO #: {hop.cpoNumbers.length > 0 ? formatCpoEntries(hop.cpoNumbers) : (assignment.cpoNumber || '—')}</span>
                             <span className="text-emerald-400">{fmtSent(assignment.cpoEmailSentAt)}</span>
                           </li>
                         ))}
@@ -801,8 +803,17 @@ function CleanupRow({ hop, assignment, onSaved }: {
         )}
       </td>
       <td className="p-2">
-        <input value={cpoNumber} onChange={e => setCpoNumber(e.target.value)} placeholder="CPO #…"
-          className="w-28 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+        {hop.cpoNumbers.length > 0 ? (
+          <div className="w-28 text-xs text-emerald-300">
+            {hop.cpoNumbers.map((c, i) => (
+              <div key={i} className="whitespace-nowrap">{c.cpoNumber}{c.siteName ? <span className="text-gray-500"> ({c.siteName})</span> : null}</div>
+            ))}
+            <div className="text-[10px] text-gray-500 mt-0.5">from tracker</div>
+          </div>
+        ) : (
+          <input value={cpoNumber} onChange={e => setCpoNumber(e.target.value)} placeholder="CPO #…"
+            className="w-28 bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
+        )}
       </td>
       <td className="p-2">
         <input value={newGcSpoNumber} onChange={e => setNewGcSpoNumber(e.target.value)} placeholder="SPO #…"

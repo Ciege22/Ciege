@@ -98,6 +98,53 @@ export interface SiteNote {
   statusLabel: string
 }
 
+export interface CpoEntry {
+  siteName: string
+  cpoNumber: string
+}
+
+// The tracker's own "Service CPO Received" column — one physical row per
+// site, so a HOP with both sites recorded carries two entries here (one per
+// site, sometimes different numbers). This is distinct from
+// CleanupAssignment.cpoNumber (a free-text fallback CJ types when the
+// tracker has nothing for a HOP) — wherever both exist, prefer this one,
+// since it's the real number already on file rather than something typed
+// by hand. Same header/DON444-row scanning as buildHopGcMap, but collects
+// every non-empty value per HOP instead of first-seen-wins, since both
+// sites' numbers matter.
+export function buildHopCpoMap(rows: unknown[][]): Map<string, CpoEntry[]> {
+  const out = new Map<string, CpoEntry[]>()
+  let headerRow = -1
+  for (let i = 0; i < 10; i++) {
+    if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+  }
+  if (headerRow === -1) return out
+  const headers = (rows[headerRow] as unknown[]).map(h => String(h ?? '').trim())
+  const col = (name: string) => headers.indexOf(name)
+  const hopCol = col('HOP')
+  const don444Col = col('DON 444')
+  const siteCol = col('Site Name')
+  const cpoCol = col('Service CPO Received')
+  if (hopCol === -1 || cpoCol === -1) return out
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i] as unknown[]
+    if (!row) continue
+    if (String(row[don444Col] ?? '').trim().toUpperCase() !== 'DON 444') continue
+    const hop = String(row[hopCol] ?? '').trim()
+    if (!hop || hop === 'undefined') continue
+    const cpoNumber = String(row[cpoCol] ?? '').trim()
+    if (!cpoNumber) continue
+    const key = matchKey(normalizeTrackerHop(hop))
+    const siteName = String(row[siteCol] ?? '').trim()
+    out.set(key, [...(out.get(key) ?? []), { siteName, cpoNumber }])
+  }
+  return out
+}
+
+export function formatCpoEntries(entries: CpoEntry[]): string {
+  return entries.map(e => `${e.cpoNumber}${e.siteName ? ` (${e.siteName})` : ''}`).join(', ')
+}
+
 // Decom is tracked per physical site (a HOP has two), so decomComplete above
 // is already the HOP-level AND of both — this is the detail behind that
 // boolean: which site(s) are actually still outstanding.
@@ -145,6 +192,11 @@ export interface CleanupHop {
   // null when the tracker had no valid Latt./Long. for this HOP's sites —
   // excluded from the map and from clustering, never guessed at.
   coord: HopCoord | null
+  // Tracker-sourced "Service CPO Received" values, one per site — empty when
+  // the tracker has nothing on file (common; only ~1/3 of HOPs have this
+  // filled in). See CpoEntry's comment for how this relates to
+  // CleanupAssignment.cpoNumber.
+  cpoNumbers: CpoEntry[]
   // False for fullyPaidButIncomplete (nothing unpaid to fund a new GC with)
   // and readyToRelease (Decom + SCOP already both done — nothing left for a
   // new GC to do, just a GR CJ submits himself). Drives whether a HOP's row
@@ -195,6 +247,8 @@ export function buildCleanupHops(
   // whose tracker GC is still active is excluded even if one of its SPO
   // lines happens to be with a departed GC.
   hopGcMap: Map<string, string> | null = null,
+  // Tracker-sourced per-site CPO numbers (buildHopCpoMap) — see CpoEntry.
+  cpoMap: Map<string, CpoEntry[]> = new Map(),
 ): CleanupGroups {
   const departedSet = new Set(departedGcs.map(g => g.trim().toLowerCase()))
   const byHop = new Map<string, GrRow[]>()
@@ -243,6 +297,7 @@ export function buildCleanupHops(
       decomPendingSites: decomSiteNotes.get(hop) ?? [],
       scopPendingSites: scopSiteNotes.get(hop) ?? [],
       coord: coordMap.get(hop) ?? null,
+      cpoNumbers: cpoMap.get(hop) ?? [],
       needsReassignment: true, // default; the two early-exit branches below override it
     }
 
@@ -307,7 +362,8 @@ export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupG
     Array.from(trackerDateMap.entries()).filter(([, d]) => d.ms16a !== null).map(([key]) => key)
   )
   const hopGcMap = trackerSnap ? buildHopGcMap(trackerSnap.data) : new Map<string, string>()
-  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes, ms16aCompleteHops, hopGcMap)
+  const cpoMap = trackerSnap ? buildHopCpoMap(trackerSnap.data) : new Map<string, CpoEntry[]>()
+  return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes, ms16aCompleteHops, hopGcMap, cpoMap)
 }
 
 // ─────────────────────────────────────────────
