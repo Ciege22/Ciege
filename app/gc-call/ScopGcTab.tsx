@@ -72,8 +72,12 @@ export default function ScopGcTab({
     const hist = noteHistory[pathwaveNoteKey(r.hop, r.site)]
     if (hist?.length) notesByKey[`${r.hop}::${r.site}`] = `${new Date(hist[0].logged_at).toLocaleDateString('en-US')} — ${hist[0].note}`
   })
+  report.sections.oad.forEach(r => {
+    const hist = noteHistory[oadNoteKey(r.hop)]
+    if (hist?.length) notesByKey[`${r.hop}::OAD`] = `${new Date(hist[0].logged_at).toLocaleDateString('en-US')} — ${hist[0].note}`
+  })
 
-  const email = buildScopGcEmailMailto(report, calc, emailSettings, notesByKey)
+  const email = buildScopGcEmailMailto(report, calc, thresholds, emailSettings, notesByKey)
 
   return (
     <div className="space-y-8">

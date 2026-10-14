@@ -632,7 +632,7 @@ function ScopGcReports({
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {visible.map(gc => {
           const report = reportByGc.get(gc) ?? null
-          const email = report ? buildScopGcEmailMailto(report, calc, emailSettings) : null
+          const email = report ? buildScopGcEmailMailto(report, calc, thresholds, emailSettings) : null
           return (
             <div key={gc} className={`rounded-xl border p-4 ${report ? 'border-gray-700 bg-gray-900' : 'border-gray-800 bg-gray-900/50'}`}>
               <h3 className="text-base font-bold text-white">{gc}</h3>

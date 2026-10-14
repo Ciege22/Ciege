@@ -494,41 +494,100 @@ function mmddyyyy(d: Date): string {
   return `${p(d.getMonth() + 1)}/${p(d.getDate())}/${d.getFullYear()}`
 }
 
-export function buildGCEmailText(report: ScopGcReport, s: ScopCalcSettings, notesByKey?: Record<string, string>): ScopEmailText {
+// Aging tiers for the email — reuses the same red/amber/green thresholds the
+// on-screen tables already color HOPs by (ScopSettings.agingColorThresholds),
+// so the email reads exactly as "hot" as the view CJ is looking at.
+type ScopAgingTier = 'critical' | 'urgent' | 'onTrack'
+const SCOP_TIER_ICON: Record<ScopAgingTier, string> = { critical: '🔴', urgent: '🟡', onTrack: '🟢' }
+
+function scopAgingTier(days: number | null, thresholds: { green: number; amber: number }): ScopAgingTier {
+  const c = agingColor(days, thresholds)
+  return c === 'red' ? 'critical' : c === 'amber' ? 'urgent' : 'onTrack'
+}
+
+export function buildGCEmailText(
+  report: ScopGcReport,
+  s: ScopCalcSettings,
+  thresholds: { green: number; amber: number },
+  notesByKey?: Record<string, string>,
+): ScopEmailText {
   const { gc, summary, sections } = report
   const dateStr = mmddyyyy(report.generatedDate)
-  const threshold = s.emailPriorityThresholdDays
 
-  // Dedupe the site-level Pathwave rows down to one entry per HOP (already
-  // OAD-free). No cap — every outstanding item at/above the aging threshold
-  // is listed (a 5-item cap used to silently cut off real, legitimate items
-  // ranked #6+, which just read as "missing" with nothing in the email
-  // saying there was more).
-  const priorityItems = [...new Map(sections.pathwave.map(r => [r.hop, r])).values()]
-    .filter(r => (r.agingDays || 0) >= threshold)
-    .sort((a, b) => (b.agingDays || 0) - (a.agingDays || 0))
+  // Every row, every HOP — no threshold filter and no per-HOP dedupe. A HOP
+  // can have outstanding items on both Site A and Site B; collapsing to one
+  // row per HOP (the old behavior) silently dropped the second site's gap.
+  const pathwaveItems = [...sections.pathwave].sort((a, b) => (b.agingDays || 0) - (a.agingDays || 0))
+  const oadItems = [...sections.oad].sort((a, b) => (b.agingDays || 0) - (a.agingDays || 0))
 
+  const tierCount = (items: { agingDays: number | null }[], tier: ScopAgingTier) =>
+    items.filter(r => scopAgingTier(r.agingDays, thresholds) === tier).length
+  const critical = tierCount(pathwaveItems, 'critical')
+  const urgent = tierCount(pathwaveItems, 'urgent')
+  const onTrack = tierCount(pathwaveItems, 'onTrack')
+
+  const pct = (n: number, total: number) => (total > 0 ? Math.round((100 * n) / total) : 0)
   const subject = `Weekly SCOP Action Items — ${gc} (${dateStr})`
 
-  let body = `Hi ${gc},\n\nSummary for ${gc}:\n`
-  body += `• Total HOPs: ${summary.totalHOPs}\n`
-  body += `• Completed: ${summary.completed}\n`
-  body += `• Outstanding: ${summary.outstanding}\n`
-  body += `• Oldest outstanding item: ${summary.oldestOutstandingDays} days since construction complete\n\n`
-  body += `Full detail is in the attached report, sorted oldest-first.\n\n`
+  const thinDiv = `${'─'.repeat(41)}\n`
+  const thickDiv = `${'═'.repeat(41)}\n`
 
-  if (priorityItems.length > 0) {
-    body += `Top priority (aging ${threshold}+ days since construction complete):\n`
-    body += priorityItems.map(r => {
-      const note = notesByKey?.[`${r.hop}::${r.site}`]
-      return `• ${r.hop} — ${r.agingDays} days${note ? `\n  📞 Call Note: ${note}` : ''}`
-    }).join('\n')
-    body += `\n\nThese are the longest-outstanding items — let's prioritize closing these out first.\n\n`
+  let body = thickDiv
+  body += `📊 SCOP PROGRAM SUMMARY — ${gc.toUpperCase()}\n`
+  body += thickDiv
+  body += `Total HOPs Tracked:          ${summary.totalHOPs}\n`
+  body += `✅ Complete:                 ${summary.completed} (${pct(summary.completed, summary.totalHOPs)}%)\n\n`
+  body += `⏳ Needed From GC (Pathwave): ${pathwaveItems.length} items\n`
+  body += `   🔴 Critical (${thresholds.amber}+ days):   ${critical} items\n`
+  body += `   🟡 Urgent (${thresholds.green}-${thresholds.amber - 1} days):    ${urgent} items\n`
+  body += `   🟢 On Track (0-${thresholds.green - 1} days): ${onTrack} items\n\n`
+  body += `🔵 Pending OAD (Not a GC item): ${oadItems.length} HOPs\n\n`
+  body += `⏱️  Oldest Outstanding:       ${summary.oldestOutstandingDays ?? 0} days\n`
+  body += `📅 Report Date:               ${dateStr}\n\n`
+
+  body += thinDiv
+  body += `★★★ NEEDED FROM ${gc.toUpperCase()} — PATHWAVE ★★★\n`
+  body += thinDiv
+  body += `\n`
+  if (pathwaveItems.length === 0) {
+    body += `None — nothing outstanding on the GC side right now.\n\n`
   } else {
-    body += `Nothing is over the ${threshold}-day priority threshold yet, but please keep the attached list moving.\n\n`
+    pathwaveItems.forEach(r => {
+      const tier = scopAgingTier(r.agingDays, thresholds)
+      const days = r.agingDays ?? 0
+      const label = tier === 'onTrack' ? `ON TRACK — ${days} DAYS SINCE COMPLETE` : `${tier === 'critical' ? 'CRITICAL' : 'URGENT'} — ${days} DAYS SINCE COMPLETE`
+      body += `${SCOP_TIER_ICON[tier]} ${label}\n`
+      body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+      body += `${r.site}: ${r.site === 'Site A' ? (r.nearSiteA || '—') : (r.farSiteB || '—')}\n`
+      body += `Missing: ${r.missingItems}\n`
+      if (tier === 'critical') body += `⚠️  ACTION OVERDUE — PLEASE PRIORITIZE\n`
+      else if (tier === 'urgent') body += `⏳ Action needed soon\n`
+      const note = notesByKey?.[`${r.hop}::${r.site}`]
+      if (note) body += `📞 Call Note: ${note}\n`
+      body += `\n`
+    })
   }
 
-  body += `Please review the attached report and let us know a target date for the outstanding items. Happy to hop on a call if anything needs clarifying.\n\nThanks,\nCJ`
+  if (oadItems.length > 0) {
+    body += thinDiv
+    body += `★★★ PENDING ON OUR SIDE — OAD (NOT A GC ACTION ITEM) ★★★\n`
+    body += thinDiv
+    body += `\n`
+    oadItems.forEach(r => {
+      const tier = scopAgingTier(r.agingDays, thresholds)
+      const days = r.agingDays ?? 0
+      body += `${SCOP_TIER_ICON[tier]} ${days} DAYS SINCE COMPLETE\n`
+      body += `★ ${r.hop} ★  |  Path ID: ${r.pathId || '—'}  |  CM: ${r.cm || '—'}\n`
+      body += `Site A: ${r.nearSiteA || '—'}  |  Site B: ${r.farSiteB || '—'}\n`
+      body += `One and Done: ${r.note || '—'}\n`
+      const note = notesByKey?.[`${r.hop}::OAD`]
+      if (note) body += `📞 Call Note: ${note}\n`
+      body += `\n`
+    })
+  }
+
+  body += thickDiv
+  body += `Please review the items above and let us know a target date for anything still outstanding — happy to hop on a call if anything needs clarifying.\n\nThanks,\nCJ`
 
   return {
     subject,
@@ -540,10 +599,11 @@ export function buildGCEmailText(report: ScopGcReport, s: ScopCalcSettings, note
 export function buildScopGcEmailMailto(
   report: ScopGcReport,
   s: ScopCalcSettings,
+  thresholds: { green: number; amber: number },
   emailSettings: { ccList: string[]; gcContactEmails: Record<string, string>; routing?: Record<string, EmailRouting> },
   notesByKey?: Record<string, string>,
 ): string {
-  const { subject, body } = buildGCEmailText(report, s, notesByKey)
+  const { subject, body } = buildGCEmailText(report, s, thresholds, notesByKey)
   const target = report.gc.trim().toLowerCase()
   const toKey = Object.keys(emailSettings.gcContactEmails).find(k => k.trim().toLowerCase() === target)
   const baseTo = toKey ? emailSettings.gcContactEmails[toKey] : ''
