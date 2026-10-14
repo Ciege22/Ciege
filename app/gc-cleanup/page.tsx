@@ -181,6 +181,7 @@ export default function GcCleanupPage() {
           assignments={assignments}
           onSaved={(hop, a) => setAssignments(prev => ({ ...prev, [hop]: a }))}
           onClose={() => setOpenBucket(null)}
+          onEmailClick={openBucket === 'quoted' ? () => { setOpenBucket(null); setEmailCenterOpen(true) } : undefined}
         />
       )}
 
@@ -407,9 +408,12 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                       </div>
                       {pending.length > 0 && (
                         <ul className="text-xs text-gray-400 space-y-0.5">
-                          {pending.map(({ hop }) => (
+                          {pending.map(({ hop, assignment }) => (
                             <li key={hop.hop} className="flex justify-between gap-2">
-                              <span>{hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}</span>
+                              <span>
+                                {hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}
+                                <span className="text-emerald-400"> → {assignment.newGc}, {fmtMoney(assignment.quote ?? 0)}, new SPO {assignment.newGcSpoNumber || '—'}</span>
+                              </span>
                               <span className="text-amber-400">not sent</span>
                             </li>
                           ))}
@@ -419,7 +423,10 @@ function EmailCenterModal({ quoted, onSaved, onClose }: {
                         <ul className={`text-xs text-gray-500 space-y-0.5 ${pending.length > 0 ? 'mt-2 pt-2 border-t border-gray-700' : ''}`}>
                           {sent.map(({ hop, assignment }) => (
                             <li key={hop.hop} className="flex justify-between gap-2">
-                              <span>{hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}</span>
+                              <span>
+                                {hop.hopDisplay} (GC: {hop.gc}) — {hop.unpaidTiers.map(t => `${t.spoNumber || '—'} (${tierPercent(t.tier)}, ${t.vendor})`).join(', ')}
+                                <span className="text-emerald-500"> → {assignment.newGc}, {fmtMoney(assignment.quote ?? 0)}, new SPO {assignment.newGcSpoNumber || '—'}</span>
+                              </span>
                               <span className="text-emerald-400">{fmtSent(assignment.financeEmailSentAt)}</span>
                             </li>
                           ))}
@@ -456,12 +463,13 @@ function cellValue(h: CleanupHop, col: FilterCol, assignments: Record<string, Cl
   return assignments[h.hop]?.status ?? 'Needs Quote'
 }
 
-function BucketModal({ title, rows, assignments, onSaved, onClose }: {
+function BucketModal({ title, rows, assignments, onSaved, onClose, onEmailClick }: {
   title: string
   rows: CleanupHop[]
   assignments: Record<string, CleanupAssignment>
   onSaved: (hop: string, a: CleanupAssignment) => void
   onClose: () => void
+  onEmailClick?: () => void
 }) {
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<Partial<Record<FilterCol, Set<string>>>>({})
@@ -510,6 +518,12 @@ function BucketModal({ title, rows, assignments, onSaved, onClose }: {
               className="w-56 bg-gray-800 text-white text-sm rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500" />
             {Object.keys(filters).length > 0 && (
               <button onClick={() => setFilters({})} className="text-gray-400 hover:text-white text-xs underline">✕ Clear filters</button>
+            )}
+            {onEmailClick && (
+              <button onClick={onEmailClick}
+                className="bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-semibold px-3 py-1.5 rounded whitespace-nowrap">
+                📧 Email quoted HOPs
+              </button>
             )}
             <button onClick={onClose} className="text-gray-400 hover:text-white text-xl leading-none">&times;</button>
           </div>

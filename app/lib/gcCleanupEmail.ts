@@ -90,17 +90,22 @@ export function openCancellationEmail(
 ): void {
   const subject = `SPO Cancellation Request — Reassigned Clean-Up Work — ${todayStr()}`
   let body = `Please cancel the SPOs below — this scope is being reassigned to a new contractor for clean-up, `
-    + `so the original vendor's SPO should not also be paid out.\n\n`
+    + `so the original vendor's SPO should not also be paid out. The replacement contractor and their SPO are `
+    + `shown with each HOP.\n\n`
   // Bullet is the HOP + Path ID + the HOP's current (departed) GC per the
   // tracker; each unpaid tier stacks underneath with its OWN vendor, since a
   // HOP can carry SPO lines from more than one vendor (a small CR issued to
   // an unrelated sub, say) even though the tracker attributes the HOP itself
   // to one GC — Finance needs to know exactly whose SPO each line cancels.
-  items.forEach(({ hop }) => {
+  // The new GC's own line (quote + their SPO #, once issued) stacks last, so
+  // Finance has the full before/after picture in one email instead of
+  // cross-referencing the separate quote-confirmation email.
+  items.forEach(({ hop, assignment }) => {
     body += `• ${hop.hopDisplay}  |  Path ID: ${hop.pathId || '—'}  |  HOP's GC: ${hop.gc}\n`
     hop.unpaidTiers.forEach(t => {
       body += `    SPO #: ${t.spoNumber || '—'}  |  Vendor: ${t.vendor}  |  %: ${tierPercent(t.tier)}  |  Tier: ${t.tierLabel}  |  Value: ${fmtMoney(t.value)}\n`
     })
+    body += `    Reassigned to: ${assignment.newGc}  |  Quoted Price: ${fmtMoney(assignment.quote ?? 0)}  |  New SPO #: ${assignment.newGcSpoNumber || '— (not yet issued)'}\n`
     body += `\n`
   })
   body += `Thank you,\nCJ`
