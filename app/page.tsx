@@ -4,12 +4,13 @@ import { useEffect, useState, useCallback } from 'react'
 import * as XLSX from 'xlsx'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
 import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
-import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings } from './lib/settings'
+import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings, loadEmailSettings, EmailRouting } from './lib/settings'
 import { loadChunkedReport } from './lib/reportChunks'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
 import { computeSpoStatus, SpoStatus } from './lib/spoStatus'
 import { SpoBatchForHops } from './components/SpoBatchBar'
+import { buildMaterialWatchEmailMailto } from './lib/materialWatchEmail'
 
 // Decom isn't its own page (it lives inside Reports' Decom section and
 // GC Call View's Decom tab), so it isn't listed as a separate nav card here
@@ -469,6 +470,44 @@ function HopsModal({ title, hops, onClose, footer }: { title: string; hops: HopD
           )}
         </div>
       </div>
+    </div>
+  )
+}
+
+// Material Watch tile's modal footer — one email to the material team
+// confirming forecasted material dates for every site in the list. Same
+// self-contained load-its-own-settings pattern as SpoBatchForHops.
+function MaterialWatchEmailBar({ hops }: { hops: HopDetail[] }) {
+  const [routing, setRouting] = useState<Record<string, EmailRouting> | undefined>(undefined)
+  const [ccList, setCcList] = useState<string[]>([])
+  const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    loadEmailSettings().then(e => { setRouting(e.routing); setCcList(e.ccList) }).catch(() => {})
+  }, [])
+
+  const send = () => {
+    setSending(true)
+    try {
+      const items = hops.map(h => ({
+        hop: h.hop, gc: h.gc, ms15f: h.ms15f, daysOut: h.daysOut,
+        hasNtp: h.hasNtp, ntpWaitingOn: h.ntpWaitingOn,
+      }))
+      window.location.href = buildMaterialWatchEmailMailto(items, ccList, routing)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-gray-400">
+        Drafts one email to the material team confirming forecasted material dates for these {hops.length} site{hops.length === 1 ? '' : 's'}.
+      </p>
+      <button onClick={send} disabled={hops.length === 0 || sending}
+        className="bg-orange-700 hover:bg-orange-600 disabled:opacity-40 text-white text-sm font-semibold rounded px-4 py-2 whitespace-nowrap">
+        {sending ? 'Opening…' : '✉️ Email Material Team'}
+      </button>
     </div>
   )
 }
@@ -2136,7 +2175,11 @@ export default function Home() {
           title={modalTitle}
           hops={modalHops}
           onClose={() => setShowModal(false)}
-          footer={modalTitle === 'Needs SPO Requested' ? <SpoBatchForHops hopNames={modalHops.map(h => h.hop)} /> : undefined}
+          footer={
+            modalTitle === 'Needs SPO Requested' ? <SpoBatchForHops hopNames={modalHops.map(h => h.hop)} />
+              : modalTitle === 'Material Watch' ? <MaterialWatchEmailBar hops={modalHops} />
+              : undefined
+          }
         />
       )}
     </div>
