@@ -1,4 +1,4 @@
-// GC Clean-Up emails — three, each with one job:
+// GC Clean-Up emails — four, each with one job:
 //   1. Quote confirmation to the new GC (one mailto per GC, opened one click
 //      at a time — matches the SPO batch bar's convention, since browsers
 //      block several mailto: navigations fired at once).
@@ -10,8 +10,12 @@
 //      back to a manually-typed one only when the tracker has nothing.
 //      Opposite direction from the SPO # Finance hands back once the new
 //      SPO exists (tracked separately as newGcSpoNumber).
-// Kept as three separate emails on purpose — mixing the new-GC details into
-// the cancellation email once made it unclear which email was for what.
+//   4. GR approval to Finance, once CJ confirms the new GC's punch list is
+//      actually done — SPO #, amount, approved to release. Sent one HOP at
+//      a time (not batched like 1-3) since punch completion lands on its
+//      own schedule per HOP, not all at once.
+// Kept as separate emails on purpose — mixing the new-GC details into the
+// cancellation email once made it unclear which email was for what.
 import { type EmailRouting, applyEmailRouting, lookupContactEmail } from './settings'
 import { GR_EMAIL_TO, GR_EMAIL_CC_BASE, fmtMoney } from './grTracker'
 import { formatCpoEntries, type CleanupHop, type CleanupAssignment } from './gcCleanup'
@@ -24,6 +28,15 @@ export interface QuotedHop {
 function todayStr(): string {
   const d = new Date()
   return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`
+}
+
+// punchCompletionDate is stored as the raw 'YYYY-MM-DD' an <input type="date">
+// gives back — reformat to M/D/YYYY for the email so it matches every other
+// date this app shows a human.
+function fmtPunchDate(iso: string): string {
+  if (!iso) return '—'
+  const [y, m, d] = iso.split('-')
+  return y && m && d ? `${parseInt(m, 10)}/${parseInt(d, 10)}/${y}` : iso
 }
 
 // Every HOP with both a quote and a new GC assigned — the set either email
@@ -144,5 +157,31 @@ export function openCpoRequestEmail(
 
   const baseCc = financeEmails.length > 0 ? financeEmails : GR_EMAIL_CC_BASE
   const { to, cc } = applyEmailRouting(routing, 'gcCleanupCpoEmail', GR_EMAIL_TO, baseCc)
+  window.location.href = `mailto:${encodeURIComponent(to)}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
+}
+
+// The fourth email — single HOP, sent once CJ marks the punch completion
+// date: tells Finance the new GC's SPO #, the amount, and that it's
+// approved to GR. Same voice as the program's existing GR Release Request
+// email (buildGrEmailMailto in grTracker.ts) — divider-framed, ★ HOP ★
+// header, bullet detail line, explicit approval sign-off.
+export function openGrApprovalEmail(
+  item: QuotedHop,
+  financeEmails: string[],
+  routing: Record<string, EmailRouting> | undefined,
+): void {
+  const { hop, assignment } = item
+  const subject = `GR Approval — ${hop.hopDisplay} — ${todayStr()}`
+  const div = '═'.repeat(40)
+
+  let body = `Punch list is complete — please see below and proceed with GR on this SPO.\n\n${div}\n\n`
+  body += `★ ${hop.hopDisplay} ★  |  Path ID: ${hop.pathId || '—'}\n`
+  body += `  Vendor: ${assignment.newGc}  |  SPO #: ${assignment.newGcSpoNumber || '—'}  |  Amount: ${fmtMoney(assignment.quote ?? 0)}\n`
+  body += `  Punch Completion Date: ${fmtPunchDate(assignment.punchCompletionDate)}\n\n`
+  body += `${div}\n`
+  body += `Approved to release — please proceed with GR.\n\nThank you,\nCJ`
+
+  const baseCc = financeEmails.length > 0 ? financeEmails : GR_EMAIL_CC_BASE
+  const { to, cc } = applyEmailRouting(routing, 'gcCleanupGrApprovalEmail', GR_EMAIL_TO, baseCc)
   window.location.href = `mailto:${encodeURIComponent(to)}?cc=${encodeURIComponent(cc)}&subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`
 }

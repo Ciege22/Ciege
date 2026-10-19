@@ -402,11 +402,20 @@ export interface CleanupAssignment {
   // to create it). Once this is filled in, the quoted $ is money ready to
   // release to the new GC.
   newGcSpoNumber: string
+  // '' until CJ confirms the new GC actually finished the clean-up (the
+  // punch list) — independent of whether the SPO/GR paperwork has caught up
+  // yet. Gates the GR-approval email below: nothing should go to Finance
+  // asking them to GR the new SPO before the work is actually done.
+  punchCompletionDate: string
+  // '' until the GR-approval email (SPO #, amount, approval to release) has
+  // been sent to Finance for this HOP's new-GC SPO.
+  grApprovalEmailSentAt: string
 }
 
 export const EMPTY_ASSIGNMENT: CleanupAssignment = {
   newGc: '', quote: null, comment: '', status: 'Needs Quote', updatedAt: '', newGcSpoNumber: '', cpoNumber: '',
   gcEmailSentAt: '', financeEmailSentAt: '', cpoEmailSentAt: '',
+  punchCompletionDate: '', grApprovalEmailSentAt: '',
 }
 
 const ASSIGNMENTS_ID = 'gc-cleanup-assignments'

@@ -16,7 +16,7 @@ import {
 } from '../lib/gcCleanup'
 import {
   type QuotedHop, quotedHops, groupByNewGc, cancellableHops, openGcQuoteEmail, openCancellationEmail,
-  openCpoRequestEmail, tierPercent,
+  openCpoRequestEmail, openGrApprovalEmail, tierPercent,
 } from '../lib/gcCleanupEmail'
 import { clusterByDistance, type GeoCluster } from '../lib/hopCoords'
 
@@ -546,6 +546,12 @@ function BucketModal({ title, rows, assignments, onSaved, onClose, onEmailClick 
   const [search, setSearch] = useState('')
   const [filters, setFilters] = useState<Partial<Record<FilterCol, Set<string>>>>({})
   const [openCol, setOpenCol] = useState<FilterCol | null>(null)
+  // Loaded once here (not per-row) so every CleanupRow's GR-approval email
+  // button shares the same financeEmails/routing without a separate fetch each.
+  const [emailSettings, setEmailSettings] = useState<EmailSettings | null>(null)
+  useEffect(() => {
+    loadEmailSettings().then(setEmailSettings).catch(() => setEmailSettings(null))
+  }, [])
 
   const valuesByCol = useMemo(() => {
     const out = {} as Record<FilterCol, string[]>
@@ -617,6 +623,8 @@ function BucketModal({ title, rows, assignments, onSaved, onClose, onEmailClick 
                 <th className="text-left p-2 bg-gray-800">CPO #</th>
                 <th className="text-left p-2 bg-gray-800">New GC SPO #</th>
                 <th className="text-left p-2 bg-gray-800">Gap</th>
+                <th className="text-left p-2 bg-gray-800">Punch Completion Date</th>
+                <th className="text-left p-2 bg-gray-800">GR Approval Email</th>
                 <FilterableHeader label="Status" col="status" openCol={openCol} setOpenCol={setOpenCol} values={valuesByCol.status} filters={filters} onApply={setColumnFilter} />
                 <th className="text-left p-2 bg-gray-800">Comment</th>
                 <th className="text-left p-2 bg-gray-800">Save</th>
@@ -625,11 +633,11 @@ function BucketModal({ title, rows, assignments, onSaved, onClose, onEmailClick 
             <tbody>
               {visible.map(h => (
                 h.needsReassignment
-                  ? <CleanupRow key={h.hop} hop={h} assignment={assignments[h.hop]} onSaved={a => onSaved(h.hop, a)} />
+                  ? <CleanupRow key={h.hop} hop={h} assignment={assignments[h.hop]} onSaved={a => onSaved(h.hop, a)} emailSettings={emailSettings} />
                   : <ReadOnlyRow key={h.hop} hop={h} />
               ))}
               {visible.length === 0 && (
-                <tr><td colSpan={16} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
+                <tr><td colSpan={18} className="p-4 text-center text-gray-500">No HOPs match these filters.</td></tr>
               )}
             </tbody>
           </table>
@@ -737,31 +745,36 @@ function ReadOnlyRow({ hop }: { hop: CleanupHop }) {
       <UnpaidCells hop={hop} />
       <DecomCell hop={hop} />
       <ScopCell hop={hop} />
-      <td colSpan={8} className="p-2 text-gray-600 text-center italic">{note}</td>
+      <td colSpan={10} className="p-2 text-gray-600 text-center italic">{note}</td>
     </tr>
   )
 }
 
-function CleanupRow({ hop, assignment, onSaved }: {
+function CleanupRow({ hop, assignment, onSaved, emailSettings }: {
   hop: CleanupHop
   assignment: CleanupAssignment | undefined
   onSaved: (a: CleanupAssignment) => void
+  emailSettings: EmailSettings | null
 }) {
   const [newGc, setNewGc] = useState(assignment?.newGc ?? '')
   const [quote, setQuote] = useState(assignment?.quote != null ? String(assignment.quote) : '')
   const [cpoNumber, setCpoNumber] = useState(assignment?.cpoNumber ?? '')
   const [newGcSpoNumber, setNewGcSpoNumber] = useState(assignment?.newGcSpoNumber ?? '')
+  const [punchCompletionDate, setPunchCompletionDate] = useState(assignment?.punchCompletionDate ?? '')
   const [status, setStatus] = useState(assignment?.status ?? 'Needs Quote')
   const [comment, setComment] = useState(assignment?.comment ?? '')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [savedAt, setSavedAt] = useState<string | null>(null)
+  const [sendingGr, setSendingGr] = useState(false)
+  const [grError, setGrError] = useState<string | null>(null)
 
   const quoteNum = quote.trim() === '' ? null : Number(quote)
   const gap = quoteNum != null && !Number.isNaN(quoteNum) ? quoteNum - hop.unpaidValue : null
   const readyToReleaseToNewGc = newGcSpoNumber.trim() !== '' && quoteNum != null
   const isDirty = newGc !== (assignment?.newGc ?? '') || quote !== (assignment?.quote != null ? String(assignment.quote) : '')
     || cpoNumber !== (assignment?.cpoNumber ?? '') || newGcSpoNumber !== (assignment?.newGcSpoNumber ?? '')
+    || punchCompletionDate !== (assignment?.punchCompletionDate ?? '')
     || status !== (assignment?.status ?? 'Needs Quote') || comment !== (assignment?.comment ?? '')
 
   async function save() {
@@ -769,7 +782,7 @@ function CleanupRow({ hop, assignment, onSaved }: {
     setSaveError(null)
     try {
       const saved = await saveCleanupAssignment(hop.hop, {
-        newGc, status, cpoNumber, newGcSpoNumber,
+        newGc, status, cpoNumber, newGcSpoNumber, punchCompletionDate,
         quote: quoteNum != null && !Number.isNaN(quoteNum) ? quoteNum : null,
         comment,
       })
@@ -779,6 +792,25 @@ function CleanupRow({ hop, assignment, onSaved }: {
       setSaveError(err instanceof Error ? err.message : 'Save failed — try again.')
     } finally {
       setSaving(false)
+    }
+  }
+
+  // Only fires off the saved record — a punch date typed but not yet saved
+  // shouldn't be able to trigger an email Finance will act on.
+  const canSendGrApproval = !!assignment?.punchCompletionDate && !!assignment?.newGcSpoNumber?.trim() && assignment?.quote != null
+
+  async function sendGrApproval() {
+    if (!assignment || !canSendGrApproval) return
+    setSendingGr(true)
+    setGrError(null)
+    try {
+      openGrApprovalEmail({ hop, assignment }, emailSettings?.financeEmails ?? [], emailSettings?.routing)
+      const saved = await saveCleanupAssignment(hop.hop, { grApprovalEmailSentAt: new Date().toISOString() })
+      onSaved(saved)
+    } catch (err) {
+      setGrError(err instanceof Error ? err.message : 'The email opened, but stamping it as sent failed — try again so it stays tracked.')
+    } finally {
+      setSendingGr(false)
     }
   }
 
@@ -821,6 +853,21 @@ function CleanupRow({ hop, assignment, onSaved }: {
       </td>
       <td className={`p-2 font-semibold whitespace-nowrap ${gap == null ? 'text-gray-600' : gap > 0 ? 'text-red-400' : 'text-green-400'}`}>
         {gap == null ? '—' : gap > 0 ? `Short ${fmtMoney(gap)}` : `Covers +${fmtMoney(-gap)}`}
+      </td>
+      <td className="p-2">
+        <input type="date" value={punchCompletionDate} onChange={e => setPunchCompletionDate(e.target.value)}
+          className="bg-gray-800 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500 [color-scheme:dark]" />
+      </td>
+      <td className="p-2 whitespace-nowrap">
+        <button onClick={sendGrApproval} disabled={!canSendGrApproval || sendingGr}
+          title={!canSendGrApproval ? 'Needs a saved Punch Completion Date, New GC SPO #, and quote first' : undefined}
+          className="bg-purple-800 hover:bg-purple-700 disabled:opacity-30 disabled:cursor-not-allowed text-white text-xs px-2 py-1 rounded">
+          {sendingGr ? 'Opening…' : assignment?.grApprovalEmailSentAt ? 'Re-email anyway' : '✉️ Email Finance'}
+        </button>
+        {assignment?.grApprovalEmailSentAt && (
+          <div className="text-emerald-400 text-[10px] mt-1">sent {fmtSent(assignment.grApprovalEmailSentAt)}</div>
+        )}
+        {grError && <div className="text-red-400 text-[10px] mt-1">{grError}</div>}
       </td>
       <td className="p-2">
         <select value={status} onChange={e => setStatus(e.target.value as CleanupAssignment['status'])}
