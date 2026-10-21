@@ -78,20 +78,20 @@ EXT_CONTENT_TYPES = {
 
 SNAPSHOT_PREFIX = 'deck-v2-snapshot-'
 
-# Plan values as they stand on the Cx Start / Cx Complete slides (checked
-# against my_working_version.pptx and the V2 template). Used only when the
-# previous deck is missing a month's Plan point. CJ revises these by hand as
-# the plan changes — confirmed current as of 10/13/2026 (Sep starts 25, not
-# 28; Jan/27 starts 6, not 8; Sep complete 24, not 28; Jan/27 complete 2, not
-# 4; Feb/27 complete dropped — now blank, not 4). This is a stopgap and will
-# drift again — the real fix is finding why the real Plan pass-through isn't
-# engaging for CJ's current previous-deck file.
+# Plan values as they stand on the Cx Start / Cx Complete slides. Used only
+# when the previous deck is missing a month's Plan point — now that
+# read_plan_series only reports genuinely-explicit points (see its
+# docstring), this fallback actually engages reliably instead of getting
+# silently blocked by a present-but-zero value. CJ revises these by hand as
+# the plan changes — confirmed current as of 10/20/2026 (rolling window
+# moved forward a month: starts Jan/27 6->8, new Feb/27:6; complete
+# Jan/26+ 13->14, Feb/27 2->7).
 PLAN_BASELINE_STARTS = {'Jan/26+': 24, 'Feb/26': 7, 'Mar/26': 18, 'Apr/26': 23, 'May/26': 22,
                         'Jun/26': 26, 'Jul/26': 28, 'Aug/26': 13, 'Sep/26': 25, 'Oct/26': 20,
-                        'Nov/26': 20, 'Dec/26': 10, 'Jan/27': 6}
-PLAN_BASELINE_COMPLETE = {'Jan/26+': 13, 'Feb/26': 7, 'Mar/26': 8, 'Apr/26': 14, 'May/26': 29,
+                        'Nov/26': 20, 'Dec/26': 10, 'Jan/27': 8, 'Feb/27': 6}
+PLAN_BASELINE_COMPLETE = {'Jan/26+': 14, 'Feb/26': 7, 'Mar/26': 8, 'Apr/26': 14, 'May/26': 29,
                           'Jun/26': 31, 'Jul/26': 30, 'Aug/26': 19, 'Sep/26': 24, 'Oct/26': 22,
-                          'Nov/26': 20, 'Dec/26': 15, 'Jan/27': 10, 'Feb/27': 2}
+                          'Nov/26': 20, 'Dec/26': 15, 'Jan/27': 10, 'Feb/27': 7}
 
 
 def call_tuesday(deck_date_str: str) -> datetime:
@@ -205,9 +205,22 @@ def compute_por_window(df, deck_date: pd.Timestamp, window_months: int = 6, max_
 # ─────────────────────────────────────────────
 
 def read_plan_series(chart_xml_bytes: bytes) -> dict:
-    """Returns {category_label: plan_value} for whatever is currently in the
-    chart's Plan series (column B per fix_chart_v2's convention below).
-    Missing <c:pt> entries mean 0 (numCache only stores points > 0)."""
+    """Returns {category_label: plan_value} for ONLY the points that actually
+    have an explicit <c:pt> in the chart's Plan series (column B per
+    fix_chart_v2's convention below) — an index with no <c:pt> is left OUT of
+    this dict entirely, not defaulted to 0.
+
+    This matters because build_plan_vals below does
+    `existing.get(lbl, baseline.get(lbl, 0))` — dict.get()'s fallback only
+    fires when the key is ABSENT, not when it's present-but-zero. Previously
+    this function filled every index in range(n) in `out`, including ones
+    with no real point (defaulting to 0), which made that 0 look like a
+    genuine "the file says zero" answer and permanently blocked the baseline
+    fallback for that month — and since fix_chart_v2's set_numdata only
+    writes a <c:pt> for values > 0, once a month's value was ever written as
+    (or defaulted to) 0, every future rebuild would keep reading it back as
+    an explicit 0 and never recover, which is exactly the "still missing the
+    Plan numbers" symptom reported build after build."""
     try:
         root = etree.fromstring(chart_xml_bytes)
     except Exception:
@@ -239,17 +252,17 @@ def read_plan_series(chart_xml_bytes: bytes) -> dict:
         num_cache = val_el.find(f'.//{{{C_NS}}}numCache')
         count_el = num_cache.find(f'{{{C_NS}}}ptCount') if num_cache is not None else None
         n = int(count_el.get('val')) if count_el is not None else max(labels.keys(), default=-1) + 1
-        values = [0] * n
+        explicit = {}
         if num_cache is not None:
             for pt in num_cache.findall(f'{{{C_NS}}}pt'):
                 idx = int(pt.get('idx'))
                 v = pt.find(f'{{{C_NS}}}v')
                 if idx < n and v is not None and v.text:
-                    values[idx] = float(v.text)
-        for i in range(n):
+                    explicit[idx] = float(v.text)
+        for i, val in explicit.items():
             label = labels.get(i)
             if label is not None:
-                out[label] = values[i]
+                out[label] = val
         break  # only one Plan series per chart
     return out
 
@@ -1017,11 +1030,19 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             if idx < len(shapes4):
                 set_shape_text(shapes4[idx], ds(val, ref))
 
-        for sh in delta_slide.shapes:
+        for sh_idx, sh in enumerate(shapes4):
             if not sh.has_text_frame:
                 continue
             t = sh.text_frame.text
-            if 'Compared to' in t:
+            # Matches either phrasing, not just 'Compared to' — the very
+            # first V2 build (no prior snapshot yet) legitimately wrote
+            # "Baseline — starts with <date>", and since that phrase never
+            # contains "Compared to", a lookup pinned to only that substring
+            # could never find the shape again on any later build to upgrade
+            # it — it would just sit there getting its date swapped forever
+            # by the global date sweep above while permanently stuck saying
+            # "Baseline" even once a real prior-week comparison exists.
+            if 'Compared to' in t or 'Baseline — starts with' in t:
                 set_shape_text(sh, f'Compared to {prev_session}  ·  {NEW_DATE}' if has_baseline else f'Baseline — starts with {NEW_DATE}')
             elif 'Construction Completed' in t:
                 total = d['total']
@@ -1030,6 +1051,18 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                 new_t = re.sub(r'\d+ of \d+ HOPs \(\d+%\)', f'{done} of {total} HOPs ({pct}%)', t)
                 new_t = re.sub(r'– \d+ HOPs', f'– {total - done} HOPs', new_t)
                 set_shape_text(sh, new_t)
+            elif t.strip() == 'Nokia Assigned Hops' and sh_idx > 0:
+                # The tile just above this label (same value/label/delta
+                # layout as the other 4 KPI tiles, just not at a verified
+                # fixed shapes4 index like those) — same DON 444 HOP count
+                # (regardless of GC status) the Construction Completed
+                # sentence above already uses. The "+9 Pending Red Flag"
+                # sub-label and the longer narrative sentence elsewhere on
+                # this slide are untouched — those are CJ's own manually
+                # maintained notes, not a computed field.
+                prev_sh = shapes4[sh_idx - 1]
+                if prev_sh.has_text_frame and prev_sh.text_frame.text.strip().isdigit():
+                    set_shape_text(prev_sh, str(d['total']))
 
         # "NTP Start Changes by Month" lines — one per active POR month, in order.
         month_lines = []
