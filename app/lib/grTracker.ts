@@ -191,9 +191,15 @@ export interface DecomScopStatus {
 // merged boolean) so pendingReasonFor() below can say which one is actually
 // still blocking. A HOP counts as decom-complete only when EVERY physical
 // site row for it (a HOP can span two sites) is 'complete'; scop completeness
-// reads ScopRow.fullyComplete directly (one row per HOP already). A HOP
-// absent from either tracker defaults to false — "not tracked yet" isn't
-// the same as "complete".
+// reads ScopRow.pathwaveStatus === 'COMPLETE' only — QuickBase is Nokia-
+// internal, not a GC-owned item, so it no longer gates this trigger (CJ,
+// 10/21/2026: a HOP used to sit on "Pending SCOP Complete" with its GC-owned
+// Pathwave checklist genuinely done because QuickBase lagged behind it,
+// which isn't visible anywhere a GC-facing view would show as outstanding —
+// ScopRow.fullyComplete, which DOES still require QuickBase, remains the
+// right definition for the Reports SCOP tab's own "fully complete" tracking,
+// just not for this trigger). A HOP absent from either tracker defaults to
+// false — "not tracked yet" isn't the same as "complete".
 export function buildDecomScopCompleteMap(
   decomRawRows: unknown[][],
   scopRawRows: unknown[][],
@@ -213,7 +219,7 @@ export function buildDecomScopCompleteMap(
     const calc = resolveScopCalcSettings(scopSettings)
     buildScopDataset(keyScopRows(scopRawRows), calc).forEach(r => {
       if (!r.hop) return
-      scopByHop.set(matchKey(normalizeTrackerHop(r.hop)), r.fullyComplete)
+      scopByHop.set(matchKey(normalizeTrackerHop(r.hop)), r.pathwaveStatus === 'COMPLETE')
     })
   }
 
