@@ -203,7 +203,7 @@ function MicrowaveDishIcon() {
   )
 }
 
-const NEBRASKA_DEADLINE = new Date(2026, 9, 31) // October 31, 2026
+const NEBRASKA_DEADLINE = new Date(2026, 10, 8) // November 8, 2026
 
 function daysUntilNebraskaDeadline(): number {
   const today = new Date()
@@ -268,24 +268,40 @@ function NebraskaWidget({ hopDetails, onOpenModal }: {
   const complete = total - remaining
   const progress = total > 0 ? Math.round((complete / total) * 100) : 0
   const daysRemaining = daysUntilNebraskaDeadline()
-  const color = nebraskaDeadlineColor(daysRemaining)
+  // Every HOP done — a success state entirely independent of the days-until
+  // urgency coloring below, which would otherwise still paint this red once
+  // the deadline is inside 30 days even though there's nothing left to do.
+  const isDone = total > 0 && remaining === 0
+  const color = isDone ? '#27AE60' : nebraskaDeadlineColor(daysRemaining)
   const filledBars = Math.round(progress / 10)
 
   return (
     <div
       onClick={() => onOpenModal('Nebraska Deadline — Remaining HOPs (FC Start / FC End)', remainingHops)}
-      title="Nebraska program deadline: Oct 31, 2026 — click for the remaining HOPs"
-      className="flex items-center gap-4 rounded-xl border px-6 py-4 bg-black/20 backdrop-blur-sm flex-shrink-0 cursor-pointer hover:bg-black/30 transition-colors"
+      title={isDone
+        ? `Nebraska program complete${daysRemaining > 0 ? ` — beat the Nov 8, 2026 target by ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}` : ''}`
+        : 'Nebraska program deadline: Nov 8, 2026 — click for the remaining HOPs'}
+      className={`flex items-center gap-4 rounded-xl border px-6 py-4 backdrop-blur-sm flex-shrink-0 cursor-pointer transition-colors ${
+        isDone ? 'bg-emerald-950/30 hover:bg-emerald-950/50 nebraska-complete-glow' : 'bg-black/20 hover:bg-black/30'
+      }`}
       style={{ borderColor: color }}
     >
       <MicrowaveDishIcon />
       <div className="leading-tight">
-        <p className="text-sm font-bold uppercase tracking-wider" style={{ color }}>Nebraska Deadline</p>
-        <p className="text-sm text-zinc-400">Oct 31, 2026</p>
+        <p className="text-sm font-bold uppercase tracking-wider" style={{ color }}>
+          {isDone ? '✅ Nebraska — Complete' : 'Nebraska Deadline'}
+        </p>
+        <p className="text-sm text-zinc-400">
+          {isDone
+            ? (daysRemaining > 0 ? `Beat the Nov 8 target by ${daysRemaining} day${daysRemaining === 1 ? '' : 's'}` : 'Nov 8, 2026 target')
+            : 'Nov 8, 2026'}
+        </p>
         <p className="text-base font-mono tracking-tighter" style={{ color }}>
           {'█'.repeat(filledBars)}{'░'.repeat(10 - filledBars)} {progress}%
         </p>
-        <p className="text-sm text-zinc-300">{remaining} HOPs left · {daysRemaining} days</p>
+        <p className="text-sm text-zinc-300">
+          {isDone ? `🎉 All ${total} HOPs complete` : `${remaining} HOPs left · ${daysRemaining} days`}
+        </p>
       </div>
     </div>
   )

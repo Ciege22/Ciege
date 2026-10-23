@@ -82,3 +82,14 @@ body {
 .navi-glow {
   animation: navi-glow-pulse 1.5s ease-in-out infinite;
 }
+
+/* Nebraska Deadline widget — success state once every HOP is complete.
+   Subtle pulsing glow, not a flashing alert — meant to read as "done" on a
+   screen-share, not demand attention. */
+@keyframes nebraska-glow-pulse {
+  0%, 100% { box-shadow: 0 0 10px 0 rgba(39, 174, 96, 0.35); }
+  50% { box-shadow: 0 0 22px 4px rgba(39, 174, 96, 0.65); }
+}
+.nebraska-complete-glow {
+  animation: nebraska-glow-pulse 2.4s ease-in-out infinite;
+}
