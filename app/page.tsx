@@ -250,6 +250,7 @@ interface HopDetail {
   needsSpoRequest: boolean, spoRequested: boolean, pendingCpo: boolean,
   materialWatch: boolean, vendorConflict: boolean,
   currentMonthFc: boolean, currentMonthAct: boolean,
+  currentMonthFcStart: boolean, currentMonthActStart: boolean,
 }
 
 // Clicking the widget opens the same "sites" modal every other dashboard tile
@@ -554,6 +555,8 @@ export default function Home() {
     vendorConflicts: number
     currentMonthFcComplete: number
     currentMonthActComplete: number
+    currentMonthFcStart: number
+    currentMonthActStart: number
   } | null>(null)
   const [modalTitle, setModalTitle] = useState('')
   const [modalHops, setModalHops] = useState<HopDetail[]>([])
@@ -719,6 +722,7 @@ export default function Home() {
     let startingThisWeek = 0, ntpUrgent = 0, spoRequested = 0, pendingCpo = 0
     let needsSpoRequest = 0, materialWatch = 0, vendorConflicts = 0
     let currentMonthFcComplete = 0, currentMonthActComplete = 0
+    let currentMonthFcStart = 0, currentMonthActStart = 0
 
     const pmSet = new Set<string>()
     hopRows.forEach((rows2) => {
@@ -774,6 +778,8 @@ export default function Home() {
 
       if (ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear) currentMonthFcComplete++
       if (ms16a && ms16a.getMonth() === currentMonth && ms16a.getFullYear() === currentYear) currentMonthActComplete++
+      if (ms15f && ms15f.getMonth() === currentMonth && ms15f.getFullYear() === currentYear) currentMonthFcStart++
+      if (ms15a && ms15a.getMonth() === currentMonth && ms15a.getFullYear() === currentYear) currentMonthActStart++
 
       let hasConflict = false
       rows2.forEach(r => {
@@ -809,6 +815,7 @@ export default function Home() {
       needsSpoRequest: boolean, spoRequested: boolean, pendingCpo: boolean,
       materialWatch: boolean, vendorConflict: boolean,
       currentMonthFc: boolean, currentMonthAct: boolean,
+      currentMonthFcStart: boolean, currentMonthActStart: boolean,
     }[] = []
     hopRows.forEach((rows2) => {
       const row = pickHopRow(rows2) as unknown[]
@@ -862,6 +869,8 @@ export default function Home() {
         vendorConflict: hasConflict2 && !complete,
         currentMonthFc: !!(ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear),
         currentMonthAct: !!(ms16a && ms16a.getMonth() === currentMonth && ms16a.getFullYear() === currentYear),
+        currentMonthFcStart: !!(ms15f && ms15f.getMonth() === currentMonth && ms15f.getFullYear() === currentYear),
+        currentMonthActStart: !!(ms15a && ms15a.getMonth() === currentMonth && ms15a.getFullYear() === currentYear),
       })
     })
     setHopDetails(details)
@@ -871,7 +880,7 @@ export default function Home() {
       totalHops, ntpComplete, materialsReceived, startsToDate, completesToDate,
       activeNow, over18d, startingThisWeek, ntpUrgent, spoRequested, pendingCpo,
       openActions: 0, needsSpoRequest, materialWatch, vendorConflicts,
-      currentMonthFcComplete, currentMonthActComplete
+      currentMonthFcComplete, currentMonthActComplete, currentMonthFcStart, currentMonthActStart,
     })
   }, [thresholds])
 
@@ -1377,6 +1386,8 @@ export default function Home() {
     vendorConflicts: filteredDetails.filter(h => h.vendorConflict).length,
     currentMonthFcComplete: filteredDetails.filter(h => h.currentMonthFc).length,
     currentMonthActComplete: filteredDetails.filter(h => h.currentMonthAct).length,
+    currentMonthFcStart: filteredDetails.filter(h => h.currentMonthFcStart).length,
+    currentMonthActStart: filteredDetails.filter(h => h.currentMonthActStart).length,
   } : null
 
   // Missing decom cross-reference — always all Nokia PMs, deliberately does not
@@ -1647,8 +1658,6 @@ export default function Home() {
                     { label: 'Materials Received', value: filteredKpis!.materialsReceived, color: 'text-green-400', sub: `${Math.round(filteredKpis!.materialsReceived/filteredKpis!.totalHops*100)}% of program`, filter: (h: typeof hopDetails[0]) => h.hasMat },
                     { label: 'Starts to Date', value: filteredKpis!.startsToDate, color: 'text-blue-400', sub: 'MS15 A confirmed', filter: (h: typeof hopDetails[0]) => !!h.ms15a },
                     { label: 'Completes to Date', value: filteredKpis!.completesToDate, color: 'text-teal-400', sub: 'MS16 A confirmed', filter: (h: typeof hopDetails[0]) => h.complete },
-                    { label: `${new Date().toLocaleString('default',{month:'short'})} FC Completes`, value: filteredKpis!.currentMonthFcComplete, color: 'text-yellow-400', sub: 'MS16 F this month', filter: (h: typeof hopDetails[0]) => h.currentMonthFc },
-                    { label: `${new Date().toLocaleString('default',{month:'short'})} Act Completes`, value: filteredKpis!.currentMonthActComplete, color: 'text-emerald-400', sub: 'MS16 A this month', filter: (h: typeof hopDetails[0]) => h.currentMonthAct },
                   ].map(({ label, value, color, sub, filter }) => (
                     <div key={label} onClick={() => openModal(label, filter)}
                       className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
@@ -1657,6 +1666,40 @@ export default function Home() {
                       <p className="text-gray-600 text-xs mt-1">{sub}</p>
                     </div>
                   ))}
+                  {/* Consolidated FC/Act combo tiles — Starts on the left, Complete on the
+                      right, each showing "forecast/actual" as one number pair instead of
+                      two separate tiles. Same color convention as the rest of the row
+                      (FC = yellow, Act = emerald); clicking either opens the combined
+                      FC-or-Act list for that milestone. */}
+                  {(() => {
+                    const monthName = new Date().toLocaleString('default', { month: 'long' })
+                    return (
+                      <>
+                        <div
+                          onClick={() => openModal(`${monthName} FC/Act Starts`, (h: typeof hopDetails[0]) => h.currentMonthFcStart || h.currentMonthActStart)}
+                          className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
+                          <p className="text-gray-500 text-xs">{monthName} FC/Act Starts</p>
+                          <p className="text-2xl font-bold">
+                            <span className="text-yellow-400">{filteredKpis!.currentMonthFcStart}</span>
+                            <span className="text-gray-600">/</span>
+                            <span className="text-emerald-400">{filteredKpis!.currentMonthActStart}</span>
+                          </p>
+                          <p className="text-gray-600 text-xs mt-1">MS15 F / MS15 A this month</p>
+                        </div>
+                        <div
+                          onClick={() => openModal(`${monthName} FC/Act Complete`, (h: typeof hopDetails[0]) => h.currentMonthFc || h.currentMonthAct)}
+                          className="bg-gray-900 rounded-xl border border-gray-700 p-3 text-center cursor-pointer hover:border-blue-500 hover:bg-gray-800 transition-all">
+                          <p className="text-gray-500 text-xs">{monthName} FC/Act Complete</p>
+                          <p className="text-2xl font-bold">
+                            <span className="text-yellow-400">{filteredKpis!.currentMonthFcComplete}</span>
+                            <span className="text-gray-600">/</span>
+                            <span className="text-emerald-400">{filteredKpis!.currentMonthActComplete}</span>
+                          </p>
+                          <p className="text-gray-600 text-xs mt-1">MS16 F / MS16 A this month</p>
+                        </div>
+                      </>
+                    )
+                  })()}
                 </div>
 
                 {/* Row 2 — Needs Action Today */}
