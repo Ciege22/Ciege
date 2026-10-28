@@ -21,6 +21,7 @@ import build_deck
 import build_deck_v2
 import gr_tracker
 import ntp_comments_v2
+import sharepoint
 
 app = Flask(__name__)
 CORS(app)
@@ -392,6 +393,37 @@ def ntp_comments_export():
 		xlsx = ntp_comments_v2.export_workbook([(m['sheet'], m['rows']) for m in months])
 		return send_file(io.BytesIO(xlsx), mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 		                 as_attachment=True, download_name=f'NTP_Pending_{call_dt.strftime("%m-%d-%Y")}.xlsx')
+	except Exception as e:
+		traceback.print_exc()
+		return jsonify({'error': str(e)}), 500
+
+
+@app.route('/sharepoint_test', methods=['GET'])
+def sharepoint_test_endpoint():
+	"""Stage 1 verification only — not called by any real feature yet.
+	Proves Railway's own app-only Graph token + file read work, independent
+	of any user's browser login. Mirrors app/sharepoint-test/page.tsx on
+	the frontend side."""
+	key = request.args.get('file', 'tracker')
+	try:
+		content = sharepoint.read_named_file(key)
+		import pandas as pd
+		xl = pd.ExcelFile(io.BytesIO(content))
+		first_sheet = xl.sheet_names[0]
+		df = xl.parse(first_sheet, header=None)
+		return jsonify({
+			'fileKey': key,
+			'byteLength': len(content),
+			'sheetNames': xl.sheet_names,
+			'firstSheetRowCount': len(df),
+			'firstSheetSample': df.head(3).fillna('').values.tolist(),
+		})
+	except sharepoint.SharePointConfigError as e:
+		return jsonify({'error': str(e)}), 500
+	except sharepoint.SharePointNotFoundError as e:
+		return jsonify({'error': str(e)}), 404
+	except sharepoint.SharePointRateLimitError as e:
+		return jsonify({'error': str(e), 'retryAfterSeconds': e.retry_after_seconds}), 429
 	except Exception as e:
 		traceback.print_exc()
 		return jsonify({'error': str(e)}), 500
