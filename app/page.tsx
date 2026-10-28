@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import * as XLSX from 'xlsx'
-import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, saveTrackerChanges, saveSchemaChanges, getAllSnapshots, supabase } from './lib/supabase'
+import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, supabase } from './lib/supabase'
 import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings, loadEmailSettings, EmailRouting } from './lib/settings'
 import { loadChunkedReport } from './lib/reportChunks'
@@ -25,7 +25,6 @@ const navItems = [
   { label: "GC Clean-Up", href: "/gc-cleanup", emoji: "🧹" },
   { label: "Schedule Optimizer", href: "/schedule", emoji: "📅" },
   { label: "NTP Tracker", href: "/ntp-tracker", emoji: "⏱️" },
-  { label: "Change Log", href: "/change-log", emoji: "📜" },
   { label: "Reports", href: "/reports", emoji: "📋" },
   { label: "Tracker", href: "/tracker", emoji: "🔭" },
   { label: "Settings", href: "/settings", emoji: "⚙️" },
@@ -564,7 +563,6 @@ export default function Home() {
   const [hopDetails, setHopDetails] = useState<HopDetail[]>([])
   const [pmFilter, setPmFilter] = useState<string>('ALL')
   const [pmOptions, setPmOptions] = useState<string[]>(['ALL'])
-  const [snapshots, setSnapshots] = useState<{hop_count: number, uploaded_at: string}[]>([])
   // Daily checkoff — resets every calendar day. Keyed by `${hop}-${actionType}`.
   const [focusChecks, setFocusChecks] = useState<Record<string, boolean>>({})
   const [showUpdatesPanel, setShowUpdatesPanel] = useState(false)
@@ -913,14 +911,6 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    const loadSnapshots = async () => {
-      const snaps = await getAllSnapshots()
-      setSnapshots(snaps)
-    }
-    loadSnapshots()
-  }, [])
-
-  useEffect(() => {
     const loadFocusHistory = async () => {
       // History is permanent — not scoped by date — so this fetches every
       // focus-history-* row that exists, once. Bulk LIKE query rather than
@@ -1057,7 +1047,7 @@ export default function Home() {
   const copyUpdates = () => {
     const todayStr = new Date().toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })
 
-    const relevantItems = focusItems.filter(item => item.value > 0 && item.label !== 'Open Actions' && item.label !== 'Changed Since Last Upload')
+    const relevantItems = focusItems.filter(item => item.value > 0 && item.label !== 'Open Actions')
 
     const completed = relevantItems.flatMap(item => item.getItems()
       .filter(h => !!focusChecks[`${h.hop}-${item.type}`])
@@ -1091,202 +1081,6 @@ export default function Home() {
     navigator.clipboard.writeText(text)
       .then(() => alert('✅ Copied to clipboard!'))
       .catch(() => alert('Copy failed — please try manually'))
-  }
-
-  const detectChanges = (newRows: unknown[][], oldRows: unknown[][], uploadId: string) => {
-    const today = new Date().toISOString()
-    const changes: unknown[] = []
-
-    // Returns both the header row itself and its index — buildHopMap needs the
-    // index to know where data actually starts. A hardcoded "data starts at
-    // row 1" assumption breaks on any snapshot with a leading description row
-    // (the header isn't always at row 0), same class of bug as the upload
-    // handler's header detection.
-    const getHeaders = (rows: unknown[][]): { headers: string[]; index: number } => {
-      for (let i = 0; i < 10; i++) {
-        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) return { headers: rows[i] as string[], index: i }
-      }
-      return { headers: [], index: -1 }
-    }
-
-    const newHeaderInfo = getHeaders(newRows)
-    const oldHeaderInfo = getHeaders(oldRows)
-    if (newHeaderInfo.headers.length === 0 || oldHeaderInfo.headers.length === 0) return changes
-    const newHeaders = newHeaderInfo.headers
-    const oldHeaders = oldHeaderInfo.headers
-
-    const col = (headers: string[], name: string) => headers.findIndex(h => String(h).trim() === name)
-
-    const buildHopMap = (rows: unknown[][], headers: string[], headerIndex: number) => {
-      const hopCol = col(headers, 'HOP')
-      const don444Col = col(headers, 'DON 444')
-      const map = new Map<string, unknown[]>()
-      for (let i = headerIndex + 1; i < rows.length; i++) {
-        const row = rows[i] as unknown[]
-        const don = String(row[don444Col] || '').trim().toUpperCase()
-        if (don !== 'DON 444') continue
-        const hop = String(row[hopCol] || '').trim()
-        if (!hop || hop === 'undefined') continue
-        if (!map.has(hop)) map.set(hop, row)
-      }
-      return map
-    }
-
-    const newMap = buildHopMap(newRows, newHeaderInfo.headers, newHeaderInfo.index)
-    const oldMap = buildHopMap(oldRows, oldHeaderInfo.headers, oldHeaderInfo.index)
-
-    // A blank Excel date cell round-trips as the literal "1899-12-30"
-    // epoch-zero ISO timestamp rather than true null — rejecting it (year <
-    // 1990) alone isn't enough to decide what to SHOW though: an ISO-shaped
-    // value that fails the year check is a blank cell (→ show nothing), but
-    // a watched field that's genuinely non-date text (e.g. a GC name) should
-    // still show its real value, not get blanked just because it also failed
-    // to parse as a date.
-    const looksIsoDateShaped = (s: string) => /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(s)
-    const fmtVal = (val: unknown) => {
-      if (!val) return ''
-      if (val instanceof Date) return val.getFullYear() > 2000 ? val.toLocaleDateString() : ''
-      const s = String(val).trim()
-      if (s === 'null' || s === 'undefined' || s === 'NaN') return ''
-      const d = new Date(s)
-      if (!isNaN(d.getTime())) {
-        if (d.getFullYear() > 2000) return d.toLocaleDateString()
-        if (looksIsoDateShaped(s)) return ''
-      }
-      return s
-    }
-
-    const watchFields = [
-      { name: 'MS15 Implementation Start F', label: 'FC Start' },
-      { name: 'MS15 Implementation Start A', label: 'AC Start' },
-      { name: 'MS16 Implementation Ends F', label: 'FC End' },
-      { name: 'MS16 Implementation Ends A', label: 'AC End' },
-      { name: 'NTP A', label: 'NTP' },
-      { name: 'Material Received A ', label: 'Material' },
-      { name: 'General Contractor', label: 'GC' },
-      { name: 'New CM', label: 'CM' },
-      { name: 'NTP Action Owner', label: 'NTP Owner' },
-      { name: 'NTP is waiting on', label: 'NTP Waiting On' },
-      { name: 'CX SPO issued', label: 'SPO Issued' },
-      { name: 'MSS Completed NMS Ready ', label: 'MSS' },
-      { name: 'Power-Up Completion', label: 'Power-Up' },
-    ]
-
-    // New HOPs
-    newMap.forEach((row, hop) => {
-      if (!oldMap.has(hop)) {
-        const gcCol = col(newHeaders, 'General Contractor')
-        const cmCol = col(newHeaders, 'New CM')
-        const pmCol = col(newHeaders, 'Nokia PM')
-        changes.push({
-          upload_id: uploadId, uploaded_at: today, hop_name: hop,
-          gc: fmtVal(row[gcCol]), cm: fmtVal(row[cmCol]),
-          nokia_pm: fmtVal(row[pmCol]),
-          change_type: '🆕 New HOP', field_name: 'HOP', old_value: '', new_value: hop
-        })
-      }
-    })
-
-    // Removed HOPs
-    oldMap.forEach((row, hop) => {
-      if (!newMap.has(hop)) {
-        const gcCol = col(oldHeaders, 'General Contractor')
-        const cmCol = col(oldHeaders, 'New CM')
-        const pmCol = col(oldHeaders, 'Nokia PM')
-        changes.push({
-          upload_id: uploadId, uploaded_at: today, hop_name: hop,
-          gc: fmtVal(row[gcCol]), cm: fmtVal(row[cmCol]),
-          nokia_pm: fmtVal(row[pmCol]),
-          change_type: '❌ HOP Removed', field_name: 'HOP', old_value: hop, new_value: ''
-        })
-      }
-    })
-
-    // Field changes on existing HOPs
-    newMap.forEach((newRow, hop) => {
-      const oldRow = oldMap.get(hop)
-      if (!oldRow) return
-      const gcCol = col(newHeaders, 'General Contractor')
-      const cmCol = col(newHeaders, 'New CM')
-      const pmCol = col(newHeaders, 'Nokia PM')
-      const gc = fmtVal(newRow[gcCol])
-      const cm = fmtVal(newRow[cmCol])
-      const pm = fmtVal(newRow[pmCol])
-
-      watchFields.forEach(({ name, label }) => {
-        const newIdx = col(newHeaders, name)
-        const oldIdx = col(oldHeaders, name)
-        if (newIdx === -1 && oldIdx === -1) return
-        const newVal = fmtVal(newIdx >= 0 ? newRow[newIdx] : '')
-        const oldVal = fmtVal(oldIdx >= 0 ? oldRow[oldIdx] : '')
-        if (newVal === oldVal) return
-
-        let changeType = '📝 Updated'
-        if (label === 'AC Start' && !oldVal && newVal) changeType = '🚀 Site Started'
-        if (label === 'AC End' && !oldVal && newVal) changeType = '✅ Site Completed'
-        if (label === 'NTP' && !oldVal && newVal) changeType = '✅ NTP Confirmed'
-        if (label === 'Material' && !oldVal && newVal) changeType = '📦 Material Received'
-        if (label === 'SPO Issued' && !oldVal && newVal) changeType = '📋 SPO Issued'
-        if (label === 'MSS' && !oldVal && newVal) changeType = '📡 MSS Completed'
-        if (label === 'Power-Up' && !oldVal && newVal) changeType = '⚡ Power-Up Complete'
-        if (label === 'FC Start' && oldVal && newVal && oldVal !== newVal) {
-          const oldD = new Date(oldVal); const newD = new Date(newVal)
-          if (!isNaN(oldD.getTime()) && !isNaN(newD.getTime())) {
-            const diff = Math.round((newD.getTime() - oldD.getTime()) / (1000*60*60*24))
-            changeType = diff > 0 ? `📅 FC Start Pushed ${diff}d` : `📅 FC Start Pulled In ${Math.abs(diff)}d`
-          }
-        }
-        if (label === 'FC End' && oldVal && newVal && oldVal !== newVal) {
-          const oldD = new Date(oldVal); const newD = new Date(newVal)
-          if (!isNaN(oldD.getTime()) && !isNaN(newD.getTime())) {
-            const diff = Math.round((newD.getTime() - oldD.getTime()) / (1000*60*60*24))
-            changeType = diff > 0 ? `📅 FC End Pushed ${diff}d` : `📅 FC End Pulled In ${Math.abs(diff)}d`
-          }
-        }
-        if (label === 'GC' && oldVal && newVal) changeType = '🔄 GC Changed'
-        if (label === 'CM' && oldVal && newVal) changeType = '🔄 CM Changed'
-
-        changes.push({
-          upload_id: uploadId, uploaded_at: today, hop_name: hop,
-          gc, cm, nokia_pm: pm,
-          change_type: changeType, field_name: label,
-          old_value: oldVal, new_value: newVal
-        })
-      })
-    })
-
-    return changes
-  }
-
-  const detectSchemaChanges = (newRows: unknown[][], oldRows: unknown[][], uploadId: string) => {
-    const today = new Date().toISOString()
-    const changes: unknown[] = []
-
-    const getHeaders = (rows: unknown[][]) => {
-      for (let i = 0; i < 10; i++) {
-        if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) {
-          return (rows[i] as string[]).map(h => String(h).trim()).filter(Boolean)
-        }
-      }
-      return []
-    }
-
-    const newHeaders = new Set(getHeaders(newRows))
-    const oldHeaders = new Set(getHeaders(oldRows))
-
-    newHeaders.forEach(h => {
-      if (!oldHeaders.has(h)) {
-        changes.push({ upload_id: uploadId, uploaded_at: today, change_type: '➕ Column Added', column_name: h })
-      }
-    })
-
-    oldHeaders.forEach(h => {
-      if (!newHeaders.has(h)) {
-        changes.push({ upload_id: uploadId, uploaded_at: today, change_type: '➖ Column Removed', column_name: h })
-      }
-    })
-
-    return changes
   }
 
   const handleTrackerUpload = useCallback(async (file: File) => {
@@ -1328,23 +1122,19 @@ export default function Home() {
         const rows = trailingTrimmedRows.slice(headerRowIdx)
 
         const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
-        const newSnap = await saveTrackerSnapshot(file.name, hopCount, rows)
+        await saveTrackerSnapshot(file.name, hopCount, rows)
         setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
         console.log('[kpi] about to call computeKPIs with', rows.length, 'rows')
         computeKPIs(rows)
 
-        // Compare against previous snapshot and save changes
+        // Data-quality check against the previous snapshot (column
+        // population-rate drops) — unrelated to the removed change-log
+        // feature, just shares the same "previous snapshot" fetch.
         try {
           const prevSnap = await getPreviousSnapshot()
-          if (prevSnap && newSnap) {
-            const changes = detectChanges(rows, prevSnap.data, newSnap.id)
-            const schemaChanges = detectSchemaChanges(rows, prevSnap.data, newSnap.id)
-            await saveTrackerChanges(newSnap.id, changes)
-            await saveSchemaChanges(newSnap.id, schemaChanges)
-            setDataQualityWarnings(detectColumnPopulationDrops(rows, prevSnap.data))
-          }
+          if (prevSnap) setDataQualityWarnings(detectColumnPopulationDrops(rows, prevSnap.data))
         } catch (err) {
-          console.error('Change detection error:', err)
+          console.error('Data quality check error:', err)
         }
       } catch (err) {
         console.error('Upload error:', err)
@@ -1466,17 +1256,6 @@ export default function Home() {
       valueColor: 'text-blue-400',
       getItems: () => [] as typeof filteredDetails,
     },
-    {
-      emoji: '🔄',
-      label: 'Changed Since Last Upload',
-      type: '',
-      value: snapshots.length > 1 ? Math.abs((snapshots[0]?.hop_count ?? 0) - (snapshots[1]?.hop_count ?? 0)) : 0,
-      unit: 'changes',
-      sub: 'view full change log',
-      color: 'border-gray-700 hover:border-gray-500',
-      valueColor: 'text-gray-300',
-      getItems: () => [] as typeof filteredDetails,
-    },
   ] : []
 
   return (
@@ -1516,6 +1295,15 @@ export default function Home() {
                   : <p className="text-gray-400 text-xs text-center">📂 Upload tracker here</p>
                 }
               </div>
+              {/* SharePoint sync shell — UI placeholder only, not wired to
+                  anything. Manual upload above stays the only live path
+                  until Nokia IT clears admin consent for the Graph API
+                  scope; this just gets the UI ready to flip on. */}
+              <button type="button" disabled
+                title="Waiting for IT approval — Nokia Azure AD admin consent is pending for SharePoint access"
+                className="mt-2 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-gray-700 px-3 py-2 text-xs text-gray-500 cursor-not-allowed">
+                🔗 Sync from SharePoint <span className="text-gray-600">(waiting for IT approval)</span>
+              </button>
             </div>
 
             <style>{`
@@ -1976,7 +1764,7 @@ export default function Home() {
                                 </div>
                               )
                             })}
-                            {item.label !== 'Open Actions' && item.label !== 'Changed Since Last Upload' && item.getItems().map(h => {
+                            {item.label !== 'Open Actions' && item.getItems().map(h => {
                               const compositeKey = `${h.hop}-${item.type}`
                               const isChecked = !!focusChecks[compositeKey]
                               const history = focusHistory[compositeKey] || []
@@ -2019,11 +1807,6 @@ export default function Home() {
                                 </div>
                               )
                             })}
-                            {item.label === 'Changed Since Last Upload' && (
-                              <div className="text-center py-4">
-                                <a href="/change-log" className="text-blue-400 hover:text-blue-300 text-sm underline">Open Change Log →</a>
-                              </div>
-                            )}
                           </div>
                         )}
                       </div>

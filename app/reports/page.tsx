@@ -640,9 +640,20 @@ export default function ReportsPage() {
 
         <BackToDashboard />
 
-        <div className="mb-6">
-          <h1 className="text-3xl font-bold">Reports</h1>
-          <p className="text-gray-400 mt-1">Upload SPO and CR master reports — download GC-specific filtered Excel files on demand</p>
+        <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h1 className="text-3xl font-bold">Reports</h1>
+            <p className="text-gray-400 mt-1">Upload SPO and CR master reports — download GC-specific filtered Excel files on demand</p>
+          </div>
+          {/* SharePoint sync shell — UI placeholder only, not wired to
+              anything. Manual uploads below stay the only live path until
+              Nokia IT clears admin consent for the Graph API scope; this
+              just gets the UI ready to flip on. */}
+          <button type="button" disabled
+            title="Waiting for IT approval — Nokia Azure AD admin consent is pending for SharePoint access"
+            className="flex items-center gap-2 rounded-lg border border-dashed border-gray-700 px-4 py-2 text-sm text-gray-500 cursor-not-allowed whitespace-nowrap">
+            🔗 Sync All Reports from SharePoint <span className="text-gray-600 text-xs">(waiting for IT approval)</span>
+          </button>
         </div>
 
         {/* Tab Bar */}
