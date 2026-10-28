@@ -1329,11 +1329,6 @@ export default function Home() {
 
         const hopCount = rows.filter((r: unknown[]) => String(r[4] || '').trim() && String(r[4]).trim() !== 'HOP').length
         const newSnap = await saveTrackerSnapshot(file.name, hopCount, rows)
-        if (newSnap) {
-          // Lets the AI assistant's cached program-data context (app/components/AiAssistant.tsx)
-          // know a newer tracker exists, so it rebuilds instead of serving stale data.
-          try { localStorage.setItem('lastUploadTime', Date.now().toString()) } catch {}
-        }
         setSnapshotInfo({ filename: file.name, uploaded_at: new Date().toISOString(), hop_count: hopCount })
         console.log('[kpi] about to call computeKPIs with', rows.length, 'rows')
         computeKPIs(rows)

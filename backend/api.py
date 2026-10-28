@@ -7,10 +7,8 @@ import shutil
 import zipfile
 import tempfile
 import traceback
-import logging
 from datetime import datetime, timedelta
 
-import requests
 from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
@@ -26,28 +24,10 @@ import ntp_comments_v2
 
 app = Flask(__name__)
 CORS(app)
-# Flask's default logger level is WARNING (since debug=False below), which
-# would silently drop app.logger.info(...) calls — bump it to INFO so the
-# ai_assistant diagnostic logging below actually reaches Railway's log
-# stream instead of being swallowed.
-app.logger.setLevel(logging.INFO)
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
 supabase_client = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
-
-ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
-ANTHROPIC_MODEL = 'claude-sonnet-5'
-AI_ASSISTANT_SYSTEM_PROMPT = (
-	"You are Ciege AI, an intelligent program management assistant embedded in the Ciege platform "
-	"for CJ, a Nokia Program Manager on the Viaero Wireless MW Construction Program (DON 444). "
-	"You have access to real-time program data provided below. Answer questions concisely and "
-	"accurately based on this data. When listing sites, format them clearly. When asked about "
-	"blockers, check NTP status, material status, and vendor conflicts. When asked about a specific "
-	"site, pull all available data for that HOP. Keep answers brief and actionable — CJ is often "
-	"on a live call. Never make up data not in the context. If you don't have the data to answer, "
-	"say so clearly."
-)
 
 
 def _save_uploaded_file(uploaded, dest_dir, field_name):
@@ -325,70 +305,6 @@ def gr_data_endpoint():
 		return jsonify(groups)
 	except Exception as e:
 		tb = traceback.format_exc()
-		return jsonify({'error': str(e), 'traceback': tb}), 500
-
-
-@app.route('/ai_assistant', methods=['POST'])
-def ai_assistant_endpoint():
-	try:
-		app.logger.info('ai_assistant endpoint hit')
-
-		if not ANTHROPIC_API_KEY:
-			app.logger.error('ai_assistant error: ANTHROPIC_API_KEY not configured on server')
-			return jsonify({'error': 'ANTHROPIC_API_KEY not configured on server'}), 500
-
-		body = request.get_json(silent=True) or {}
-		messages = body.get('messages') or []
-		context = body.get('context') or ''
-		app.logger.info(f'Request data keys: {list(body.keys())}, message count: {len(messages)}, context length: {len(context)}')
-
-		if not messages:
-			return jsonify({'error': 'No messages provided'}), 400
-
-		system_prompt = f"{AI_ASSISTANT_SYSTEM_PROMPT}\n\n{context}"
-
-		anthropic_resp = requests.post(
-			'https://api.anthropic.com/v1/messages',
-			headers={
-				'x-api-key': ANTHROPIC_API_KEY,
-				'anthropic-version': '2023-06-01',
-				'content-type': 'application/json',
-			},
-			json={
-				'model': ANTHROPIC_MODEL,
-				'max_tokens': 1000,
-				'system': system_prompt,
-				'messages': messages,
-			},
-			timeout=60,
-		)
-
-		if anthropic_resp.status_code != 200:
-			# This is the most likely source of the 502s reported against this
-			# endpoint — the Flask route itself returns 502 whenever Anthropic's
-			# API responds with anything other than 200 (bad/missing API key,
-			# invalid model id, rate limit, malformed request body, etc.).
-			# Logged here (in addition to the JSON body already returned) since
-			# that JSON body reaching Railway's logs is what the caller needs
-			# to actually see the upstream response text.
-			app.logger.error(
-				f'ai_assistant error: Anthropic API returned {anthropic_resp.status_code} — {anthropic_resp.text[:500]}'
-			)
-			return jsonify({
-				'error': f'Anthropic API error: {anthropic_resp.status_code}',
-				'detail': anthropic_resp.text[:500],
-			}), 502
-
-		data = anthropic_resp.json()
-		answer = ''.join(
-			block.get('text', '') for block in data.get('content', []) if block.get('type') == 'text'
-		).strip()
-
-		return jsonify({'response': answer})
-	except Exception as e:
-		tb = traceback.format_exc()
-		app.logger.error(f'ai_assistant error: {str(e)}')
-		app.logger.error(tb)
 		return jsonify({'error': str(e), 'traceback': tb}), 500
 
 
