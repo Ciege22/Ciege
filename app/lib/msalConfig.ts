@@ -32,13 +32,13 @@ export const msalConfig: Configuration = {
   },
 }
 
-// Sites.Selected (not Sites.Read.All/Files.Read.All) — Nokia IT's chosen
-// least-privilege permission for this app: it grants access to NO sites by
-// default, only whichever specific sites IT has separately granted via the
-// Graph site-permissions API. Narrower than Sites.Read.All (which would
-// read any site the signed-in user has access to), but means a 403 here
-// means "this site hasn't been granted to the app yet," not necessarily
-// "not signed in" — see the matching note in sharepoint.ts.
+// Sites.Selected + User.Read — the exact two delegated permissions Nokia
+// IT granted on the app registration (not Sites.Read.All/Files.Read.All).
+// Sites.Selected grants access to NO sites by default, only whichever
+// specific sites IT has separately granted via the Graph site-permissions
+// API — a 403 here most likely means "this site hasn't been granted to
+// the app yet," not necessarily "not signed in" — see the matching note
+// in sharepoint.ts. User.Read is the standard baseline profile scope.
 export const graphLoginRequest = {
-  scopes: ['Sites.Selected'],
+  scopes: ['Sites.Selected', 'User.Read'],
 }
