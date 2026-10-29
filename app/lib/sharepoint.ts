@@ -4,6 +4,14 @@
 // with (delegated access — this app never has its own standing access to
 // a user's files, only what that user could already open themselves).
 //
+// Permission model: Sites.Selected (see app/lib/msalConfig.ts) — the app
+// has NO site access by default, only whichever specific sites Nokia IT
+// has separately granted via the Graph site-permissions API. The request
+// shape below (reading by site+path) is unchanged from a Sites.Read.All
+// setup; what differs is that a 403 here most likely means "this site
+// hasn't been granted to the app yet" rather than a real permission
+// problem with the signed-in user — see SharePointAccessDeniedError.
+//
 // Not wired into any existing page yet — this stage only proves the read
 // path itself works. Later stages replace each page's loadTrackerSnapshot/
 // loadChunkedReport call with one of the FILES entries below.
@@ -64,6 +72,18 @@ export class SharePointNotFoundError extends Error {
   }
 }
 
+// Under Sites.Selected, a 403 on an otherwise-valid, signed-in request
+// almost always means the TARGET SITE hasn't been granted to this app yet
+// (a separate IT action per site, not something the signed-in user's own
+// permissions control) — distinct enough from a generic failure to call
+// out explicitly rather than let it read as "something's broken."
+export class SharePointAccessDeniedError extends Error {
+  constructor(public siteUrl: string) {
+    super(`Access denied for site "${siteUrl}" — this site may not be granted to the app yet (Sites.Selected requires each site to be explicitly approved).`)
+    this.name = 'SharePointAccessDeniedError'
+  }
+}
+
 /** Reads a file from SharePoint and returns it as raw bytes. */
 export async function readSharePointFile(
   accessToken: string,
@@ -80,6 +100,9 @@ export async function readSharePointFile(
 
   if (res.status === 401) {
     throw new SharePointAuthError('SharePoint session expired — sign in again.')
+  }
+  if (res.status === 403) {
+    throw new SharePointAccessDeniedError(siteUrl)
   }
   if (res.status === 404) {
     throw new SharePointNotFoundError(filePath, filePath)

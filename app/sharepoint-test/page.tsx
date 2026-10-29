@@ -11,7 +11,7 @@ import MicrosoftLogin from '../components/MicrosoftLogin'
 import { graphLoginRequest } from '../lib/msalConfig'
 import {
   readNamedFile, FILES, type SharePointFileKey,
-  SharePointAuthError, SharePointNotFoundError, SharePointRateLimitError,
+  SharePointAuthError, SharePointNotFoundError, SharePointRateLimitError, SharePointAccessDeniedError,
 } from '../lib/sharepoint'
 
 // Stage 1 verification page for the SharePoint migration — NOT linked from
@@ -70,6 +70,7 @@ export default function SharePointTestPage() {
       })
     } catch (err) {
       if (err instanceof SharePointAuthError) setError(`${err.message} (sign in again below)`)
+      else if (err instanceof SharePointAccessDeniedError) setError(err.message)
       else if (err instanceof SharePointNotFoundError) setError(err.message)
       else if (err instanceof SharePointRateLimitError) setError(err.message)
       else setError(err instanceof Error ? err.message : 'Read failed.')

@@ -32,8 +32,13 @@ export const msalConfig: Configuration = {
   },
 }
 
-// Sites.Read.All covers both SharePoint sites this app reads from
-// (viaero-wireless2 and NAMDS) without needing a separate consent per site.
+// Sites.Selected (not Sites.Read.All/Files.Read.All) — Nokia IT's chosen
+// least-privilege permission for this app: it grants access to NO sites by
+// default, only whichever specific sites IT has separately granted via the
+// Graph site-permissions API. Narrower than Sites.Read.All (which would
+// read any site the signed-in user has access to), but means a 403 here
+// means "this site hasn't been granted to the app yet," not necessarily
+// "not signed in" — see the matching note in sharepoint.ts.
 export const graphLoginRequest = {
-  scopes: ['Sites.Read.All'],
+  scopes: ['Sites.Selected'],
 }
