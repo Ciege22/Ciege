@@ -239,7 +239,7 @@ const NEBRASKA_HOP_PATTERN = /(^|-)NE-/i
 // already has FC Start / FC End columns (ms15f / ms16f) — reusing it here is
 // what makes "click the widget, see FC Start + Forecasted Completion" free.
 interface HopDetail {
-  hop: string, gc: string, nokiaPm: string,
+  hop: string, pathId: string, gc: string, nokiaPm: string,
   ms15f: string, ms15a: string, ms16f: string, ms16a: string,
   hasNtp: boolean, ntpWaitingOn: string,
   hasMat: boolean, hasSpo: boolean, hasCpo: boolean, hasSpoRequest: boolean,
@@ -327,6 +327,7 @@ interface ModalCol {
 
 const MODAL_COLUMNS: ModalCol[] = [
   { key: 'hop', label: 'HOP', kind: 'text', get: h => h.hop },
+  { key: 'pathId', label: 'Path ID', kind: 'text', get: h => h.pathId },
   { key: 'gc', label: 'GC', kind: 'text', get: h => h.gc },
   { key: 'nokiaPm', label: 'Nokia PM', kind: 'text', get: h => h.nokiaPm },
   { key: 'ms15f', label: 'FC Start', kind: 'date', get: h => h.ms15f },
@@ -461,6 +462,7 @@ function HopsModal({ title, hops, onClose, footer }: { title: string; hops: HopD
                 ) : visible.map((h, i) => (
                   <tr key={h.hop + i} className={i % 2 === 0 ? 'bg-gray-900' : 'bg-gray-850'}>
                     <td className="px-3 py-1.5 font-mono text-white">{h.hop}</td>
+                    <td className="px-3 py-1.5 text-gray-400 whitespace-nowrap">{h.pathId || '—'}</td>
                     <td className="px-3 py-1.5 text-gray-300">{h.gc}</td>
                     <td className="px-3 py-1.5 text-gray-300">{h.nokiaPm}</td>
                     <td className="px-3 py-1.5 text-gray-400">{h.ms15f}</td>
@@ -628,6 +630,7 @@ export default function Home() {
     const col = (name: string) => headers.findIndex(h => String(h).trim() === name)
 
     const hopCol      = col('HOP')
+    const pathIdCol   = col('Path ID')
     const don444Col   = col('DON 444')
     const gcCol       = col('General Contractor')
     const cmCol       = col('New CM')
@@ -803,7 +806,7 @@ export default function Home() {
     console.log('[kpi] header row NTP col name:', (rows[0] as unknown[])?.[52])
 
     const details: {
-      hop: string, gc: string, nokiaPm: string,
+      hop: string, pathId: string, gc: string, nokiaPm: string,
       ms15f: string, ms15a: string, ms16f: string, ms16a: string,
       hasNtp: boolean, ntpWaitingOn: string,
       hasMat: boolean, hasSpo: boolean, hasCpo: boolean, hasSpoRequest: boolean,
@@ -850,6 +853,10 @@ export default function Home() {
       })
       details.push({
         hop: String(row[hopCol] || '').trim(),
+        // Strips the leading/trailing apostrophe Excel "force text"
+        // formatting leaves on this column (same artifact noted elsewhere
+        // in the app for Path ID / CX Notes).
+        pathId: String(row[pathIdCol] || '').trim().replace(/^'+|'+$/g, ''),
         gc: String(row[col('General Contractor')] || '').trim(),
         nokiaPm: String(row[nokiaPmCol] || '').trim(),
         ms15f: fmtD(ms15f), ms15a: fmtD(ms15a),
