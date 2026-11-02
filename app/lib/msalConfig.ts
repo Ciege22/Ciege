@@ -9,11 +9,21 @@ import { Configuration, LogLevel } from '@azure/msal-browser'
 const clientId = process.env.NEXT_PUBLIC_AZURE_CLIENT_ID ?? ''
 const tenantId = process.env.NEXT_PUBLIC_AZURE_TENANT_ID ?? ''
 
+// Dedicated near-empty redirect target (app/auth-redirect/page.tsx) — NOT
+// the app root. Pointing redirectUri at '/' meant the loginPopup() popup
+// landed on the full dashboard after auth, which mounts MsalProviderWrapper
+// and races its own MSAL instance against the opener's popup-monitoring
+// code for the same #code=... hash, leaving the popup open instead of
+// closing itself. This route is also the exact value that needs
+// registering as a SPA redirect URI in Azure AD:
+// https://ciege-eight.vercel.app/auth-redirect
+export const AUTH_REDIRECT_PATH = '/auth-redirect'
+
 export const msalConfig: Configuration = {
   auth: {
     clientId,
     authority: `https://login.microsoftonline.com/${tenantId}`,
-    redirectUri: typeof window !== 'undefined' ? window.location.origin : '',
+    redirectUri: typeof window !== 'undefined' ? `${window.location.origin}${AUTH_REDIRECT_PATH}` : '',
   },
   cache: {
     // Session, not local — the access token lives in memory via MSAL's
