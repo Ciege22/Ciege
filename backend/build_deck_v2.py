@@ -1247,17 +1247,24 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     # —" in an earlier build — that text no longer contains "POR" at all, so
     # the slide silently falls out of detection and the whole group (confirmed
     # + pending included) never gets touched again, compounding build over
-    # build. The template always has exactly 3 trios (9 slides) — confirmed
-    # by the Agenda's 3 numbered POR lines — so anchor on the first live
-    # match and derive the rest positionally instead.
-    POR_TRIO_COUNT = 3
+    # build (fixed in aee0853 by anchoring on the first live match instead).
+    #
+    # That anchor-on-the-first-match fix then assumed exactly 3 trios always
+    # exist, deriving the other two as a fixed +3/+6 slides from the first —
+    # which breaks the same way once a file ever carries MORE than 3 physical
+    # trios (a genuine extra one left over from before this fix, or any
+    # out-of-band edit): anything beyond the derived 3-slot window is
+    # permanently invisible to this code and never gets cleaned up or
+    # updated, no matter how many times the deck is rebuilt (reported by CJ,
+    # 11/2/2026 — a real, live "October" trio still showing weeks after
+    # October rolled out of the active window). Now finds EVERY live-matching
+    # overview slide and derives each one's own trio relative to ITS OWN
+    # position instead of the first one's — so any number of trios actually
+    # present get swept into por_order's fill-or-delete pass below, not just
+    # the first 3.
     por_overview_slides = [s for s in prs.slides if any(
         sh.has_text_frame and re.search(r'\d+\s+Forecasted\s+\S+\s+POR', sh.text_frame.text) for sh in s.shapes)]
     all_slides = list(prs.slides)
-    if por_overview_slides:
-        first_idx = all_slides.index(por_overview_slides[0])
-        por_overview_slides = [all_slides[first_idx + i * 3] for i in range(POR_TRIO_COUNT)
-                                if first_idx + i * 3 < len(all_slides)]
     blank_trio_bases = []
     agenda_month_labels = []  # one per trio, in order; '' for an inactive one
     for i, ov_slide in enumerate(por_overview_slides):
