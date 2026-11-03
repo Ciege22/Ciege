@@ -2,15 +2,17 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import * as XLSX from 'xlsx'
+import { useIsAuthenticated } from '@azure/msal-react'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, supabase } from './lib/supabase'
-import { GrRow, GrSortOption, GR_SORT_OPTIONS, loadGrRows, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
+import { GrRow, GrSortOption, GR_SORT_OPTIONS, buildGrRowsFromSources, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings, loadEmailSettings, EmailRouting } from './lib/settings'
-import { loadChunkedReport } from './lib/reportChunks'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
 import { computeSpoStatus, SpoStatus } from './lib/spoStatus'
 import { SpoBatchForHops } from './components/SpoBatchBar'
 import { buildMaterialWatchEmailMailto } from './lib/materialWatchEmail'
+import { useSharePointFile } from './components/SharePointDataProvider'
+import MicrosoftLogin from './components/MicrosoftLogin'
 
 // Decom isn't its own page (it lives inside Reports' Decom section and
 // GC Call View's Decom tab), so it isn't listed as a separate nav card here
@@ -588,6 +590,16 @@ export default function Home() {
   const [pmUpdatesSearch, setPmUpdatesSearch] = useState('')
   const [pmUpdatesSort, setPmUpdatesSort] = useState<'hop' | 'field'>('hop')
 
+  // SharePoint-sourced Nokia data driving KPIs, Today's Focus, GR, Decom,
+  // Missing Decom, and the Nebraska widget. The manual-upload box below
+  // (handleTrackerUpload/snapshotInfo) is untouched — still a live,
+  // separate fallback path, per "don't remove the upload handler yet."
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+  const decomFile = useSharePointFile('decom')
+  const scopFile = useSharePointFile('scop')
+  const spoFile = useSharePointFile('spo')
+
   useEffect(() => {
     const checkSnapshot = async () => {
       const snap = await loadTrackerSnapshot()
@@ -890,32 +902,33 @@ export default function Home() {
   }, [thresholds])
 
   useEffect(() => {
-    const loadKPIs = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (snap) {
-        computeKPIs(snap.data)
-        setTrackerRawRows(snap.data)
-        // Re-check on every normal page load too, not just right after an
-        // upload — so a bad upload's warning is still there if you come back
-        // to the dashboard later instead of only flashing in the moment.
-        try {
-          const prevSnap = await getPreviousSnapshot()
-          if (prevSnap) setDataQualityWarnings(detectColumnPopulationDrops(snap.data, prevSnap.data))
-        } catch (err) {
-          console.error('Data quality check error:', err)
-        }
+    const rows = trackerFile.rows
+    if (!rows) return
+    const run = async () => {
+      computeKPIs(rows)
+      setTrackerRawRows(rows)
+      // Compared against the last MANUAL upload's snapshot (getPreviousSnapshot
+      // reads tracker_snapshot, which only the upload handler below still
+      // writes) — a stand-in until there's a real "previous SharePoint
+      // version" to diff against. Re-checked on every load, not just right
+      // after an upload, so a bad data point's warning is still there if you
+      // come back to the dashboard later instead of only flashing in the moment.
+      try {
+        const prevSnap = await getPreviousSnapshot()
+        if (prevSnap) setDataQualityWarnings(detectColumnPopulationDrops(rows, prevSnap.data))
+      } catch (err) {
+        console.error('Data quality check error:', err)
       }
     }
-    loadKPIs()
-  }, [computeKPIs])
+    run()
+  }, [trackerFile.rows, computeKPIs])
 
   useEffect(() => {
-    const loadDecom = async () => {
-      const decomSnap = await loadChunkedReport('decom')
-      if (decomSnap) setDecomRawRows(decomSnap.rows)
-    }
-    loadDecom()
-  }, [])
+    const rows = decomFile.rows
+    if (!rows) return
+    const run = async () => { setDecomRawRows(rows) }
+    run()
+  }, [decomFile.rows])
 
   useEffect(() => {
     const loadFocusHistory = async () => {
@@ -959,13 +972,14 @@ export default function Home() {
   }, [])
 
   useEffect(() => {
-    const loadGr = async () => {
-      const rows = await loadGrRows()
+    if (!trackerFile.rows || !decomFile.rows || !scopFile.rows || !spoFile.rows) return
+    const run = async () => {
+      const rows = buildGrRowsFromSources(spoFile.rows!, trackerFile.rows!, decomFile.rows!, scopFile.rows!)
       setGrRows(rows)
       setGrLoaded(true)
     }
-    loadGr()
-  }, [])
+    run()
+  }, [trackerFile.rows, decomFile.rows, scopFile.rows, spoFile.rows])
 
   useEffect(() => {
     const loadOpenActions = async () => {
@@ -1302,15 +1316,34 @@ export default function Home() {
                   : <p className="text-gray-400 text-xs text-center">📂 Upload tracker here</p>
                 }
               </div>
-              {/* SharePoint sync shell — UI placeholder only, not wired to
-                  anything. Manual upload above stays the only live path
-                  until Nokia IT clears admin consent for the Graph API
-                  scope; this just gets the UI ready to flip on. */}
-              <button type="button" disabled
-                title="Waiting for IT approval — Nokia Azure AD admin consent is pending for SharePoint access"
-                className="mt-2 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-gray-700 px-3 py-2 text-xs text-gray-500 cursor-not-allowed">
-                🔗 Sync from SharePoint <span className="text-gray-600">(waiting for IT approval)</span>
-              </button>
+              {/* Real SharePoint refresh — the KPI/GR/Decom/Nebraska
+                  sections above now read from the shared provider, so this
+                  refreshes all four files it depends on. Manual upload
+                  above is a separate, parallel path — not removed yet. */}
+              {isAuthenticated ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => { trackerFile.refresh(); decomFile.refresh(); scopFile.refresh(); spoFile.refresh() }}
+                    disabled={trackerFile.loading || decomFile.loading || scopFile.loading || spoFile.loading}
+                    className="mt-2 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-blue-700 px-3 py-2 text-xs text-blue-300 hover:bg-blue-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    🔄 {(trackerFile.loading || decomFile.loading || scopFile.loading || spoFile.loading) ? 'Refreshing from SharePoint…' : 'Refresh from SharePoint'}
+                  </button>
+                  {trackerFile.lastModifiedDateTime && (
+                    <p className="mt-1 text-[11px] text-gray-500">
+                      Tracker last modified {new Date(trackerFile.lastModifiedDateTime).toLocaleString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                    </p>
+                  )}
+                  {(trackerFile.error || decomFile.error || scopFile.error || spoFile.error) && (
+                    <p className="mt-1 text-[11px] text-red-400">{trackerFile.error || decomFile.error || scopFile.error || spoFile.error}</p>
+                  )}
+                </>
+              ) : (
+                <div className="mt-2">
+                  <MicrosoftLogin />
+                </div>
+              )}
             </div>
 
             <style>{`
