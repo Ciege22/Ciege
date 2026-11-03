@@ -1,10 +1,18 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { MapContainer, TileLayer, CircleMarker, Polyline, Popup, useMap } from 'react-leaflet'
 import type { LatLngBoundsExpression } from 'leaflet'
 import 'leaflet/dist/leaflet.css'
-import { loadTrackerSnapshot } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import SharePointSourceLine from '../components/SharePointSourceLine'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+
+// Stage 2 Part B of the SharePoint migration — first real page moved off
+// Supabase (loadTrackerSnapshot) onto the shared SharePointDataProvider.
+// The Dashboard's own upload-to-Supabase path (app/page.tsx) is completely
+// untouched — this page just no longer reads from what that path saves.
 
 const NAVY = '#124191'
 const TEAL = '#00A0B0'
@@ -41,135 +49,137 @@ function isValidCoord(lat: unknown, lon: unknown): lat is number {
 // as a child effect via useMap() rather than a static prop.
 function FitBounds({ bounds }: { bounds: LatLngBoundsExpression | null }) {
   const map = useMap()
-  useEffect(() => {
+  useMemo(() => {
     if (bounds) map.fitBounds(bounds, { padding: [30, 30] })
   }, [bounds, map])
   return null
 }
 
-export default function MapView() {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [sites, setSites] = useState<SitePoint[]>([])
-  const [connections, setConnections] = useState<HopConnection[]>([])
-  const [trackerInfo, setTrackerInfo] = useState<{ filename: string; uploaded_at: string } | null>(null)
+// Same header-scan + column-resolve + byHop grouping every other tracker
+// consumer in this app uses — unchanged from before this migration, just
+// now operating on SharePointDataProvider's rows instead of a Supabase
+// snapshot's .data (the two are the same shape by construction, see
+// app/lib/sharepointParsers.ts).
+function parseTrackerRows(rows: unknown[][]): { sites: SitePoint[]; connections: HopConnection[]; error: string | null } {
+  let headerRowIdx = -1
+  for (let i = 0; i < 10; i++) {
+    const row = rows[i] as unknown[]
+    if (row && row.some(c => String(c ?? '').trim() === 'HOP')) { headerRowIdx = i; break }
+  }
+  if (headerRowIdx === -1) return { sites: [], connections: [], error: 'Could not find a HOP header row in the tracker.' }
 
-  useEffect(() => {
-    let cancelled = false
-    loadTrackerSnapshot().then(snap => {
-      if (cancelled) return
-      if (!snap) { setError('No tracker found — upload one on the Dashboard first.'); setLoading(false); return }
-      setTrackerInfo({ filename: snap.filename, uploaded_at: snap.uploaded_at })
+  const headers = (rows[headerRowIdx] as unknown[]).map(h => String(h ?? '').trim())
+  const col = (name: string) => headers.findIndex(h => h === name)
+  const hopCol = col('HOP')
+  const siteNameCol = col('Site Name')
+  const latCol = col('Latt.')
+  const lonCol = col('Long.')
+  const gcCol = col('General Contractor')
+  const don444Col = col('DON 444')
 
-      const rows = snap.data
-      let headerRowIdx = -1
-      for (let i = 0; i < 10; i++) {
-        const row = rows[i] as unknown[]
-        if (row && row.some(c => String(c ?? '').trim() === 'HOP')) { headerRowIdx = i; break }
-      }
-      if (headerRowIdx === -1) { setError('Could not find a HOP header row in the tracker.'); setLoading(false); return }
+  if (latCol === -1 || lonCol === -1) {
+    return { sites: [], connections: [], error: 'This tracker export has no Latt./Long. columns.' }
+  }
 
-      const headers = (rows[headerRowIdx] as unknown[]).map(h => String(h ?? '').trim())
-      const col = (name: string) => headers.findIndex(h => h === name)
-      const hopCol = col('HOP')
-      const siteNameCol = col('Site Name')
-      const latCol = col('Latt.')
-      const lonCol = col('Long.')
-      const gcCol = col('General Contractor')
-      const don444Col = col('DON 444')
+  // hop -> its site rows (a HOP spans two physical site rows, same
+  // convention as every other page that reads this tracker)
+  const byHop = new Map<string, unknown[][]>()
+  for (let i = headerRowIdx + 1; i < rows.length; i++) {
+    const row = rows[i] as unknown[]
+    if (!row) continue
+    if (String(row[don444Col] ?? '').trim().toUpperCase() !== 'DON 444') continue
+    const hop = String(row[hopCol] ?? '').trim()
+    if (!hop || hop === 'undefined') continue
+    if (!byHop.has(hop)) byHop.set(hop, [])
+    byHop.get(hop)!.push(row)
+  }
 
-      if (latCol === -1 || lonCol === -1) {
-        setError('This tracker export has no Latt./Long. columns.')
-        setLoading(false)
-        return
-      }
+  const siteCoords = new Map<string, { lat: number; lon: number; hopCount: number }>()
+  const conns: HopConnection[] = []
 
-      // hop -> its site rows (a HOP spans two physical site rows, same
-      // convention as every other page that reads this tracker)
-      const byHop = new Map<string, unknown[][]>()
-      for (let i = headerRowIdx + 1; i < rows.length; i++) {
-        const row = rows[i] as unknown[]
-        if (!row) continue
-        if (String(row[don444Col] ?? '').trim().toUpperCase() !== 'DON 444') continue
-        const hop = String(row[hopCol] ?? '').trim()
-        if (!hop || hop === 'undefined') continue
-        if (!byHop.has(hop)) byHop.set(hop, [])
-        byHop.get(hop)!.push(row)
-      }
-
-      const siteCoords = new Map<string, { lat: number; lon: number; hopCount: number }>()
-      const conns: HopConnection[] = []
-
-      byHop.forEach((hopRows, hop) => {
-        const withCoords = hopRows
-          .map(r => ({
-            site: String(r[siteNameCol] ?? '').trim(),
-            lat: Number(r[latCol]),
-            lon: Number(r[lonCol]),
-          }))
-          .filter(r => r.site && isValidCoord(r.lat, r.lon))
-        // Dedupe to one entry per distinct site within this HOP (a HOP's two
-        // rows are normally two different sites, but guard against dupes).
-        const uniqueSites = Array.from(new Map(withCoords.map(s => [s.site, s])).values())
-        if (uniqueSites.length < 2) return // skip HOPs missing a coordinate on either end
-
-        const [siteA, siteB] = uniqueSites
-        for (const s of uniqueSites) {
-          if (!siteCoords.has(s.site)) siteCoords.set(s.site, { lat: s.lat, lon: s.lon, hopCount: 0 })
-          siteCoords.get(s.site)!.hopCount++
-        }
-        const gc = String(hopRows.find(r => String(r[gcCol] ?? '').trim())?.[gcCol] ?? '').trim()
-        conns.push({
-          hop, gc, siteA: siteA.site, siteB: siteB.site,
-          a: [siteA.lat, siteA.lon], b: [siteB.lat, siteB.lon],
-        })
-      })
-
-      const siteList: SitePoint[] = Array.from(siteCoords.entries()).map(([name, v]) => ({
-        name, lat: v.lat, lon: v.lon, hopCount: v.hopCount,
+  byHop.forEach((hopRows, hop) => {
+    const withCoords = hopRows
+      .map(r => ({
+        site: String(r[siteNameCol] ?? '').trim(),
+        lat: Number(r[latCol]),
+        lon: Number(r[lonCol]),
       }))
+      .filter(r => r.site && isValidCoord(r.lat, r.lon))
+    // Dedupe to one entry per distinct site within this HOP (a HOP's two
+    // rows are normally two different sites, but guard against dupes).
+    const uniqueSites = Array.from(new Map(withCoords.map(s => [s.site, s])).values())
+    if (uniqueSites.length < 2) return // skip HOPs missing a coordinate on either end
 
-      if (!cancelled) {
-        setSites(siteList)
-        setConnections(conns)
-        setLoading(false)
-      }
-    }).catch(err => {
-      if (!cancelled) { setError(err instanceof Error ? err.message : 'Failed to load tracker.'); setLoading(false) }
+    const [siteA, siteB] = uniqueSites
+    for (const s of uniqueSites) {
+      if (!siteCoords.has(s.site)) siteCoords.set(s.site, { lat: s.lat, lon: s.lon, hopCount: 0 })
+      siteCoords.get(s.site)!.hopCount++
+    }
+    const gc = String(hopRows.find(r => String(r[gcCol] ?? '').trim())?.[gcCol] ?? '').trim()
+    conns.push({
+      hop, gc, siteA: siteA.site, siteB: siteB.site,
+      a: [siteA.lat, siteA.lon], b: [siteB.lat, siteB.lon],
     })
-    return () => { cancelled = true }
-  }, [])
+  })
+
+  const siteList: SitePoint[] = Array.from(siteCoords.entries()).map(([name, v]) => ({
+    name, lat: v.lat, lon: v.lon, hopCount: v.hopCount,
+  }))
+
+  return { sites: siteList, connections: conns, error: null }
+}
+
+export default function MapView() {
+  const isAuthenticated = useIsAuthenticated()
+  const { rows, loading, error: loadError } = useSharePointFile('tracker')
+
+  const parsed = useMemo(() => (rows ? parseTrackerRows(rows) : null), [rows])
+  const sites = parsed?.sites ?? []
+  const connections = parsed?.connections ?? []
+  const parseError = parsed?.error ?? null
 
   const bounds = useMemo<LatLngBoundsExpression | null>(() => {
-    if (sites.length === 0) return null
-    const lats = sites.map(s => s.lat)
-    const lons = sites.map(s => s.lon)
+    if (!parsed || parsed.sites.length === 0) return null
+    const lats = parsed.sites.map(s => s.lat)
+    const lons = parsed.sites.map(s => s.lon)
     return [[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]]
-  }, [sites])
+  }, [parsed])
 
-  if (loading) {
-    return <div className="flex items-center justify-center h-[70vh] text-zinc-400 text-sm">Loading tracker data…</div>
+  if (!isAuthenticated) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-6">
+        <p className="text-sm text-zinc-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+        <MicrosoftLogin />
+      </div>
+    )
   }
-  if (error) {
+  if (loading) {
+    return <div className="flex items-center justify-center h-[70vh] text-zinc-400 text-sm">Loading tracker from SharePoint…</div>
+  }
+  if (loadError) {
     return (
       <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
-        {error}
+        {loadError}
+      </div>
+    )
+  }
+  if (parseError) {
+    return (
+      <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+        {parseError}
       </div>
     )
   }
 
   return (
     <div>
-      <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-zinc-400">
+      <div className="flex flex-wrap items-center gap-3 mb-1 text-xs text-zinc-400">
         <span>{connections.length} HOPs</span>
         <span>·</span>
         <span>{sites.length} sites</span>
-        {trackerInfo && (
-          <>
-            <span>·</span>
-            <span>{trackerInfo.filename} ({new Date(trackerInfo.uploaded_at).toLocaleDateString('en-US')})</span>
-          </>
-        )}
+      </div>
+      <div className="mb-3">
+        <SharePointSourceLine fileKey="tracker" />
       </div>
       <div className="rounded-2xl overflow-hidden border border-white/10" style={{ height: '75vh' }}>
         <MapContainer center={FALLBACK_CENTER} zoom={7} style={{ height: '100%', width: '100%' }}>
