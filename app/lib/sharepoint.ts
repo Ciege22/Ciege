@@ -23,9 +23,10 @@
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
 
+// NAMDS removed, 11/3/2026 — spo moved to viaeroWireless (same site as
+// everything else) and nothing else referenced NAMDS.
 export const SITES = {
   viaeroWireless: 'nokianam.sharepoint.com/sites/viaero-wireless2',
-  namds: 'nokia.sharepoint.com/sites/NAMDS',
 } as const
 
 // Paths are relative to the DRIVE (the document library itself), not the
@@ -33,18 +34,15 @@ export const SITES = {
 // IS the drive, not a folder inside it, so it's never part of the
 // drive-root-relative path Graph expects (GET /sites/{id}/drive/root:
 // {path}:/content). Confirmed by CJ, 11/3/2026 — the original paths here
-// included that leading segment and every read 404'd. spo's path is left
-// with its "Shared Documents" prefix for now — that site (NAMDS) isn't
-// granted to the app yet, so it's unverified; fix it the same way once
-// Sites.Selected access is in place there too.
+// included that leading segment and every read 404'd.
 export const FILES = {
   tracker: {
     site: SITES.viaeroWireless,
     path: '/Team PM/CJ Ojeda/Viaero - Construction Schedule Tracker - WIP 2.0.xlsx',
   },
   spo: {
-    site: SITES.namds,
-    path: '/Shared Documents/NDPd (SiteForge)/US Majors/US Majors NDPd Reports/Viaero NDPd Reports/Current/NDPd_NAM_003_Viaero_SPO_Report.xlsx',
+    site: SITES.viaeroWireless,
+    path: '/Team PM/CJ Ojeda/SPO Report/NDPd_NAM_003_Viaero_SPO_Report.xlsx',
   },
   decom: {
     site: SITES.viaeroWireless,
@@ -188,6 +186,40 @@ export async function readSharePointFile(
   await assertGraphOk(res, { siteUrl, filePath, context: `SharePoint read failed for ${filePath}` })
 
   return res.arrayBuffer()
+}
+
+export interface SharePointFileMetadata {
+  lastModifiedDateTime: string
+  size: number
+}
+
+/** Fetches a file's metadata (no content) — the DriveItem resource itself,
+ * same addressing as readSharePointFile minus the trailing `:/content`. */
+export async function getSharePointFileMetadata(
+  accessToken: string,
+  siteUrl: string,
+  filePath: string,
+): Promise<SharePointFileMetadata> {
+  const siteId = await resolveSiteId(accessToken, siteUrl)
+  const url = `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(filePath)}`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  await assertGraphOk(res, { siteUrl, filePath, context: `Could not get metadata for ${filePath}` })
+
+  const data = await res.json() as { lastModifiedDateTime: string; size: number }
+  return { lastModifiedDateTime: data.lastModifiedDateTime, size: data.size }
+}
+
+/** Convenience wrapper over getSharePointFileMetadata for a named FILES entry. */
+export async function getNamedFileMetadata(accessToken: string, key: SharePointFileKey): Promise<SharePointFileMetadata> {
+  const { site, path } = FILES[key]
+  try {
+    return await getSharePointFileMetadata(accessToken, site, path)
+  } catch (err) {
+    if (err instanceof SharePointNotFoundError) {
+      throw new SharePointNotFoundError(key, path, err.detail)
+    }
+    throw err
+  }
 }
 
 /** Convenience wrapper over readSharePointFile for one of the named FILES entries. */

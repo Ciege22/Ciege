@@ -9,21 +9,96 @@ import { InteractionStatus } from '@azure/msal-browser'
 import BackToDashboard from '../components/BackToDashboard'
 import MicrosoftLogin from '../components/MicrosoftLogin'
 import { graphLoginRequest } from '../lib/msalConfig'
+import { detectScopHeaderRow } from '../lib/scop'
 import {
-  readNamedFile, listFolderChildren, FILES, SITES, type SharePointFileKey, type FolderChild,
+  readNamedFile, getNamedFileMetadata, listFolderChildren, FILES, SITES,
+  type SharePointFileKey, type FolderChild,
   SharePointAuthError, SharePointNotFoundError, SharePointRateLimitError, SharePointAccessDeniedError,
 } from '../lib/sharepoint'
 
 // Stage 1 verification page for the SharePoint migration — NOT linked from
 // any nav, not used by any real feature. Proves end to end: sign in with a
 // Nokia account, pull one file straight from SharePoint via Graph, and
-// parse it with the same SheetJS path every existing upload handler uses,
-// so the byte-for-byte result can be compared against today's manual
-// upload. Delete this page once Stage 2+ migrate real pages onto the same
-// read path and it's no longer needed as a standalone check.
+// parse it exactly the way its real upload handler does, so the result can
+// be compared against today's manual upload. Delete this page once Stage
+// 2+ migrate real pages onto the same read path and it's no longer needed
+// as a standalone check.
 const FILE_KEYS: SharePointFileKey[] = ['tracker', 'spo', 'decom', 'cr', 'scop']
 
 const SITE_OPTIONS = Object.entries(SITES) as [string, string][]
+
+function trimTrailingBlankRows(rows: unknown[][]): unknown[][] {
+  let last = rows.length - 1
+  while (last >= 0 && !(rows[last] || []).some(c => c !== null && c !== undefined && String(c).trim() !== '')) {
+    last--
+  }
+  return rows.slice(0, last + 1)
+}
+
+interface UsedSheetCheck {
+  usedSheetName: string | null
+  rowCount: number | null
+  note?: string
+}
+
+// Mirrors each real upload handler's own sheet-selection + header-row +
+// trailing-blank-trim logic exactly, so the row count shown here is the
+// same number that handler would actually store, not just "whatever's in
+// the first tab." See each handler for the source of truth this copies:
+//   tracker -> app/page.tsx handleTrackerUpload
+//   decom/cr/spo -> app/reports/page.tsx handleUpload
+//   scop -> app/reports/ScopTab.tsx handleUpload
+function checkUsedSheet(fileKey: SharePointFileKey, wb: XLSX.WorkBook): UsedSheetCheck {
+  if (fileKey === 'tracker') {
+    const ws = wb.Sheets['HOPs']
+    if (!ws) return { usedSheetName: null, rowCount: null, note: '"HOPs" tab not found' }
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1 })
+    const trimmed = trimTrailingBlankRows(raw)
+    const headerIdx = trimmed.findIndex(r => (r || []).some(c => String(c).trim() === 'DON 444'))
+    if (headerIdx === -1) return { usedSheetName: 'HOPs', rowCount: null, note: 'Could not find the "DON 444" header row' }
+    return { usedSheetName: 'HOPs', rowCount: trimmed.length - headerIdx - 1 }
+  }
+
+  if (fileKey === 'decom') {
+    // Real tab name may carry a trailing space — trim before comparing,
+    // same as the real handler.
+    const matchedName = wb.SheetNames.find(n => n.trim() === 'R&R - Link Drop Off Status')
+    const ws = matchedName ? wb.Sheets[matchedName] : undefined
+    if (!ws) return { usedSheetName: null, rowCount: null, note: '"R&R - Link Drop Off Status" tab not found' }
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+    const trimmed = trimTrailingBlankRows(raw)
+    const dataRows = trimmed.slice(1).filter(row => row.some(v => v !== null))
+    return { usedSheetName: matchedName!, rowCount: dataRows.length }
+  }
+
+  if (fileKey === 'cr') {
+    const usedSheetName = wb.Sheets['CR Tracker'] ? 'CR Tracker' : wb.SheetNames[0]
+    const ws = wb.Sheets[usedSheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+    const trimmed = trimTrailingBlankRows(raw)
+    const dataRows = trimmed.slice(2).filter(row => row.some(v => v !== null)) // headerRowIndex=1
+    return { usedSheetName, rowCount: dataRows.length }
+  }
+
+  if (fileKey === 'spo') {
+    const usedSheetName = wb.Sheets['NDPd_NAM_003_Viaero_SPO_Report'] ? 'NDPd_NAM_003_Viaero_SPO_Report' : wb.SheetNames[0]
+    const ws = wb.Sheets[usedSheetName]
+    const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+    // No trailing-blank-trim for spo — the real handler doesn't apply one.
+    const dataRows = raw.slice(1).filter(row => row.some(v => v !== null)) // headerRowIndex=0
+    return { usedSheetName, rowCount: dataRows.length }
+  }
+
+  // scop
+  const usedSheetName = wb.Sheets['HOPs'] ? 'HOPs' : wb.SheetNames.find(n => n.trim().toLowerCase() === 'hops')
+  if (!usedSheetName) return { usedSheetName: null, rowCount: null, note: '"HOPs" tab not found' }
+  const ws = wb.Sheets[usedSheetName]
+  const raw = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: null })
+  const headerIdx = detectScopHeaderRow(raw)
+  if (headerIdx < 0) return { usedSheetName, rowCount: null, note: 'Could not auto-detect the header row' }
+  const dataRows = raw.slice(headerIdx + 1).filter(r => (r || []).some(v => v !== null && v !== undefined && String(v).trim() !== ''))
+  return { usedSheetName, rowCount: dataRows.length }
+}
 
 export default function SharePointTestPage() {
   const { instance, accounts, inProgress } = useMsal()
@@ -32,8 +107,8 @@ export default function SharePointTestPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{
-    fileKey: string; byteLength: number; sheetNames: string[]
-    firstSheetRowCount: number; firstSheetSample: unknown[][]
+    fileKey: string; byteLength: number; lastModifiedDateTime: string
+    allSheetNames: string[]; usedSheet: UsedSheetCheck
   } | null>(null)
 
   // List Folder — lets CJ browse exactly what the app can see instead of
@@ -68,18 +143,19 @@ export default function SharePointTestPage() {
     setLoading(true)
     try {
       const accessToken = await getAccessToken()
-      const buffer = await readNamedFile(accessToken, fileKey)
+      const [buffer, metadata] = await Promise.all([
+        readNamedFile(accessToken, fileKey),
+        getNamedFileMetadata(accessToken, fileKey),
+      ])
       const wb = XLSX.read(buffer, { type: 'array' })
-      const firstSheetName = wb.SheetNames[0]
-      const firstSheet = wb.Sheets[firstSheetName]
-      const rows = XLSX.utils.sheet_to_json<unknown[]>(firstSheet, { header: 1 })
+      const usedSheet = checkUsedSheet(fileKey, wb)
 
       setResult({
         fileKey,
         byteLength: buffer.byteLength,
-        sheetNames: wb.SheetNames,
-        firstSheetRowCount: rows.length,
-        firstSheetSample: rows.slice(0, 3),
+        lastModifiedDateTime: metadata.lastModifiedDateTime,
+        allSheetNames: wb.SheetNames,
+        usedSheet,
       })
     } catch (err) {
       if (err instanceof SharePointAuthError) setError(`${err.message} (sign in again below)`)
@@ -113,7 +189,7 @@ export default function SharePointTestPage() {
       <h1 className="text-2xl font-bold mb-1">🔧 SharePoint Read — Stage 1 Test</h1>
       <p className="text-gray-400 text-sm mb-6">
         Not part of any real feature yet. Signs in with your Nokia account, pulls one file
-        straight from SharePoint via Graph, and parses it the same way every current upload
+        straight from SharePoint via Graph, and parses it exactly the way its real upload
         handler does — just to prove the path works before any real page switches to it.
       </p>
 
@@ -142,11 +218,17 @@ export default function SharePointTestPage() {
           {result && (
             <div className="text-sm text-gray-300 space-y-1 border-t border-gray-700 pt-3">
               <p>✅ Read <span className="text-emerald-400">{result.fileKey}</span> — {result.byteLength.toLocaleString()} bytes</p>
-              <p>Sheets: {result.sheetNames.join(', ')}</p>
-              <p>First sheet: {result.firstSheetRowCount.toLocaleString()} rows</p>
-              <pre className="bg-gray-950 border border-gray-800 rounded p-2 mt-2 overflow-x-auto text-xs text-gray-400">
-                {JSON.stringify(result.firstSheetSample, null, 2)}
-              </pre>
+              <p>Last modified: {new Date(result.lastModifiedDateTime).toLocaleString()}</p>
+              <p>All sheets: {result.allSheetNames.join(', ')}</p>
+              {result.usedSheet.usedSheetName && (
+                <p>
+                  Sheet Ciege uses: <span className="text-emerald-400">{result.usedSheet.usedSheetName}</span>
+                  {result.usedSheet.rowCount != null && <> — {result.usedSheet.rowCount.toLocaleString()} rows</>}
+                </p>
+              )}
+              {result.usedSheet.note && (
+                <p className="text-amber-400">⚠️ {result.usedSheet.note}</p>
+              )}
             </div>
           )}
         </div>
