@@ -28,10 +28,19 @@ export const SITES = {
   namds: 'nokia.sharepoint.com/sites/NAMDS',
 } as const
 
+// Paths are relative to the DRIVE (the document library itself), not the
+// SharePoint site — "Shared Documents" as seen in the SharePoint UI/URL
+// IS the drive, not a folder inside it, so it's never part of the
+// drive-root-relative path Graph expects (GET /sites/{id}/drive/root:
+// {path}:/content). Confirmed by CJ, 11/3/2026 — the original paths here
+// included that leading segment and every read 404'd. spo's path is left
+// with its "Shared Documents" prefix for now — that site (NAMDS) isn't
+// granted to the app yet, so it's unverified; fix it the same way once
+// Sites.Selected access is in place there too.
 export const FILES = {
   tracker: {
     site: SITES.viaeroWireless,
-    path: '/Shared Documents/Team PM/CJ Ojeda/Viaero - Construction Schedule Tracker - WIP 2.0.xlsx',
+    path: '/Team PM/CJ Ojeda/Viaero - Construction Schedule Tracker - WIP 2.0.xlsx',
   },
   spo: {
     site: SITES.namds,
@@ -39,15 +48,15 @@ export const FILES = {
   },
   decom: {
     site: SITES.viaeroWireless,
-    path: '/Shared Documents/Team Decom/Decom Tracker Updates/Nokia Decom Status_Report_LIVE - NEW.xlsx',
+    path: '/Team Decom/Decom Tracker Updates/Nokia Decom Status_Report_LIVE - NEW.xlsx',
   },
   cr: {
     site: SITES.viaeroWireless,
-    path: '/Shared Documents/Team CQT/Viaero - CR Claims Tracker.xlsx',
+    path: '/Team CQT/Viaero - CR Claims Tracker.xlsx',
   },
   scop: {
     site: SITES.viaeroWireless,
-    path: '/Shared Documents/Team Close Out/Viaero COP Tracker_LIVE.xlsx',
+    path: '/Team Close Out/Viaero COP Tracker_LIVE.xlsx',
   },
 } as const
 
@@ -63,16 +72,40 @@ function siteSegment(site: string): string {
   return `${hostname}:${sitePath}`
 }
 
+// Every thrown error below carries the raw Graph status/code/message, not
+// just a generic "couldn't do it" string — so a 403 (not granted yet), a
+// 404 (wrong path), and anything else Graph returns are distinguishable
+// from the error text alone, not just from which error class it is.
+export interface GraphErrorDetail {
+  status: number
+  code: string
+  message: string
+}
+
+function formatGraphDetail(d: GraphErrorDetail): string {
+  return `Graph ${d.status}${d.code ? ` ${d.code}` : ''}: ${d.message || '(no error message in response body)'}`
+}
+
+async function parseGraphError(res: Response): Promise<GraphErrorDetail> {
+  try {
+    const body = await res.json()
+    return { status: res.status, code: body?.error?.code ?? '', message: body?.error?.message ?? '' }
+  } catch {
+    const text = await res.text().catch(() => '')
+    return { status: res.status, code: '', message: text.slice(0, 300) }
+  }
+}
+
 export class SharePointAuthError extends Error {
-  constructor(message: string) {
-    super(message)
+  constructor(public detail: GraphErrorDetail) {
+    super(`SharePoint session expired — sign in again. (${formatGraphDetail(detail)})`)
     this.name = 'SharePointAuthError'
   }
 }
 
 export class SharePointNotFoundError extends Error {
-  constructor(public fileKey: string, public filePath: string) {
-    super(`Could not find "${fileKey}" on SharePoint at: ${filePath}`)
+  constructor(public fileKey: string, public filePath: string, public detail: GraphErrorDetail) {
+    super(`Could not find "${fileKey}" on SharePoint at: ${filePath} (${formatGraphDetail(detail)})`)
     this.name = 'SharePointNotFoundError'
   }
 }
@@ -83,16 +116,25 @@ export class SharePointNotFoundError extends Error {
 // permissions control) — distinct enough from a generic failure to call
 // out explicitly rather than let it read as "something's broken."
 export class SharePointAccessDeniedError extends Error {
-  constructor(public siteUrl: string) {
-    super(`Access denied for site "${siteUrl}" — this site may not be granted to the app yet (Sites.Selected requires each site to be explicitly approved).`)
+  constructor(public siteUrl: string, public detail: GraphErrorDetail) {
+    super(`Access denied for site "${siteUrl}" — this site may not be granted to the app yet (Sites.Selected requires each site to be explicitly approved). (${formatGraphDetail(detail)})`)
     this.name = 'SharePointAccessDeniedError'
   }
 }
 
 export class SharePointRateLimitError extends Error {
-  constructor(public retryAfterSeconds: number) {
-    super(`SharePoint/Graph API rate limited — retry after ${retryAfterSeconds}s.`)
+  constructor(public retryAfterSeconds: number, public detail: GraphErrorDetail) {
+    super(`SharePoint/Graph API rate limited — retry after ${retryAfterSeconds}s. (${formatGraphDetail(detail)})`)
     this.name = 'SharePointRateLimitError'
+  }
+}
+
+// Catch-all for any other non-2xx Graph response — still carries the full
+// status/code/message rather than collapsing to a generic message.
+export class GraphApiError extends Error {
+  constructor(context: string, public detail: GraphErrorDetail) {
+    super(`${context} (${formatGraphDetail(detail)})`)
+    this.name = 'GraphApiError'
   }
 }
 
@@ -101,17 +143,18 @@ export class SharePointRateLimitError extends Error {
 // a redundant resolve call every time the same site's file is read again.
 const siteIdCache = new Map<string, string>()
 
-function handleGraphErrorStatus(res: Response, siteUrl: string): void {
-  if (res.status === 401) {
-    throw new SharePointAuthError('SharePoint session expired — sign in again.')
-  }
-  if (res.status === 403) {
-    throw new SharePointAccessDeniedError(siteUrl)
-  }
+/** Throws a typed, detail-carrying error for any non-ok Graph response. No-op if res.ok. */
+async function assertGraphOk(res: Response, ctx: { siteUrl: string; fileKey?: string; filePath?: string; context: string }): Promise<void> {
+  if (res.ok) return
+  const detail = await parseGraphError(res)
+  if (res.status === 401) throw new SharePointAuthError(detail)
+  if (res.status === 403) throw new SharePointAccessDeniedError(ctx.siteUrl, detail)
+  if (res.status === 404) throw new SharePointNotFoundError(ctx.fileKey ?? ctx.filePath ?? '', ctx.filePath ?? '', detail)
   if (res.status === 429) {
     const retryAfter = Number(res.headers.get('Retry-After')) || 30
-    throw new SharePointRateLimitError(retryAfter)
+    throw new SharePointRateLimitError(retryAfter, detail)
   }
+  throw new GraphApiError(ctx.context, detail)
 }
 
 async function resolveSiteId(accessToken: string, siteUrl: string): Promise<string> {
@@ -120,12 +163,7 @@ async function resolveSiteId(accessToken: string, siteUrl: string): Promise<stri
 
   const url = `${GRAPH_BASE}/sites/${siteSegment(siteUrl)}`
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
-
-  handleGraphErrorStatus(res, siteUrl)
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`Could not resolve SharePoint site "${siteUrl}" (${res.status}): ${body.slice(0, 300)}`)
-  }
+  await assertGraphOk(res, { siteUrl, context: `Could not resolve SharePoint site "${siteUrl}"` })
 
   const data = await res.json() as { id: string }
   siteIdCache.set(siteUrl, data.id)
@@ -147,15 +185,7 @@ export async function readSharePointFile(
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
-
-  handleGraphErrorStatus(res, siteUrl)
-  if (res.status === 404) {
-    throw new SharePointNotFoundError(filePath, filePath)
-  }
-  if (!res.ok) {
-    const body = await res.text().catch(() => '')
-    throw new Error(`SharePoint read failed (${res.status}): ${body.slice(0, 300)}`)
-  }
+  await assertGraphOk(res, { siteUrl, filePath, context: `SharePoint read failed for ${filePath}` })
 
   return res.arrayBuffer()
 }
@@ -167,8 +197,40 @@ export async function readNamedFile(accessToken: string, key: SharePointFileKey)
     return await readSharePointFile(accessToken, site, path)
   } catch (err) {
     if (err instanceof SharePointNotFoundError) {
-      throw new SharePointNotFoundError(key, path)
+      throw new SharePointNotFoundError(key, path, err.detail)
     }
     throw err
   }
+}
+
+export interface FolderChild {
+  name: string
+  isFolder: boolean
+  childCount: number | null
+}
+
+/** Lists the children of a folder path (relative to the site's default
+ * drive, same addressing as readSharePointFile) — '' or '/' lists the
+ * drive root. Built so CJ can see exactly what the app can see, since
+ * guessing at drive-relative paths is what caused the 404 this fixes. */
+export async function listFolderChildren(
+  accessToken: string,
+  siteUrl: string,
+  folderPath: string,
+): Promise<FolderChild[]> {
+  const siteId = await resolveSiteId(accessToken, siteUrl)
+  const trimmed = folderPath.trim()
+  const isRoot = trimmed === '' || trimmed === '/'
+  const url = isRoot
+    ? `${GRAPH_BASE}/sites/${siteId}/drive/root/children`
+    : `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(trimmed.startsWith('/') ? trimmed : `/${trimmed}`)}:/children`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  await assertGraphOk(res, { siteUrl, filePath: folderPath, context: `Could not list folder "${folderPath || '/'}"` })
+
+  const data = await res.json() as { value: { name: string; folder?: { childCount?: number } }[] }
+  return data.value.map(v => ({
+    name: v.name,
+    isFolder: !!v.folder,
+    childCount: v.folder?.childCount ?? null,
+  }))
 }
