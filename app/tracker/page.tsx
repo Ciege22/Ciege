@@ -3,10 +3,14 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { supabase } from '../lib/supabase'
 import { parseDateAny } from '../lib/grTracker'
 import { ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc } from '../lib/settings'
 import BackToDashboard from '../components/BackToDashboard'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
+import { useSharePointFile } from '../components/SharePointDataProvider'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
 
 const NAVY = '#124191'
@@ -223,6 +227,12 @@ const CX_COMMENTS_KEY_PREFIX = 'tracker-cx:'
 // silently picking one (unlike most other pages, which collapse to a single
 // representative row per HOP). Deliberately does NOT filter by Nokia PM,
 // since this grid is a program-wide utility, not scoped to one PM.
+// Stable shared reference for "no SharePoint data yet" — a fresh {headers:
+// [], trackerRows: []} literal every render would otherwise change identity
+// on every poll of useSharePointFile, invalidating every memo/callback
+// downstream that depends on headers/trackerRows for no reason.
+const EMPTY_PARSED_TRACKER: { headers: string[]; trackerRows: TrackerRowData[] } = { headers: [], trackerRows: [] }
+
 function parseAllTrackerRows(rows: unknown[][]): { headers: string[]; trackerRows: TrackerRowData[] } {
   let headerRowIdx = -1
   for (let i = 0; i < 10; i++) {
@@ -707,9 +717,18 @@ function ColumnFilterPanel({ panelRef, columnName, isDateCol, values, current, p
 }
 
 export default function TrackerGridPage() {
-  const [headers, setHeaders] = useState<string[]>([])
-  const [trackerRows, setTrackerRows] = useState<TrackerRowData[]>([])
-  const [loaded, setLoaded] = useState(false)
+  // Tracker from the shared SharePoint provider — all columns, no dedup
+  // (see parseAllTrackerRows). Derived via useMemo rather than an effect +
+  // setState, since this is a pure reshape of spRows with nothing else to
+  // synchronize. `loaded` keeps the same meaning it had when this read
+  // loadTrackerSnapshot() directly — "the fetch attempt finished," whether
+  // or not it produced data.
+  const isAuthenticated = useIsAuthenticated()
+  const { rows: spRows, loading: spLoading } = useSharePointFile('tracker')
+  const parsedTracker = useMemo(() => (spRows ? parseAllTrackerRows(spRows) : EMPTY_PARSED_TRACKER), [spRows])
+  const headers = parsedTracker.headers
+  const trackerRows = parsedTracker.trackerRows
+  const loaded = !spLoading
 
   const [views, setViews] = useState<TrackerView[]>([])
   const [viewsLoaded, setViewsLoaded] = useState(false)
@@ -795,19 +814,6 @@ export default function TrackerGridPage() {
   // column here and the crew dropdown there stay two-way in sync.
   const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
   const [crewAssignments, setCrewAssignments] = useState<Record<string, string>>({})
-
-  // Load tracker snapshot — all columns, no dedup (see parseAllTrackerRows).
-  useEffect(() => {
-    const load = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) { setLoaded(true); return }
-      const { headers: h, trackerRows: rows } = parseAllTrackerRows(snap.data)
-      setHeaders(h)
-      setTrackerRows(rows)
-      setLoaded(true)
-    }
-    load()
-  }, [])
 
   // Load program settings (GC crew counts) and per-HOP crew assignments —
   // same source app/gc-call/page.tsx reads.
@@ -2014,16 +2020,28 @@ export default function TrackerGridPage() {
         </div>
       )}
 
-      {!loaded && (
+      {!isAuthenticated && (
+        <div className="bg-white border border-gray-300 rounded-lg px-4 py-8 text-center text-gray-500">
+          <p className="mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+          <div className="flex justify-center"><MicrosoftLogin /></div>
+        </div>
+      )}
+      {isAuthenticated && !loaded && (
         <div className="bg-white border border-gray-300 rounded-lg px-4 py-8 text-center text-gray-500">Loading tracker...</div>
       )}
-      {loaded && headers.length === 0 && (
+      {isAuthenticated && loaded && headers.length === 0 && (
         <div className="bg-white border border-gray-300 rounded-lg px-4 py-8 text-center text-gray-500">
-          No tracker data found — go to Dashboard to upload your tracker
+          Could not read the tracker from SharePoint — no HOP header row found.
         </div>
       )}
 
-      {loaded && headers.length > 0 && (
+      {isAuthenticated && loaded && headers.length > 0 && (
+        <div className="mb-2">
+          <SharePointSourceLine fileKey="tracker" />
+        </div>
+      )}
+
+      {isAuthenticated && loaded && headers.length > 0 && (
         <div className="mb-3 flex items-center gap-3 flex-wrap">
           <div className="relative flex-1 min-w-[280px] max-w-2xl">
             <input
@@ -2058,7 +2076,7 @@ export default function TrackerGridPage() {
         </div>
       )}
 
-      {loaded && headers.length > 0 && (
+      {isAuthenticated && loaded && headers.length > 0 && (
         <div
           ref={scrollContainerRef}
           onScroll={handleGridScroll}
