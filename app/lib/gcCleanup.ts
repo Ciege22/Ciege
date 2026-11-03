@@ -8,7 +8,7 @@
 import { supabase, loadTrackerSnapshot } from './supabase'
 import { loadChunkedReport } from './reportChunks'
 import {
-  type GrRow, type DecomScopStatus, type TrackerDates,
+  type GrRow, type DecomScopStatus,
   buildTrackerDateMap, buildDecomScopCompleteMap, buildGrRows, normalizeTrackerHop,
 } from './grTracker'
 import { type HopCoord, buildHopCoordMap } from './hopCoords'
@@ -332,26 +332,27 @@ export function buildCleanupHops(
   return groups
 }
 
+// Pure — accepts already-parsed rows from any source (the SharePoint
+// provider or the legacy Supabase loaders below), no fetching of its own.
 // Same four reports loadGrRows() (app/gr-tracker) joins — tracker, SPO
-// report, Decom report, SCOP report — kept here instead of calling
-// loadGrRows() directly because this view also needs the per-HOP Decom/SCOP
-// map that function builds internally and doesn't return.
-export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupGroups> {
-  const [spoResult, trackerSnap, decomReport, scopReport] = await Promise.all([
-    supabase.from('report_snapshots').select('data').eq('id', 'spo').single(),
-    loadTrackerSnapshot(),
-    loadChunkedReport('decom'),
-    loadChunkedReport('scop'),
-  ])
-  const spoRows: unknown[][] = spoResult.data?.data ? JSON.parse(spoResult.data.data) : []
-  const trackerDateMap = trackerSnap ? buildTrackerDateMap(trackerSnap.data) : new Map<string, TrackerDates>()
+// report, Decom report, SCOP report — recomputed here instead of calling
+// buildGrRowsFromSources() directly because this view also needs the
+// per-HOP Decom/SCOP map that function builds internally and doesn't return.
+export function buildCleanupGroupsFromSources(
+  spoRows: unknown[][],
+  trackerRows: unknown[][],
+  decomRows: unknown[][],
+  scopRows: unknown[][],
+  departedGcs: string[],
+): CleanupGroups {
+  const trackerDateMap = buildTrackerDateMap(trackerRows)
   // Same calc settings fed to both the complete/incomplete boolean and the
   // itemized detail below, so they can never disagree with each other.
   const calc = resolveScopCalcSettings(DEFAULT_SCOP)
-  const decomScopMap = buildDecomScopCompleteMap(decomReport?.rows ?? [], scopReport?.rows ?? [], DEFAULT_SCOP)
-  const coordMap = trackerSnap ? buildHopCoordMap(trackerSnap.data) : new Map<string, HopCoord>()
-  const decomSiteNotes = buildDecomSiteNotes(decomReport?.rows ?? [])
-  const scopDataset = scopReport && scopReport.rows.length >= 2 ? buildScopDataset(keyScopRows(scopReport.rows), calc) : []
+  const decomScopMap = buildDecomScopCompleteMap(decomRows, scopRows, DEFAULT_SCOP)
+  const coordMap = buildHopCoordMap(trackerRows)
+  const decomSiteNotes = buildDecomSiteNotes(decomRows)
+  const scopDataset = scopRows.length >= 2 ? buildScopDataset(keyScopRows(scopRows), calc) : []
   const scopSiteNotes = buildScopSiteNotes(scopDataset)
   const grRows = buildGrRows(spoRows, trackerDateMap, decomScopMap)
   // trackerDateMap is already DON 444-only and keyed the same way GrRow.hop
@@ -361,9 +362,26 @@ export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupG
   const ms16aCompleteHops = new Set(
     Array.from(trackerDateMap.entries()).filter(([, d]) => d.ms16a !== null).map(([key]) => key)
   )
-  const hopGcMap = trackerSnap ? buildHopGcMap(trackerSnap.data) : new Map<string, string>()
-  const cpoMap = trackerSnap ? buildHopCpoMap(trackerSnap.data) : new Map<string, CpoEntry[]>()
+  const hopGcMap = buildHopGcMap(trackerRows)
+  const cpoMap = buildHopCpoMap(trackerRows)
   return buildCleanupHops(grRows, departedGcs, decomScopMap, coordMap, don444Hops, decomSiteNotes, scopSiteNotes, ms16aCompleteHops, hopGcMap, cpoMap)
+}
+
+// Legacy path — fetches from Supabase, then feeds buildCleanupGroupsFromSources.
+// Kept only for pages not yet migrated onto the SharePoint provider; once
+// every caller below has moved, this (and the Supabase/chunked-report
+// imports) can go.
+export async function loadCleanupGroups(departedGcs: string[]): Promise<CleanupGroups> {
+  const [spoResult, trackerSnap, decomReport, scopReport] = await Promise.all([
+    supabase.from('report_snapshots').select('data').eq('id', 'spo').single(),
+    loadTrackerSnapshot(),
+    loadChunkedReport('decom'),
+    loadChunkedReport('scop'),
+  ])
+  const spoRows: unknown[][] = spoResult.data?.data ? JSON.parse(spoResult.data.data) : []
+  return buildCleanupGroupsFromSources(
+    spoRows, trackerSnap?.data ?? [], decomReport?.rows ?? [], scopReport?.rows ?? [], departedGcs,
+  )
 }
 
 // ─────────────────────────────────────────────

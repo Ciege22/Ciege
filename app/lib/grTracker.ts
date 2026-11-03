@@ -449,7 +449,25 @@ export function groupGrRows(rows: GrRow[]): GrGroups {
   }
 }
 
-// Loads the SPO report + latest tracker snapshot from Supabase and joins them.
+// Pure — accepts already-parsed rows from any source (the SharePoint
+// provider or the legacy Supabase loaders below) and does no fetching of
+// its own. This is what a page migrated onto the shared provider should
+// call directly, feeding it useSharePointFile() rows.
+export function buildGrRowsFromSources(
+  spoRows: unknown[][],
+  trackerRows: unknown[][],
+  decomRows: unknown[][],
+  scopRows: unknown[][],
+): GrRow[] {
+  const trackerDateMap = buildTrackerDateMap(trackerRows)
+  const decomScopCompleteMap = buildDecomScopCompleteMap(decomRows, scopRows)
+  return buildGrRows(spoRows, trackerDateMap, decomScopCompleteMap)
+}
+
+// Legacy path — fetches the SPO report + latest tracker snapshot from
+// Supabase, then feeds buildGrRowsFromSources. Kept only for pages not yet
+// migrated onto the SharePoint provider; once every caller below has moved,
+// this (and the loadTrackerSnapshot/loadChunkedReport imports) can go.
 export async function loadGrRows(): Promise<GrRow[]> {
   const [spoResult, trackerSnap, decomReport, scopReport] = await Promise.all([
     supabase.from('report_snapshots').select('data').eq('id', 'spo').single(),
@@ -458,9 +476,7 @@ export async function loadGrRows(): Promise<GrRow[]> {
     loadChunkedReport('scop'),
   ])
   const spoRows: unknown[][] = spoResult.data?.data ? JSON.parse(spoResult.data.data) : []
-  const trackerDateMap = trackerSnap ? buildTrackerDateMap(trackerSnap.data) : new Map<string, TrackerDates>()
-  const decomScopCompleteMap = buildDecomScopCompleteMap(decomReport?.rows ?? [], scopReport?.rows ?? [])
-  return buildGrRows(spoRows, trackerDateMap, decomScopCompleteMap)
+  return buildGrRowsFromSources(spoRows, trackerSnap?.data ?? [], decomReport?.rows ?? [], scopReport?.rows ?? [])
 }
 
 // ─────────────────────────────────────────────
