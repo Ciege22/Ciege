@@ -1167,7 +1167,6 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                     for k, v in comments.items():
                         if k.strip().upper() == hop.strip().upper():
                             comment = v; break
-                ntp_wait = str(h.get('_ntp_wait', '')).strip()
                 pm_val = str(h.get('_pm', '')).strip(); pm_val = '' if pm_val.lower() == 'nan' else pm_val
                 owner_val = str(h.get('_ntp_owner', '')).strip(); owner_val = '' if owner_val.lower() == 'nan' else owner_val
                 ms15f_val = h.get('MS15 Implementation Start F')
@@ -1185,7 +1184,13 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
                     set_table_cell(tbl_shape, ri, end_col, fmt_dm(ms16f_val) if pd.notna(ms16f_val) else '')
                 if owner_col is not None: set_table_cell(tbl_shape, ri, owner_col, owner_val)
                 if comment_col is not None:
-                    cell_note = comment or ntp_wait
+                    # Every row on this slide is already NTP-confirmed (it's
+                    # in ntp_hops) — '_ntp_wait' is the tracker's "NTP is
+                    # waiting on" column, which is stale leftover text from
+                    # before NTP was issued, not a live status. Was falling
+                    # back to that stale text whenever there was no manual
+                    # call-note comment, instead of saying the row is done.
+                    cell_note = comment or 'NTP Completed'
                     set_table_cell(tbl_shape, ri, comment_col, cell_note[:55] if cell_note else '')
             else:
                 clear_extra_rows(tbl_shape, hdrs, ri)

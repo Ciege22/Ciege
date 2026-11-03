@@ -1416,9 +1416,13 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                             for k, v in comments.items():
                                 if k.strip().upper() == hop.strip().upper():
                                     comment = v; break
-                        ntp_wait = str(h.get('_ntp_wait', '')).strip()
-                        cx = str(h.get('_cx', '')).strip()
-                        cell_note = ntp_wait
+                        # Every row here is already NTP-confirmed (it's in
+                        # ntp_hops) — '_ntp_wait' is the tracker's "NTP is
+                        # waiting on" column, stale leftover text from
+                        # before NTP was issued, not a live status. Was
+                        # using that stale text unconditionally instead of
+                        # saying the row is done.
+                        cell_note = comment or 'NTP Completed'
                         pm_val = str(h.get('_pm', '')).strip()
                         pm_val = '' if pm_val.lower() == 'nan' else pm_val
                         owner_val = str(h.get('_ntp_owner', '')).strip()
