@@ -3,10 +3,14 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useMemo } from 'react'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import { GC_CONFIG } from '../lib/gcConfig'
 import {
   GrRow, GrTileFilter, GrSortOption, GR_SORT_OPTIONS,
-  loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
+  buildGrRowsFromSources, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
 } from '../lib/grTracker'
 import BackToDashboard from '../components/BackToDashboard'
@@ -52,6 +56,12 @@ function StatusChip({ status }: { status: GrRow['status'] }) {
 }
 
 export default function GrTrackerPage() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+  const spoFile = useSharePointFile('spo')
+  const decomFile = useSharePointFile('decom')
+  const scopFile = useSharePointFile('scop')
+
   const [rows, setRows] = useState<GrRow[]>([])
   const [loaded, setLoaded] = useState(false)
   const [pmFilter, setPmFilter] = useState('CJ')
@@ -69,13 +79,14 @@ export default function GrTrackerPage() {
   }, [])
 
   useEffect(() => {
-    const load = async () => {
-      const grRows = await loadGrRows()
+    if (!trackerFile.rows || !spoFile.rows || !decomFile.rows || !scopFile.rows) return
+    const run = async () => {
+      const grRows = buildGrRowsFromSources(spoFile.rows!, trackerFile.rows!, decomFile.rows!, scopFile.rows!)
       setRows(grRows)
       setLoaded(true)
     }
-    load()
-  }, [])
+    run()
+  }, [trackerFile.rows, spoFile.rows, decomFile.rows, scopFile.rows])
 
   const pmOptions = useMemo(() => {
     const set = new Set<string>()
@@ -152,16 +163,25 @@ export default function GrTrackerPage() {
           <p className="text-gray-400 mt-1">Goods Receipt release tracking — DON 444 · Viaero MW Program</p>
         </div>
 
-        {!loaded && <p className="text-gray-400">Loading SPO report and tracker data...</p>}
-
-        {loaded && rows.length === 0 && (
+        {!isAuthenticated && (
           <div className="bg-gray-900 rounded-xl border border-gray-700 p-12 text-center">
-            <p className="text-gray-400 text-xl">📂 No SPO report data found — upload the SPO Master Report on the Reports page</p>
+            <p className="text-gray-400 mb-3">Sign in with your Nokia account to load tracker/SPO/decom/SCOP data from SharePoint.</p>
+            <div className="flex justify-center"><MicrosoftLogin /></div>
+          </div>
+        )}
+        {isAuthenticated && !loaded && <p className="text-gray-400">Loading tracker, SPO, decom, and SCOP data from SharePoint...</p>}
+
+        {isAuthenticated && loaded && rows.length === 0 && (
+          <div className="bg-gray-900 rounded-xl border border-gray-700 p-12 text-center">
+            <p className="text-gray-400 text-xl">No SPO report data found.</p>
           </div>
         )}
 
-        {loaded && rows.length > 0 && (
+        {isAuthenticated && loaded && rows.length > 0 && (
           <>
+            <div className="mb-3">
+              <SharePointSourceLine fileKey="tracker" />
+            </div>
             {/* PM Filter */}
             {pmOptions.length > 1 && (
               <div className="flex gap-2 mb-4 flex-wrap items-center">

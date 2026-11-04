@@ -3,35 +3,37 @@
 export const dynamic = 'force-dynamic'
 
 import { useEffect, useState } from 'react'
-import { loadTrackerSnapshot } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import BackToDashboard from '../components/BackToDashboard'
 import SpoBatchBar from '../components/SpoBatchBar'
 import {
-  buildSpoBucket, HopSpo, SpoDraft, PaymentRow, loadSpoDraft, saveSpoDraft,
+  buildSpoBucket, SpoDraft, PaymentRow, loadSpoDraft, saveSpoDraft,
   rowsFor, cpoText, todayStr,
 } from '../lib/spoRequest'
 
 // Full SPO Request view — the same bucket and batch actions as the dashboard's
 // Needs SPO Requested window, plus per-row entry of each HOP's payment split.
 export default function SpoRequestPage() {
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [bucket, setBucket] = useState<HopSpo[]>([])
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+
+  const [draftLoading, setDraftLoading] = useState(true)
   const [draft, setDraft] = useState<SpoDraft>({ to: '', hops: {} })
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([loadTrackerSnapshot(), loadSpoDraft()]).then(([snap, d]) => {
-      if (cancelled) return
-      setDraft(d)
-      if (!snap) setError('No tracker found — upload one on the Dashboard first.')
-      else setBucket(buildSpoBucket(snap.data))
-      setLoading(false)
-    }).catch(err => {
-      if (!cancelled) { setError(err instanceof Error ? err.message : 'Failed to load tracker.'); setLoading(false) }
+    loadSpoDraft().then(d => {
+      if (!cancelled) { setDraft(d); setDraftLoading(false) }
     })
     return () => { cancelled = true }
   }, [])
+
+  const bucket = trackerFile.rows ? buildSpoBucket(trackerFile.rows) : []
+  const loading = draftLoading || (isAuthenticated && !trackerFile.rows && !trackerFile.error)
+  const error = trackerFile.error
 
   const updateDraft = (next: SpoDraft) => { setDraft(next); saveSpoDraft(next) }
 
@@ -41,6 +43,17 @@ export default function SpoRequestPage() {
     updateDraft({ ...draft, hops: { ...draft.hops, [hop]: current } })
   }
 
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4">
+        <BackToDashboard />
+        <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+          <p className="text-sm text-zinc-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+          <div className="flex justify-center"><MicrosoftLogin /></div>
+        </div>
+      </div>
+    )
+  }
   if (loading) return <div className="p-6 text-zinc-400 text-sm">Loading SPO bucket…</div>
   if (error) return <div className="p-6 text-red-300 text-sm">{error}</div>
 
@@ -48,9 +61,12 @@ export default function SpoRequestPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-4">
       <BackToDashboard />
       <h1 className="text-2xl font-semibold text-white mb-1">SPO Requests</h1>
-      <p className="text-sm text-zinc-400 mb-4">
+      <p className="text-sm text-zinc-400 mb-1">
         {bucket.length} HOP{bucket.length === 1 ? '' : 's'} with a CPO received and no SPO requested yet. Enter each payment split&apos;s SPO value, then email the batch.
       </p>
+      <div className="mb-4">
+        <SharePointSourceLine fileKey="tracker" />
+      </div>
 
       <SpoBatchBar bucket={bucket} draft={draft}>
         {scoped => scoped.length === 0 ? (

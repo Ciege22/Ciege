@@ -1,7 +1,7 @@
 'use client'
 
 import { ReactNode, useEffect, useMemo, useState } from 'react'
-import { loadTrackerSnapshot } from '../lib/supabase'
+import { useSharePointFile } from './SharePointDataProvider'
 import { loadEmailSettings, EmailRouting } from '../lib/settings'
 import {
   buildSpoBucket, HopSpo, SpoDraft, loadSpoDraft, rowsFor, openSpoEmail, spoRecipients,
@@ -89,21 +89,30 @@ export default function SpoBatchBar({ bucket, draft, children }: {
 // Dashboard wrapper: loads the bucket and saved draft, and limits the batch to
 // the HOPs the window is currently showing.
 export function SpoBatchForHops({ hopNames }: { hopNames: string[] }) {
-  const [bucket, setBucket] = useState<HopSpo[] | null>(null)
+  const trackerFile = useSharePointFile('tracker')
   const [draft, setDraft] = useState<SpoDraft>({ to: '', hops: {} })
+  const [draftLoaded, setDraftLoaded] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    Promise.all([loadTrackerSnapshot(), loadSpoDraft()]).then(([snap, d]) => {
-      if (cancelled) return
-      setDraft(d)
-      const wanted = new Set(hopNames)
-      setBucket(snap ? buildSpoBucket(snap.data).filter(h => wanted.has(h.hop)) : [])
+    loadSpoDraft().then(d => {
+      if (!cancelled) { setDraft(d); setDraftLoaded(true) }
     })
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hopNames.join('|')])
+  }, [])
 
-  if (bucket === null) return <div className="text-xs text-zinc-500">Loading SPO batch…</div>
+  // A fresh hopNames array literal arrives every render from the caller
+  // (modalHops.map(...)) — depend on this joined-string key instead of the
+  // array reference itself, so the memo only recomputes when the actual
+  // HOP list changes.
+  const hopNamesKey = hopNames.join('|')
+  const bucket = useMemo(() => {
+    if (!trackerFile.rows) return null
+    const wanted = new Set(hopNames)
+    return buildSpoBucket(trackerFile.rows).filter(h => wanted.has(h.hop))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trackerFile.rows, hopNamesKey])
+
+  if (bucket === null || !draftLoaded) return <div className="text-xs text-zinc-500">Loading SPO batch…</div>
   return <SpoBatchBar bucket={bucket} draft={draft} />
 }

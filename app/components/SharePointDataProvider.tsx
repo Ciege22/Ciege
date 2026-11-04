@@ -222,3 +222,18 @@ export function useSharePointFile(key: SharePointFileKey): SharePointFileState &
 
   return useMemo(() => ({ ...files[key], refresh: () => refresh(key) }), [files, key, refresh])
 }
+
+/** Like useSharePointFile, but does NOT trigger a load on mount — the
+ * caller decides when, via the returned `load()`. For a file a page only
+ * needs some of the time (e.g. GC Call View's Reports tab needing 'cr',
+ * by far the largest file), so it isn't eagerly fetched just because the
+ * page itself mounted — only once that tab is actually opened. */
+export function useSharePointLazyFile(key: SharePointFileKey): SharePointFileState & { refresh: () => void; load: () => void } {
+  const ctx = useContext(SharePointDataContext)
+  if (!ctx) throw new Error('useSharePointLazyFile must be used within SharePointDataProvider')
+  const { files, ensureLoaded, refresh } = ctx
+  return useMemo(
+    () => ({ ...files[key], refresh: () => refresh(key), load: () => ensureLoaded(key) }),
+    [files, key, ensureLoaded, refresh],
+  )
+}

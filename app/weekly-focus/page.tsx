@@ -3,7 +3,11 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect, useCallback } from 'react'
-import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import BackToDashboard from '../components/BackToDashboard'
 import { computeSpoStatus, SpoStatus } from '../lib/spoStatus'
 
@@ -320,10 +324,11 @@ function Section({ title, rows, showElapsed = false, color = 'gray', expandedHop
 }
 
 export default function WeeklyFocusPage() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [fileName, setFileName] = useState('')
-  const [snapshotTime, setSnapshotTime] = useState('')
   const [mode, setMode] = useState<'gc' | 'cm'>('gc')
   const [filterCM, setFilterCM] = useState('All')
   const [filterGC, setFilterGC] = useState('All')
@@ -336,6 +341,10 @@ export default function WeeklyFocusPage() {
   const [actionComments, setActionComments] = useState<Record<string, string>>({})
   const [clearedActionIds, setClearedActionIds] = useState<Set<string>>(new Set())
   const today = new Date()
+  // Display-only use of `today` below ignores time-of-day regardless, but
+  // zero it anyway for consistency with the zeroed copy processRows uses
+  // for daysOut/daysElapsed.
+  today.setHours(0, 0, 0, 0)
 
   // Load actions from Supabase
   const loadActions = async () => {
@@ -407,21 +416,19 @@ export default function WeeklyFocusPage() {
   }, [])
 
   useEffect(() => {
-    const loadFromSnapshot = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) return
-      setSnapshotTime(
-        new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) +
-        ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-      )
-      setFileName(snap.filename)
-      processRows(snap.data)
-    }
-    loadFromSnapshot()
-    loadActions()
+    const run = async () => { await loadActions() }
+    run()
   }, [])
 
   const processRows = useCallback((rows: unknown[][]) => {
+    // Zeroed to midnight so daysOut/daysElapsed are clean whole-day counts
+    // — a HOP whose MS15F is literally today must compute 0, not -1
+    // (fractional diff against the current time-of-day rounding down).
+    // Local to this callback (not the render-scoped `today` above) so
+    // useCallback's own identity stays stable across renders instead of
+    // changing every time `new Date()` produces a new object.
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
     let headerRow = -1
     for (let i = 0; i < 10; i++) {
       if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
@@ -543,7 +550,14 @@ export default function WeeklyFocusPage() {
     setHops(parsed)
     setLoaded(true)
     autoCompleteActions(parsed)
-  }, [today, autoCompleteActions])
+  }, [autoCompleteActions])
+
+  useEffect(() => {
+    const rows = trackerFile.rows
+    if (!rows) return
+    const run = async () => { processRows(rows) }
+    run()
+  }, [trackerFile.rows, processRows])
 
   // Filter hops based on mode
   const filteredHops = hops.filter(h => {
@@ -723,15 +737,21 @@ export default function WeeklyFocusPage() {
         </div>
 
         {/* Snapshot info */}
-        {snapshotTime && (
-          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
-            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
-            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs total</p>
+        {!isAuthenticated && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+            <div className="flex justify-center"><MicrosoftLogin /></div>
           </div>
         )}
-        {!snapshotTime && (
+        {isAuthenticated && hops.length > 0 && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+            <SharePointSourceLine fileKey="tracker" />
+            <p className="text-gray-500 text-xs">{hops.length} HOPs total</p>
+          </div>
+        )}
+        {isAuthenticated && loaded && hops.length === 0 && (
           <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
-            <p className="text-gray-400">No tracker data — go to Dashboard to upload your tracker</p>
+            <p className="text-gray-400">No tracker data found.</p>
           </div>
         )}
 

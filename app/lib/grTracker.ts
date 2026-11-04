@@ -1,9 +1,7 @@
-import { supabase, loadTrackerSnapshot } from './supabase'
 import { GC_CONFIG, matches } from './gcConfig'
 import { lookupContactEmail, DEFAULT_SCOP, applyEmailRouting, type ScopSettings, type EmailRouting } from './settings'
 import { parseDecomRows } from './decom'
 import { buildScopDataset, keyScopRows, resolveScopCalcSettings } from './scop'
-import { loadChunkedReport } from './reportChunks'
 
 // Raw SPO report rows are stored as arrays with no header row (see app/reports/page.tsx).
 // These are the fixed column positions established by that page's SPO_COL_IDX mapping.
@@ -449,10 +447,8 @@ export function groupGrRows(rows: GrRow[]): GrGroups {
   }
 }
 
-// Pure — accepts already-parsed rows from any source (the SharePoint
-// provider or the legacy Supabase loaders below) and does no fetching of
-// its own. This is what a page migrated onto the shared provider should
-// call directly, feeding it useSharePointFile() rows.
+// Pure — accepts already-parsed rows from any source and does no fetching
+// of its own. Every caller now feeds it useSharePointFile() rows.
 export function buildGrRowsFromSources(
   spoRows: unknown[][],
   trackerRows: unknown[][],
@@ -462,21 +458,6 @@ export function buildGrRowsFromSources(
   const trackerDateMap = buildTrackerDateMap(trackerRows)
   const decomScopCompleteMap = buildDecomScopCompleteMap(decomRows, scopRows)
   return buildGrRows(spoRows, trackerDateMap, decomScopCompleteMap)
-}
-
-// Legacy path — fetches the SPO report + latest tracker snapshot from
-// Supabase, then feeds buildGrRowsFromSources. Kept only for pages not yet
-// migrated onto the SharePoint provider; once every caller below has moved,
-// this (and the loadTrackerSnapshot/loadChunkedReport imports) can go.
-export async function loadGrRows(): Promise<GrRow[]> {
-  const [spoResult, trackerSnap, decomReport, scopReport] = await Promise.all([
-    supabase.from('report_snapshots').select('data').eq('id', 'spo').single(),
-    loadTrackerSnapshot(),
-    loadChunkedReport('decom'),
-    loadChunkedReport('scop'),
-  ])
-  const spoRows: unknown[][] = spoResult.data?.data ? JSON.parse(spoResult.data.data) : []
-  return buildGrRowsFromSources(spoRows, trackerSnap?.data ?? [], decomReport?.rows ?? [], scopReport?.rows ?? [])
 }
 
 // ─────────────────────────────────────────────

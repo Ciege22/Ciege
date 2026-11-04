@@ -4,7 +4,11 @@ export const dynamic = 'force-dynamic'
 
 import React, { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, applyEmailRouting } from '../lib/settings'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
@@ -472,9 +476,11 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
 }
 
 export default function CMViewPage() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [fileName, setFileName] = useState('')
   const [selectedCM, setSelectedCM] = useState('')
   // GCs Worked With toggle, under the CM panel header — collapsed by
   // default. gcFilter narrows the tables below to one GC when a pill is
@@ -508,7 +514,6 @@ export default function CMViewPage() {
   const [pmSortField, setPmSortField] = useState<'hop' | 'field'>('hop')
   const [pmSearch, setPmSearch] = useState('')
   const [editedDates, setEditedDates] = useState<Record<string, Record<string, string>>>({})
-  const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
   // hop -> 'Crew 1' | 'Crew 2' | ... — same crew-assign-{hop} Supabase rows as
   // GC Call View and the Tracker Grid; editable here too (setCrewForHop
@@ -889,32 +894,18 @@ export default function CMViewPage() {
   }, [thresholds])
 
   useEffect(() => {
-    const loadFromSnapshot = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) return
-      console.log('[cm-view] fetched', snap.data.length, 'rows from Supabase')
-      console.log('[cm-view] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
-      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
-      setFileName(snap.filename)
-      processRows(snap.data, snap.filename)
+    const rows = trackerFile.rows
+    if (!rows) return
+    const run = async () => {
+      console.log('[cm-view] fetched', rows.length, 'rows from SharePoint')
+      console.log('[cm-view] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', rows.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
+      processRows(rows, 'tracker')
+      // Deliberately NOT resetting selectedCM here — see the matching note
+      // in app/gc-call/page.tsx. This effect also fires on a background
+      // stale-while-revalidate refresh, and the selection must survive that.
     }
-    loadFromSnapshot()
-  }, [processRows])
-
-  const handleFile = useCallback((file: File) => {
-    setFileName(file.name)
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const data = new Uint8Array(e.target?.result as ArrayBuffer)
-      const wb = XLSX.read(data, { type: 'array', cellDates: true })
-      const ws = wb.Sheets['HOPs']
-      if (!ws) { alert('HOPs tab not found'); return }
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-      setSelectedCM('')
-      processRows(rows, file.name)
-    }
-    reader.readAsArrayBuffer(file)
-  }, [processRows])
+    run()
+  }, [trackerFile.rows, processRows])
 
   // "My HOPs Only" preserves the original behavior of scoping to CJ's HOPs;
   // bulk all-CM actions (download/email) always use cjHops regardless of the
@@ -1417,15 +1408,21 @@ export default function CMViewPage() {
           </div>
         )}
 
-        {snapshotTime && (
-          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
-            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
-            <p className="text-gray-500 text-xs">{fileName} — {cjHops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+        {!isAuthenticated && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+            <div className="flex justify-center"><MicrosoftLogin /></div>
           </div>
         )}
-        {!snapshotTime && (
+        {isAuthenticated && hops.length > 0 && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+            <SharePointSourceLine fileKey="tracker" />
+            <p className="text-gray-500 text-xs">{cjHops.length} HOPs</p>
+          </div>
+        )}
+        {isAuthenticated && loaded && hops.length === 0 && (
           <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
-            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+            <p className="text-gray-400">No tracker data found.</p>
           </div>
         )}
 
@@ -1690,7 +1687,7 @@ export default function CMViewPage() {
 
             {!loaded && (
               <div className="bg-gray-800 rounded-lg p-8 text-center border border-dashed border-gray-600">
-                <p className="text-gray-400">📂 Upload your tracker above to load {selectedCM} pipeline</p>
+                <p className="text-gray-400">Loading {selectedCM} pipeline from SharePoint…</p>
               </div>
             )}
           </div>

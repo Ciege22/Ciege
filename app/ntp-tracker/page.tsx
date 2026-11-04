@@ -4,7 +4,11 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useCallback, useEffect } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import BackToDashboard from '../components/BackToDashboard'
 import { EmailSettings, DEFAULT_EMAIL, loadEmailSettings, applyEmailRouting } from '../lib/settings'
 
@@ -184,17 +188,22 @@ const OWNER_TEXT: Record<string, string> = {
 }
 
 export default function NTPTrackerPage() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [fileName, setFileName] = useState('')
   const [selectedOwner, setSelectedOwner] = useState('All')
   const [selectedMonth, setSelectedMonth] = useState('All')
   const [noteHistory, setNoteHistory] = useState<Record<string, CallNote[]>>({})
   const [sessionNotes, setSessionNotes] = useState<Record<string, string>>({})
   const [expandedBuckets, setExpandedBuckets] = useState<Set<string>>(new Set())
-  const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
   const today = new Date()
+  // Display-only uses of `today` below (toLocaleDateString in export/
+  // filename code) ignore time-of-day regardless, but zero it anyway for
+  // consistency with the zeroed copy processRows uses for daysOut.
+  today.setHours(0, 0, 0, 0)
 
   useEffect(() => {
     loadEmailSettings().then(setEmailSettings)
@@ -221,18 +230,17 @@ export default function NTPTrackerPage() {
     }
   }
 
-  useEffect(() => {
-    const loadFromSnapshot = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) return
-      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
-      setFileName(snap.filename)
-      processRows(snap.data, snap.filename)
-    }
-    loadFromSnapshot()
-  }, [])
-
   const processRows = useCallback(async (rows: unknown[][], _filename: string) => {
+    // Zeroed to midnight so daysOut is a clean whole-day count — a HOP
+    // whose MS15F is literally today must compute 0, not -1 (fractional
+    // diff against the current time-of-day rounding down). Local to this
+    // callback (not the render-scoped `today` above) so useCallback's own
+    // identity stays stable across renders instead of changing every time
+    // `new Date()` produces a new object — the exact bug that would have
+    // made this effect re-fire (and re-process every row) on every render.
+    const today = new Date()
+    today.setHours(0, 0, 0, 0)
+
 
     let headerRow = -1
     for (let i = 0; i < 10; i++) {
@@ -332,21 +340,14 @@ export default function NTPTrackerPage() {
     setHops(parsed)
     setLoaded(true)
     await loadNotes()
-  }, [today])
+  }, [])
 
-  const handleFile = useCallback((file: File) => {
-    setFileName(file.name)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      const data = new Uint8Array(e.target?.result as ArrayBuffer)
-      const wb = XLSX.read(data, { type: 'array', cellDates: true })
-      const ws = wb.Sheets['HOPs']
-      if (!ws) { alert('HOPs tab not found'); return }
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-      await processRows(rows, file.name)
-    }
-    reader.readAsArrayBuffer(file)
-  }, [processRows])
+  useEffect(() => {
+    const rows = trackerFile.rows
+    if (!rows) return
+    const run = async () => { await processRows(rows, 'tracker') }
+    run()
+  }, [trackerFile.rows, processRows])
 
   // Filtered hops
   const filtered = hops.filter(h => {
@@ -559,15 +560,21 @@ export default function NTPTrackerPage() {
           )}
         </div>
 
-        {snapshotTime && (
-          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
-            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
-            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+        {!isAuthenticated && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+            <div className="flex justify-center"><MicrosoftLogin /></div>
           </div>
         )}
-        {!snapshotTime && (
+        {isAuthenticated && hops.length > 0 && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+            <SharePointSourceLine fileKey="tracker" />
+            <p className="text-gray-500 text-xs">{hops.length} HOPs</p>
+          </div>
+        )}
+        {isAuthenticated && loaded && hops.length === 0 && (
           <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
-            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+            <p className="text-gray-400">No pending-NTP HOPs found.</p>
           </div>
         )}
 

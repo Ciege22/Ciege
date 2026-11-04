@@ -4,7 +4,11 @@ export const dynamic = 'force-dynamic'
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
-import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile, useSharePointLazyFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, EmailSettings, DEFAULT_EMAIL, loadEmailSettings, ProgramSettings, DEFAULT_PROGRAM, loadProgramSettings, crewCountForGc, lookupContactEmail, ScopSettings, DEFAULT_SCOP, loadScopSettings, applyEmailRouting } from '../lib/settings'
@@ -12,13 +16,17 @@ import ScopGcTab from './ScopGcTab'
 import { CallNoteCell, CallNoteHistoryCell } from './CallNoteCell'
 import { computeSpoStatus } from '../lib/spoStatus'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates, upsertPendingUpdate } from '../lib/pendingUpdates'
-import { loadChunkedReport } from '../lib/reportChunks'
 import { parseDecomRows, decomRowsForGc, buildDecomEmailMailto, fmtDecomDate, parseTrackerHopsForDecom, findMissingDecom, uniqueDecomGcNames, DecomRow } from '../lib/decom'
 import {
-  GrRow, GrTileFilter, loadGrRows, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
+  GrRow, GrTileFilter, buildGrRowsFromSources, groupGrRows, sortGrRowsBy, computeGrBreakdown, rowsForTileFilter,
   buildGrEmailMailto, fmtMoney, fmtMoneyShort,
 } from '../lib/grTracker'
 
+// Stable shared reference for "no SharePoint data yet" — a fresh `[]`
+// literal every render would otherwise change identity on every poll of
+// useSharePointFile, invalidating every memo/callback downstream that
+// depends on these for no reason (gcList's useMemo in particular).
+const EMPTY_ROWS: unknown[][] = []
 
 // The tracker's "General Contractor" column isn't guaranteed to be typed
 // with consistent casing across rows (e.g. "Vikor" vs "VIKOR"). Resolves a
@@ -1091,11 +1099,23 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
 }
 
 export default function GCCallPage() {
+  // SharePoint-sourced Nokia data. tracker/decom/spo/scop load eagerly —
+  // decom and GR (spo+scop) rows feed the GC tab list itself (see
+  // gcList's useMemo below), not just their own tabs, so they can't be
+  // deferred behind a tab click the way 'cr' can. 'cr' is the one file
+  // genuinely only needed by the Reports tab (and by far the largest, at
+  // ~30MB), so it loads lazily — only once that tab is opened.
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+  const decomFile = useSharePointFile('decom')
+  const spoFile = useSharePointFile('spo')
+  const scopFile = useSharePointFile('scop')
+  const crFile = useSharePointLazyFile('cr')
+
   const [selectedGC, setSelectedGC] = useState('')
   const [hops, setHops] = useState<HOP[]>([])
-  const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
   const [loaded, setLoaded] = useState(false)
-  const [fileName, setFileName] = useState('')
+  const trackerRawRows = trackerFile.rows ?? EMPTY_ROWS
   // Nokia PM filter — same pattern as the Dashboard's pmFilter/pmOptions.
   // gcList (below, computed at render time) and gcHops both narrow to this.
   const [pmFilter, setPmFilter] = useState<string>('ALL')
@@ -1111,15 +1131,14 @@ export default function GCCallPage() {
   const [showPmUpdates, setShowPmUpdates] = useState(false)
   const [pmSortField, setPmSortField] = useState<'hop' | 'field'>('hop')
   const [pmSearch, setPmSearch] = useState('')
-  const [snapshotTime, setSnapshotTime] = useState<string>('')
   const [cxNotesModal, setCxNotesModal] = useState<{ hop: string; notes: string } | null>(null)
   const [activeTab, setActiveTab] = useState<'pipeline' | 'gr' | 'decom' | 'reports' | 'scop'>('pipeline')
   const [grRows, setGrRows] = useState<GrRow[]>([])
   const [grLoaded, setGrLoaded] = useState(false)
-  const [spoRawRows, setSpoRawRows] = useState<unknown[][]>([])
-  const [crRawRows, setCrRawRows] = useState<unknown[][]>([])
-  const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
-  const [scopStoreRows, setScopStoreRows] = useState<unknown[][]>([])
+  const spoRawRows = spoFile.rows ?? EMPTY_ROWS
+  const crRawRows = crFile.rows ?? EMPTY_ROWS
+  const decomRawRows = decomFile.rows ?? EMPTY_ROWS
+  const scopStoreRows = scopFile.rows ?? EMPTY_ROWS
   const [scopSettings, setScopSettings] = useState<ScopSettings>(DEFAULT_SCOP)
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
@@ -1182,30 +1201,20 @@ export default function GCCallPage() {
   }, [selectedGC])
 
   useEffect(() => {
-    const loadGr = async () => {
-      const rows = await loadGrRows()
+    if (!trackerFile.rows || !decomFile.rows || !spoFile.rows || !scopFile.rows) return
+    const run = async () => {
+      const rows = buildGrRowsFromSources(spoFile.rows!, trackerFile.rows!, decomFile.rows!, scopFile.rows!)
       setGrRows(rows)
       setGrLoaded(true)
     }
-    loadGr()
-  }, [])
+    run()
+  }, [trackerFile.rows, decomFile.rows, spoFile.rows, scopFile.rows])
 
+  // 'cr' only loads once the Reports tab is actually opened — see
+  // useSharePointLazyFile's doc comment above.
   useEffect(() => {
-    const loadReports = async () => {
-      const { data: spoSnap } = await supabase.from('report_snapshots').select('data').eq('id', 'spo').single()
-      if (spoSnap?.data) setSpoRawRows(JSON.parse(spoSnap.data))
-
-      const crReport = await loadChunkedReport('cr')
-      if (crReport) setCrRawRows(crReport.rows)
-
-      const decomReport = await loadChunkedReport('decom')
-      if (decomReport) setDecomRawRows(decomReport.rows)
-
-      const scopReport = await loadChunkedReport('scop')
-      if (scopReport) setScopStoreRows(scopReport.rows)
-    }
-    loadReports()
-  }, [])
+    if (activeTab === 'reports') crFile.load()
+  }, [activeTab, crFile])
 
   const today = new Date()
   // Zero out the time-of-day so daysOut is a clean whole-day count — same fix
@@ -1628,33 +1637,21 @@ export default function GCCallPage() {
   }, [thresholds])
 
   useEffect(() => {
-    const loadFromSnapshot = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) return
-      console.log('[gc-call] fetched', snap.data.length, 'rows from Supabase')
-      console.log('[gc-call] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', snap.data.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
-      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
-      setFileName(snap.filename)
-      setTrackerRawRows(snap.data)
-      processRows(snap.data, snap.filename)
+    const rows = trackerFile.rows
+    if (!rows) return
+    const run = async () => {
+      console.log('[gc-call] fetched', rows.length, 'rows from SharePoint')
+      console.log('[gc-call] NE-SQUAW_MOUND-NE-CHADRON in fetched data:', rows.some(row => row.some(cell => String(cell).trim() === 'NE-SQUAW_MOUND-NE-CHADRON')))
+      processRows(rows, 'tracker')
+      // Deliberately NOT resetting selectedGC here — this effect also fires
+      // on a background stale-while-revalidate refresh, and clearing the
+      // selection out from under someone mid-call would be exactly the bug
+      // this migration was told to avoid. selectedGC only ever resets from
+      // an explicit user action (there's no manual-upload entry point left
+      // on this page to also reset it from).
     }
-    loadFromSnapshot()
-  }, [processRows])
-
-  const handleFile = useCallback((file: File) => {
-    setFileName(file.name)
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const data = new Uint8Array(e.target?.result as ArrayBuffer)
-      const wb = XLSX.read(data, { type: 'array', cellDates: true })
-      const ws = wb.Sheets['HOPs']
-      if (!ws) { alert('HOPs tab not found in tracker'); return }
-      const rows = XLSX.utils.sheet_to_json(ws, { header: 1 }) as unknown[][]
-      setSelectedGC('')
-      processRows(rows, file.name)
-    }
-    reader.readAsArrayBuffer(file)
-  }, [processRows])
+    run()
+  }, [trackerFile.rows, processRows])
 
   const logDateEdit = (hop: string, field: string, oldVal: string, newVal: string) => {
     if (!newVal || newVal === oldVal) return
@@ -2075,15 +2072,21 @@ export default function GCCallPage() {
           </div>
         )}
 
-        {snapshotTime && (
-          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
-            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
-            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+        {!isAuthenticated && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+            <div className="flex justify-center"><MicrosoftLogin /></div>
           </div>
         )}
-        {!snapshotTime && (
+        {isAuthenticated && hops.length > 0 && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+            <SharePointSourceLine fileKey="tracker" />
+            <p className="text-gray-500 text-xs">{hops.length} HOPs</p>
+          </div>
+        )}
+        {isAuthenticated && loaded && hops.length === 0 && (
           <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
-            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+            <p className="text-gray-400">No tracker data found.</p>
           </div>
         )}
 

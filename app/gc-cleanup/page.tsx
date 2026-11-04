@@ -4,6 +4,10 @@ export const dynamic = 'force-dynamic'
 
 import { useEffect, useMemo, useState } from 'react'
 import dynamicImport from 'next/dynamic'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import BackToDashboard from '../components/BackToDashboard'
 import ColumnFilterMenu from '../components/ColumnFilterMenu'
 import { GC_CONFIG } from '../lib/gcConfig'
@@ -12,7 +16,7 @@ import { loadDepartedGcs, saveDepartedGcs, loadEmailSettings, type EmailSettings
 import {
   type CleanupHop, type CleanupGroups, type CleanupAssignment, type SiteNote,
   CLEANUP_STATUS_OPTIONS, formatCpoEntries,
-  loadCleanupGroups, loadCleanupAssignments, saveCleanupAssignment,
+  buildCleanupGroupsFromSources, loadCleanupAssignments, saveCleanupAssignment,
 } from '../lib/gcCleanup'
 import {
   type QuotedHop, quotedHops, groupByNewGc, cancellableHops, openGcQuoteEmail, openCancellationEmail,
@@ -38,6 +42,12 @@ const FILTER_COLS: { key: FilterCol; label: string }[] = [
 ]
 
 export default function GcCleanupPage() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+  const spoFile = useSharePointFile('spo')
+  const decomFile = useSharePointFile('decom')
+  const scopFile = useSharePointFile('scop')
+
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [departedGcs, setDepartedGcs] = useState<string[]>([])
@@ -49,23 +59,33 @@ export default function GcCleanupPage() {
   const [emailCenterOpen, setEmailCenterOpen] = useState(false)
   const [radiusMiles, setRadiusMiles] = useState(DEFAULT_RADIUS_MILES)
 
-  async function loadAll(gcs: string[]) {
-    setLoading(true)
-    setError(null)
-    try {
-      const [g, a] = await Promise.all([loadCleanupGroups(gcs), loadCleanupAssignments()])
-      setGroups(g)
-      setAssignments(a)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load clean-up data.')
-    } finally {
-      setLoading(false)
-    }
-  }
-
   useEffect(() => {
-    loadDepartedGcs().then(gcs => { setDepartedGcs(gcs); loadAll(gcs) })
+    loadDepartedGcs().then(setDepartedGcs)
+    loadCleanupAssignments().then(setAssignments).catch(err => {
+      setError(err instanceof Error ? err.message : 'Could not load clean-up assignments.')
+    })
   }, [])
+
+  // Pure recompute — no fetch, just the GR/decom/SCOP join — so it reruns
+  // automatically whenever the SharePoint data or the departed-GC list
+  // changes (toggleGc below just updates departedGcs; this effect does
+  // the rest), instead of toggleGc having to re-fetch anything itself.
+  useEffect(() => {
+    if (!trackerFile.rows || !spoFile.rows || !decomFile.rows || !scopFile.rows) return
+    const run = () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const g = buildCleanupGroupsFromSources(spoFile.rows!, trackerFile.rows!, decomFile.rows!, scopFile.rows!, departedGcs)
+        setGroups(g)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not build clean-up data.')
+      } finally {
+        setLoading(false)
+      }
+    }
+    run()
+  }, [trackerFile.rows, spoFile.rows, decomFile.rows, scopFile.rows, departedGcs])
 
   async function toggleGc(gc: string) {
     const next = departedGcs.includes(gc) ? departedGcs.filter(g => g !== gc) : [...departedGcs, gc]
@@ -73,7 +93,6 @@ export default function GcCleanupPage() {
     setSavingGcList(true)
     try {
       await saveDepartedGcs(next)
-      await loadAll(next)
     } finally {
       setSavingGcList(false)
     }
@@ -131,10 +150,21 @@ export default function GcCleanupPage() {
         </div>
       </div>
 
+      {!isAuthenticated && (
+        <div className="bg-gray-900 rounded-xl border border-gray-700 p-6 mb-4 text-center">
+          <p className="text-gray-400 mb-3">Sign in with your Nokia account to load tracker/SPO/decom/SCOP data from SharePoint.</p>
+          <div className="flex justify-center"><MicrosoftLogin /></div>
+        </div>
+      )}
+      {isAuthenticated && groups && (
+        <div className="mb-4">
+          <SharePointSourceLine fileKey="tracker" />
+        </div>
+      )}
       {error && <p className="bg-red-950 border border-red-700 text-red-200 text-sm rounded-lg p-3 mb-4">{error}</p>}
-      {loading && <p className="text-gray-400 text-sm">Loading…</p>}
+      {isAuthenticated && loading && <p className="text-gray-400 text-sm">Loading…</p>}
 
-      {!loading && groups && departedGcs.length === 0 && (
+      {isAuthenticated && !loading && groups && departedGcs.length === 0 && (
         <p className="text-gray-500 text-sm">Check off a departed GC above to see their outstanding HOPs.</p>
       )}
 

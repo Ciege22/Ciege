@@ -3,7 +3,11 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useCallback, useEffect } from 'react'
-import { loadTrackerSnapshot, supabase } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import { GC_CONFIG } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
 import {
@@ -331,10 +335,11 @@ const RECOMMENDATION_COLOR: Record<Recommendation, string> = {
 }
 
 export default function SchedulePage() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+
   const [hops, setHops] = useState<HOP[]>([])
   const [loaded, setLoaded] = useState(false)
-  const [snapshotTime, setSnapshotTime] = useState('')
-  const [fileName, setFileName] = useState('')
   const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [holds, setHolds] = useState<Set<string>>(new Set())
@@ -444,15 +449,11 @@ export default function SchedulePage() {
   }, [])
 
   useEffect(() => {
-    const loadFromSnapshot = async () => {
-      const snap = await loadTrackerSnapshot()
-      if (!snap) return
-      setSnapshotTime(new Date(snap.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) + ' at ' + new Date(snap.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }))
-      setFileName(snap.filename)
-      processRows(snap.data, snap.filename)
-    }
-    loadFromSnapshot()
-  }, [processRows])
+    const rows = trackerFile.rows
+    if (!rows) return
+    const run = async () => { processRows(rows, 'tracker') }
+    run()
+  }, [trackerFile.rows, processRows])
 
   const toggleHold = async (hop: string) => {
     const id = `schedule-hold-${hop}`
@@ -512,15 +513,21 @@ export default function SchedulePage() {
           </div>
         </div>
 
-        {snapshotTime && (
-          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between">
-            <p className="text-green-400 text-sm font-semibold">📡 Live data from {snapshotTime}</p>
-            <p className="text-gray-500 text-xs">{fileName} — {hops.length} HOPs · Upload new tracker on Dashboard to refresh</p>
+        {!isAuthenticated && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
+            <p className="text-gray-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+            <div className="flex justify-center"><MicrosoftLogin /></div>
           </div>
         )}
-        {!snapshotTime && (
+        {isAuthenticated && hops.length > 0 && (
+          <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-2 flex items-center justify-between flex-wrap gap-2">
+            <SharePointSourceLine fileKey="tracker" />
+            <p className="text-gray-500 text-xs">{hops.length} HOPs</p>
+          </div>
+        )}
+        {isAuthenticated && loaded && hops.length === 0 && (
           <div className="mb-4 bg-gray-900 border border-gray-700 rounded-lg px-4 py-8 text-center">
-            <p className="text-gray-400">No tracker data found — go to Dashboard to upload your tracker</p>
+            <p className="text-gray-400">No tracker data found.</p>
           </div>
         )}
 
