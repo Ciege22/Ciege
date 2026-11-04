@@ -403,17 +403,27 @@ export function summarizeDecomByGc(rows: DecomRow[], gcNames: string[], missingS
 }
 
 // Cross-references completed HOPs from the master tracker against the decom
-// file to find sites nobody has entered into decom tracking yet. Matches
-// Path ID first, HOP name as fallback — each match consumes one decom row so
-// a HOP with two tracker sites needs two distinct decom entries to be fully
-// covered (matching one decom row against both sites would hide a real gap).
+// file to find sites nobody has entered into decom tracking yet. HOP name
+// must always match — Path ID is only used to pick the right one of a HOP's
+// OWN multiple site rows (e.g. the 210 vs 566 side of a two-site HOP), never
+// to match across different HOPs. A two-site HOP's rows commonly share one
+// combined Path ID string (e.g. "0210<>0566") across both of its own rows,
+// AND that same string can get drag-filled/copy-pasted onto an unrelated
+// HOP's row elsewhere in the decom tracker (a known Excel slip) — matching
+// on Path ID alone, without also requiring the HOP to agree, let that
+// unrelated row get consumed first, leaving this HOP's own correctly-entered
+// rows unmatched and falsely reported as missing (confirmed via a live
+// example: NE-HASTINGS_NORTH-NE-HASTINGS_NAPA, both rows present in the
+// decom tracker with CX Complete filled in, still showed as "Not in Decom
+// Tracker"). Each match still consumes one decom row — a HOP with two
+// tracker sites needs two distinct decom entries to be fully covered.
 export function findMissingDecom(decomRows: DecomRow[], trackerHops: TrackerHop[]): MissingDecomSite[] {
   const availableDecom = [...decomRows]
   const missing: MissingDecomSite[] = []
   const today = new Date()
 
   trackerHops.forEach(t => {
-    let matchIdx = t.pathId ? availableDecom.findIndex(d => d.pathId && d.pathId === t.pathId) : -1
+    let matchIdx = t.pathId ? availableDecom.findIndex(d => d.hop === t.hop && d.pathId === t.pathId) : -1
     if (matchIdx === -1) {
       matchIdx = availableDecom.findIndex(d => d.hop === t.hop)
     }
