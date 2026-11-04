@@ -14,6 +14,14 @@ import { SpoBatchForHops } from './components/SpoBatchBar'
 import { buildMaterialWatchEmailMailto } from './lib/materialWatchEmail'
 import { useSharePointFile } from './components/SharePointDataProvider'
 import MicrosoftLogin from './components/MicrosoftLogin'
+import SharePointSourceLine from './components/SharePointSourceLine'
+import { FILES } from './lib/sharepoint'
+
+// Display name for the tracker box — derived from the SharePoint path
+// (the real source now) rather than whatever a past manual upload was
+// named, since a user can rename the file they drag in but the live
+// SharePoint source never changes.
+const TRACKER_FILENAME = FILES.tracker.path.split('/').pop() ?? 'Tracker'
 
 // Decom isn't its own page (it lives inside Reports' Decom section and
 // GC Call View's Decom tab), so it isn't listed as a separate nav card here
@@ -1309,10 +1317,10 @@ export default function Home() {
                   onChange={(e) => { const f = e.target.files?.[0]; if (f) handleTrackerUpload(f); e.target.value = '' }} />
                 {uploading
                   ? <p className="text-blue-400 text-xs text-center">⏳ Uploading...</p>
-                  : snapshotInfo
+                  : trackerFile.rows
                   ? <div>
-                      <p className="text-green-400 text-xs font-semibold">✅ {snapshotInfo.filename}</p>
-                      <p className="text-gray-500 text-xs mt-1">{snapshotInfo.hop_count} HOPs · {new Date(snapshotInfo.uploaded_at).toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })} at {new Date(snapshotInfo.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>
+                      <p className="text-green-400 text-xs font-semibold">✅ {TRACKER_FILENAME}</p>
+                      <p className="text-gray-500 text-xs mt-1">{hopDetails.length} HOPs</p>
                     </div>
                   : <p className="text-gray-400 text-xs text-center">📂 Upload tracker here</p>
                 }
@@ -1320,7 +1328,16 @@ export default function Home() {
               {/* Real SharePoint refresh — the KPI/GR/Decom/Nebraska
                   sections above now read from the shared provider, so this
                   refreshes all four files it depends on. Manual upload
-                  above is a separate, parallel path — not removed yet. */}
+                  above is a separate, parallel path — not removed yet.
+                  Bug fix, 11/2026: the box above used to show the OLD
+                  Supabase upload record's own filename/hop_count/
+                  uploaded_at (snapshotInfo, from loadTrackerSnapshot) —
+                  stale the moment SharePoint had a newer version, since
+                  nothing re-uploads automatically anymore. Everything
+                  shown now comes from the live provider instead;
+                  SharePointSourceLine gives "last modified" + "Last
+                  loaded from SharePoint" in the same format Settings and
+                  Reports use. */}
               {isAuthenticated ? (
                 <>
                   <button
@@ -1331,14 +1348,9 @@ export default function Home() {
                   >
                     🔄 {(trackerFile.loading || decomFile.loading || scopFile.loading || spoFile.loading) ? 'Refreshing from SharePoint…' : 'Refresh from SharePoint'}
                   </button>
-                  {trackerFile.lastModifiedDateTime && (
-                    <p className="mt-1 text-[11px] text-gray-500">
-                      Tracker last modified {new Date(trackerFile.lastModifiedDateTime).toLocaleString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                    </p>
-                  )}
-                  {(trackerFile.error || decomFile.error || scopFile.error || spoFile.error) && (
-                    <p className="mt-1 text-[11px] text-red-400">{trackerFile.error || decomFile.error || scopFile.error || spoFile.error}</p>
-                  )}
+                  <div className="mt-1">
+                    <SharePointSourceLine fileKey="tracker" />
+                  </div>
                 </>
               ) : (
                 <div className="mt-2">

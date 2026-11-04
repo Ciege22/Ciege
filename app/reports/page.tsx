@@ -539,6 +539,14 @@ export default function ReportsPage() {
 
         {activeTab === 'decom-tracker' && (
           <>
+        {!isAuthenticated ? (
+          <div className="bg-gray-900 rounded-xl border border-gray-700 p-6 mb-8 text-center">
+            <p className="text-gray-400 mb-3">Sign in with your Nokia account to load the decom tracker from SharePoint.</p>
+            <div className="flex justify-center"><MicrosoftLogin /></div>
+          </div>
+        ) : (
+          <div className="mb-4"><SharePointSourceLine fileKey="decom" /></div>
+        )}
         {/* Decom Funnel */}
         {decomRows.length > 0 && (
           <div className="mb-8">
@@ -733,6 +741,20 @@ export default function ReportsPage() {
                 const spoLabel = cfg?.spo_label ?? fileSafeName
                 const crLabel = cfg?.cr_label ?? fileSafeName
                 const notConfiguredTitle = `${gcName} isn't in the GC vendor-matching config yet — add its SPO/CR vendor names in app/lib/gcConfig.ts to enable this download`
+                // Disabled for one of three different reasons — say which,
+                // instead of leaving a plain disabled button with no
+                // explanation. CR is by far the largest file (the only one
+                // routed through a Web Worker) and the slowest to finish,
+                // so "still loading" is the common real case for it, not
+                // "broken."
+                const spoTitle = !cfg ? notConfiguredTitle
+                  : spoFile.error ? `SPO failed to load: ${spoFile.error}`
+                  : spoFile.loading && !spoFile.rows ? 'SPO report is still loading from SharePoint…'
+                  : spoRows.length === 0 ? 'No SPO data loaded yet' : undefined
+                const crTitle = !cfg ? notConfiguredTitle
+                  : crFile.error ? `CR failed to load: ${crFile.error}`
+                  : crFile.loading && !crFile.rows ? 'CR report is still loading from SharePoint (the largest file — this can take a while)…'
+                  : crRows.length === 0 ? 'No CR data loaded yet' : undefined
 
                 return (
                   <div key={gcName} className="bg-gray-900 rounded-xl border border-gray-700 p-4">
@@ -743,7 +765,7 @@ export default function ReportsPage() {
                     <div className="flex gap-2 text-xs text-gray-500 mb-3">
                       <span>{spoCount} SPO rows</span>
                       <span>·</span>
-                      <span>{crCount} CR rows</span>
+                      <span>{crCount} CR rows{crFile.loading && !crFile.rows ? ' (loading…)' : ''}</span>
                       <span>·</span>
                       <span>{gcDecomRows.length} Decom rows</span>
                     </div>
@@ -751,16 +773,16 @@ export default function ReportsPage() {
                       <button
                         onClick={() => cfg && downloadGCReport(spoRows, SPO_COL_IDX, SPO_HEADERS, SPO_VENDOR_COL_IN_MASTER, cfg.spo_match, `${spoLabel}_-_SPO_Report_-_${today}.xlsx`, 'SPO Report')}
                         disabled={!cfg || spoRows.length === 0}
-                        title={!cfg ? notConfiguredTitle : undefined}
+                        title={spoTitle}
                         className="bg-blue-700 hover:bg-blue-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
                         📥 Download SPO Report
                       </button>
                       <button
                         onClick={() => cfg && downloadGCReport(crRows, CR_COL_IDX, CR_HEADERS, CR_SUPPLIER_COL_IN_MASTER, cfg.cr_match, `${crLabel}_-_CR_Tracker_-_${today}.xlsx`, 'CR Tracker')}
                         disabled={!cfg || crRows.length === 0}
-                        title={!cfg ? notConfiguredTitle : undefined}
+                        title={crTitle}
                         className="bg-teal-700 hover:bg-teal-600 disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs px-3 py-2 rounded font-semibold">
-                        📥 Download CR Tracker
+                        {crFile.loading && !crFile.rows ? '⏳ CR still loading…' : '📥 Download CR Tracker'}
                       </button>
                       <button
                         onClick={() => downloadGcDecomReport(gcDecomRows, `${fileSafeName}_-_Decom_Report_-_${today}.xlsx`)}
