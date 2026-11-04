@@ -17,9 +17,8 @@
 // necessarily a problem with the signed-in user — see
 // SharePointAccessDeniedError.
 //
-// Not wired into any existing page yet — this stage only proves the read
-// path itself works. Later stages replace each page's loadTrackerSnapshot/
-// loadChunkedReport call with one of the FILES entries below.
+// Every page now reads through one of the FILES entries below instead of
+// the old loadTrackerSnapshot()/chunked report_snapshots calls.
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0'
 

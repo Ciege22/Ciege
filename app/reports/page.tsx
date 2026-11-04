@@ -2,14 +2,16 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
-import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import { GC_CONFIG, matches, SPO_VENDOR_COL_IN_MASTER, CR_SUPPLIER_COL_IN_MASTER } from '../lib/gcConfig'
 import BackToDashboard from '../components/BackToDashboard'
-import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
 import {
   parseDecomRows, summarizeDecomByGc, decomRowsForGc, DecomRow,
   parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, STATUS_DISPLAY_LABEL, TrackerHop,
@@ -20,11 +22,9 @@ import { downloadDecomSlides } from '../lib/decomDeck'
 import { EmailSettings, DEFAULT_EMAIL, loadEmailSettings } from '../lib/settings'
 import ScopTab from './ScopTab'
 
-interface ReportSnapshot {
-  filename: string
-  uploaded_at: string
-  row_count: number
-}
+// Stable shared reference for "no SharePoint data yet" — avoids a fresh []
+// literal changing identity every render.
+const EMPTY_ROWS: unknown[][] = []
 
 const SPO_COL_IDX = [7, 8, 33, 40, 41, 43, 47, 48, 49, 50, 51]
 const SPO_HEADERS = ['Customer Site ID', 'Name', 'SOG Name', 'SPO Number', 'SPO Creation Date', 'SPO Vendor', 'SPO Value', 'IA Date', 'IA User', 'GR Date', 'GR Number']
@@ -34,23 +34,6 @@ const CR_HEADERS = ['Requestor', 'Supplier Name', 'Path ID', 'Site Name', 'Site 
 
 const NAVY = '124191'
 const TEAL = '00A0B0'
-
-// Store only the columns Ciege actually reads (SPO_COL_IDX / CR_COL_IDX above —
-// confirmed to be the full set referenced anywhere in the app or backend). Raw
-// tracker exports run 50-90+ columns wide, and storing every column was pushing
-// the Supabase upsert payload large enough to time out. Rows are truncated to a
-// sparse array (nulled-out gaps, original index positions preserved, everything
-// past the last needed column dropped entirely) rather than compacted or turned
-// into an object — every existing row[N] lookup throughout the app and the
-// Python backend (which indexes with a plain int, not a string key) keeps
-// working unchanged, since this stays a real array both in JS and after
-// json.loads() in Python.
-function stripRow(row: unknown[], keepCols: number[]): unknown[] {
-  const maxIdx = Math.max(...keepCols)
-  const stripped: unknown[] = new Array(maxIdx + 1).fill(null)
-  keepCols.forEach(i => { stripped[i] = row[i] ?? null })
-  return stripped
-}
 
 // Every current caller passes an already-guarded Date|null (decom.ts's
 // parseDate+yearOk pipeline), so this never sees a raw "1899-12-30"
@@ -425,52 +408,17 @@ function downloadDecomDashboard(decomRows: DecomRow[], missingSites: MissingDeco
   XLSX.writeFile(wb, `Viaero_Decom_Dashboard_${new Date().toISOString().slice(0, 10)}.xlsx`)
 }
 
-interface UploadBoxProps {
-  type: 'spo' | 'cr' | 'decom'
-  info: ReportSnapshot | null
-  label: string
-  uploading: string | null
-  onUpload: (file: File, type: 'spo' | 'cr' | 'decom') => void
-}
-
-function UploadBox({ type, info, label, uploading, onUpload }: UploadBoxProps) {
-  return (
-    <div
-      className="border-2 border-dashed border-gray-600 rounded-xl p-5 cursor-pointer hover:border-blue-500 transition-colors"
-      onDragOver={(e) => e.preventDefault()}
-      onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) onUpload(f, type) }}
-      onClick={() => document.getElementById(`${type}-upload`)?.click()}
-    >
-      <input id={`${type}-upload`} type="file" accept=".xlsx" className="hidden"
-        // Reset the input's value after reading the file — without this, re-
-        // selecting a file with the same name (the normal case for "here's
-        // this week's tracker" reusing the same filename) fires no `change`
-        // event at all on some browsers, so a re-upload silently does nothing
-        // and the page keeps showing last week's data with no error shown.
-        onChange={(e) => { const f = e.target.files?.[0]; if (f) onUpload(f, type); e.target.value = '' }} />
-      {uploading === type
-        ? <p className="text-blue-400 text-sm text-center">⏳ Processing...</p>
-        : info
-        ? <div>
-            <p className="text-green-400 text-sm font-semibold">✅ {label} loaded</p>
-            <p className="text-gray-500 text-xs mt-1">{info.filename} · {info.row_count} rows · {new Date(info.uploaded_at).toLocaleDateString('en-US')} at {new Date(info.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}</p>
-          </div>
-        : <p className="text-gray-400 text-sm text-center">📂 Upload {label}</p>
-      }
-    </div>
-  )
-}
-
 export default function ReportsPage() {
   const router = useRouter()
-  const [spoRows, setSpoRows] = useState<unknown[][]>([])
-  const [crRows, setCrRows] = useState<unknown[][]>([])
-  const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
-  const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
-  const [spoInfo, setSpoInfo] = useState<ReportSnapshot | null>(null)
-  const [crInfo, setCrInfo] = useState<ReportSnapshot | null>(null)
-  const [decomInfo, setDecomInfo] = useState<ReportSnapshot | null>(null)
-  const [uploading, setUploading] = useState<string | null>(null)
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+  const decomFile = useSharePointFile('decom')
+  const spoFile = useSharePointFile('spo')
+  const crFile = useSharePointFile('cr')
+  const spoRows = spoFile.rows ?? EMPTY_ROWS
+  const crRows = crFile.rows ?? EMPTY_ROWS
+  const decomRawRows = decomFile.rows ?? EMPTY_ROWS
+  const trackerRawRows = trackerFile.rows ?? EMPTY_ROWS
   const [activeTab, setActiveTab] = useState<'spo-cr-decom' | 'decom-tracker' | 'scop'>('spo-cr-decom')
   const [generatingSlides, setGeneratingSlides] = useState(false)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
@@ -514,125 +462,6 @@ export default function ReportsPage() {
     loadEmailSettings().then(setEmailSettings)
   }, [])
 
-  useEffect(() => {
-    const load = async () => {
-      const { data: spoSnap } = await supabase.from('report_snapshots').select('*').eq('id', 'spo').single()
-      if (spoSnap) { setSpoRows(JSON.parse(spoSnap.data)); setSpoInfo({ filename: spoSnap.filename, uploaded_at: spoSnap.uploaded_at, row_count: JSON.parse(spoSnap.data).length }) }
-
-      const crReport = await loadChunkedReport('cr')
-      if (crReport) { setCrRows(crReport.rows); setCrInfo({ filename: crReport.filename, uploaded_at: crReport.uploaded_at, row_count: crReport.rows.length }) }
-
-      const decomReport = await loadChunkedReport('decom')
-      console.log('[decom-load] loadChunkedReport("decom") returned', decomReport ? decomReport.rows.length : 0, 'rows')
-      if (decomReport) { setDecomRawRows(decomReport.rows); setDecomInfo({ filename: decomReport.filename, uploaded_at: decomReport.uploaded_at, row_count: decomReport.rows.length }) }
-
-      const trackerSnap = await loadTrackerSnapshot()
-      if (trackerSnap) setTrackerRawRows(trackerSnap.data)
-    }
-    load()
-  }, [])
-
-  const handleUpload = useCallback(async (file: File, type: 'spo' | 'cr' | 'decom') => {
-    setUploading(type)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer)
-        const wb = XLSX.read(data, { type: 'array', cellDates: true })
-
-        let ws, headerRowIndex
-        if (type === 'spo') {
-          ws = wb.Sheets['NDPd_NAM_003_Viaero_SPO_Report'] || wb.Sheets[wb.SheetNames[0]]
-          headerRowIndex = 0
-        } else if (type === 'cr') {
-          ws = wb.Sheets['CR Tracker'] || wb.Sheets[wb.SheetNames[0]]
-          headerRowIndex = 1
-        } else {
-          const DECOM_SHEET_NAME = 'R&R - Link Drop Off Status'
-          const matchedSheetName = wb.SheetNames.find(n => n.trim() === DECOM_SHEET_NAME)
-          ws = matchedSheetName ? wb.Sheets[matchedSheetName] : undefined
-          if (!ws) {
-            console.error(`[report-upload] Decom upload failed: sheet "${DECOM_SHEET_NAME}" not found. Available sheets:`, wb.SheetNames)
-            alert(`Could not find the "${DECOM_SHEET_NAME}" tab in this file — check the tab name and try again.`)
-            setUploading(null)
-            return
-          }
-          headerRowIndex = 0
-        }
-
-        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
-
-        let allRows = rawRows
-        if (type === 'cr' || type === 'decom') {
-          let lastDataRow = rawRows.length - 1
-          while (lastDataRow >= 0 && !(rawRows[lastDataRow] || []).some(c => c !== null && c !== undefined && String(c).trim() !== '')) {
-            lastDataRow--
-          }
-          const rows = rawRows.slice(0, lastDataRow + 1)
-          console.log(`[report-upload] ${type.toUpperCase()} raw rows:`, rawRows.length, '→ trimmed:', rows.length)
-          allRows = rows
-        }
-
-        const dataRows = allRows.slice(headerRowIndex + 1).filter(row => row.some(v => v !== null))
-
-        if (type === 'spo' || type === 'cr') {
-          const keepCols = type === 'spo' ? SPO_COL_IDX : CR_COL_IDX
-          const totalCols = dataRows.reduce((max, row) => Math.max(max, row.length), 0)
-          const strippedRows = dataRows.map(row => stripRow(row, keepCols))
-          console.log(`[report-upload] ${type.toUpperCase()} columns: kept ${keepCols.length} of ${totalCols} (dropped ${totalCols - keepCols.length})`)
-
-          if (type === 'spo') {
-            console.log('[report-upload] upserting id="spo"', 'filename=', file.name)
-            const { error } = await supabase.from('report_snapshots').upsert({
-              id: 'spo',
-              filename: file.name,
-              uploaded_at: new Date().toISOString(),
-              data: JSON.stringify(strippedRows)
-            })
-            if (error) {
-              console.error('[report-upload] SPO upsert failed:', error)
-              alert('SPO upload failed to save — check console for details')
-              setUploading(null)
-              return
-            }
-            setSpoRows(strippedRows)
-            setSpoInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
-          } else {
-            console.log('[report-upload] chunking id="cr"', 'filename=', file.name, 'rows=', strippedRows.length)
-            const { error } = await saveChunkedReport('cr', file.name, strippedRows)
-            if (error) {
-              console.error('[report-upload] CR chunked save failed:', error)
-              alert('CR upload failed to save — check console for details')
-              setUploading(null)
-              return
-            }
-            setCrRows(strippedRows)
-            setCrInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: strippedRows.length })
-          }
-        } else {
-          // Decom isn't column-stripped — the parser resolves columns by
-          // header name at load time, so the header row travels with the
-          // stored data instead of being dropped like SPO/CR.
-          const decomStoreRows = [allRows[headerRowIndex], ...dataRows]
-          console.log('[report-upload] chunking id="decom"', 'filename=', file.name, 'rows=', decomStoreRows.length)
-          const { error } = await saveChunkedReport('decom', file.name, decomStoreRows)
-          if (error) {
-            console.error('[report-upload] Decom chunked save failed:', error)
-            alert('Decom upload failed to save — check console for details')
-            setUploading(null)
-            return
-          }
-          setDecomRawRows(decomStoreRows)
-          setDecomInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: dataRows.length })
-        }
-      } catch (err) {
-        console.error('Upload error:', err)
-        alert('Upload failed — check file format')
-      }
-      setUploading(null)
-    }
-    reader.readAsArrayBuffer(file)
-  }, [])
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
@@ -643,17 +472,19 @@ export default function ReportsPage() {
         <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
           <div>
             <h1 className="text-3xl font-bold">Reports</h1>
-            <p className="text-gray-400 mt-1">Upload SPO and CR master reports — download GC-specific filtered Excel files on demand</p>
+            <p className="text-gray-400 mt-1">SPO, CR, and Decom master reports from SharePoint — download GC-specific filtered Excel files on demand</p>
           </div>
-          {/* SharePoint sync shell — UI placeholder only, not wired to
-              anything. Manual uploads below stay the only live path until
-              Nokia IT clears admin consent for the Graph API scope; this
-              just gets the UI ready to flip on. */}
-          <button type="button" disabled
-            title="Waiting for IT approval — Nokia Azure AD admin consent is pending for SharePoint access"
-            className="flex items-center gap-2 rounded-lg border border-dashed border-gray-700 px-4 py-2 text-sm text-gray-500 cursor-not-allowed whitespace-nowrap">
-            🔗 Sync All Reports from SharePoint <span className="text-gray-600 text-xs">(waiting for IT approval)</span>
-          </button>
+          {isAuthenticated ? (
+            <button
+              type="button"
+              onClick={() => { spoFile.refresh(); crFile.refresh(); decomFile.refresh(); trackerFile.refresh() }}
+              disabled={spoFile.loading || crFile.loading || decomFile.loading || trackerFile.loading}
+              className="flex items-center gap-2 rounded-lg border border-dashed border-blue-700 px-4 py-2 text-sm text-blue-300 hover:bg-blue-950/40 disabled:opacity-50 whitespace-nowrap">
+              🔄 {(spoFile.loading || crFile.loading || decomFile.loading || trackerFile.loading) ? 'Refreshing…' : 'Refresh from SharePoint'}
+            </button>
+          ) : (
+            <MicrosoftLogin />
+          )}
         </div>
 
         {/* Tab Bar */}
@@ -682,21 +513,27 @@ export default function ReportsPage() {
 
         {activeTab === 'spo-cr-decom' && (
           <>
-            {/* Upload Section */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              <div>
-                <p className="text-sm font-semibold text-gray-400 mb-2">SPO MASTER REPORT</p>
-                <UploadBox type="spo" info={spoInfo} label="SPO Master Report" uploading={uploading} onUpload={handleUpload} />
+            {!isAuthenticated ? (
+              <div className="bg-gray-900 rounded-xl border border-gray-700 p-6 mb-8 text-center">
+                <p className="text-gray-400 mb-3">Sign in with your Nokia account to load SPO/CR/Decom reports from SharePoint.</p>
+                <div className="flex justify-center"><MicrosoftLogin /></div>
               </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-400 mb-2">CR CLAIMS TRACKER</p>
-                <UploadBox type="cr" info={crInfo} label="CR Claims Tracker" uploading={uploading} onUpload={handleUpload} />
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+                <div>
+                  <p className="text-sm font-semibold text-gray-400 mb-2">SPO MASTER REPORT</p>
+                  <SharePointSourceLine fileKey="spo" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-400 mb-2">CR CLAIMS TRACKER</p>
+                  <SharePointSourceLine fileKey="cr" />
+                </div>
+                <div>
+                  <p className="text-sm font-semibold text-gray-400 mb-2">DECOM TRACKER</p>
+                  <SharePointSourceLine fileKey="decom" />
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-semibold text-gray-400 mb-2">DECOM TRACKER</p>
-                <UploadBox type="decom" info={decomInfo} label="Decom Tracker" uploading={uploading} onUpload={handleUpload} />
-              </div>
-            </div>
+            )}
           </>
         )}
 
@@ -843,7 +680,7 @@ export default function ReportsPage() {
               </button>
               <button
                 onClick={async () => {
-                  if (decomRows.length === 0) { alert('Upload decom tracker first'); return }
+                  if (decomRows.length === 0) { alert('No decom tracker data loaded yet'); return }
                   setGeneratingSlides(true)
                   try {
                     await downloadDecomSlides(decomRows, missingDecomSites, extraDroppedOff)
@@ -862,7 +699,7 @@ export default function ReportsPage() {
               <button
                 onClick={() => window.open(buildDecomCmEmailMailto(decomRows, emailSettings))}
                 disabled={decomRows.length === 0}
-                title={decomRows.length === 0 ? 'Upload Decom Tracker first' : undefined}
+                title={decomRows.length === 0 ? 'No decom tracker data loaded yet' : undefined}
                 className="px-4 py-2 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg text-sm font-semibold"
               >
                 ✉️ Viaero Decom Analysis Email
@@ -951,9 +788,9 @@ export default function ReportsPage() {
           </div>
         )}
 
-        {spoRows.length === 0 && crRows.length === 0 && decomRows.length === 0 && (
+        {isAuthenticated && spoRows.length === 0 && crRows.length === 0 && decomRows.length === 0 && (
           <div className="bg-gray-900 rounded-xl border border-gray-700 p-12 text-center">
-            <p className="text-gray-400 text-xl">📂 Upload your master reports above to get started</p>
+            <p className="text-gray-400 text-xl">No report data loaded yet.</p>
           </div>
         )}
           </>

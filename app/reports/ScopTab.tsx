@@ -1,15 +1,18 @@
 'use client'
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import * as XLSX from 'xlsx'
 import JSZip from 'jszip'
-import { saveChunkedReport, loadChunkedReport } from '../lib/reportChunks'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import {
   ScopSettings, DEFAULT_SCOP, loadScopSettings,
   EmailSettings, DEFAULT_EMAIL, loadEmailSettings,
 } from '../lib/settings'
 import {
-  ScopRow, resolveScopCalcSettings, keyScopRows, detectScopHeaderRow,
+  ScopRow, resolveScopCalcSettings, keyScopRows,
   buildScopDataset, computeQuickBaseView, computePathwaveView, computeOverallView,
   buildItemizedMissingItems, buildAllGCReports, buildScopGcEmailMailto,
   pathwaveGcItems, QUICKBASE_ALL_ITEMS, agingColor, ScopGcReport,
@@ -24,7 +27,9 @@ const T = {
   grey: '#6B7280', greyBar: '#D0D5DD',
 }
 
-interface ScopInfo { filename: string; uploaded_at: string; row_count: number }
+// Stable shared reference for "no SharePoint data yet" — avoids a fresh []
+// literal changing identity every render and invalidating memos below.
+const EMPTY_ROWS: unknown[][] = []
 
 function fmtDate(d: Date | null): string {
   return d && !isNaN(d.getTime()) ? d.toLocaleDateString('en-US') : '—'
@@ -267,9 +272,10 @@ function SimpleTable({ rows }: { rows: ScopRow[] }) {
 // ── main component ─────────────────────────────────────────────────────────
 
 export default function ScopTab() {
-  const [storeRows, setStoreRows] = useState<unknown[][]>([])
-  const [info, setInfo] = useState<ScopInfo | null>(null)
-  const [uploading, setUploading] = useState(false)
+  const isAuthenticated = useIsAuthenticated()
+  const scopFile = useSharePointFile('scop')
+  const storeRows = scopFile.rows ?? EMPTY_ROWS
+
   const [scopSettings, setScopSettings] = useState<ScopSettings>(DEFAULT_SCOP)
   const [emailSettings, setEmailSettings] = useState<EmailSettings>(DEFAULT_EMAIL)
   const [subTab, setSubTab] = useState<'views' | 'master' | 'gc'>('views')
@@ -280,12 +286,6 @@ export default function ScopTab() {
   useEffect(() => {
     loadScopSettings().then(setScopSettings)
     loadEmailSettings().then(setEmailSettings)
-    loadChunkedReport('scop').then(r => {
-      if (r) {
-        setStoreRows(r.rows)
-        setInfo({ filename: r.filename, uploaded_at: r.uploaded_at, row_count: Math.max(0, r.rows.length - 1) })
-      }
-    })
   }, [])
 
   const calc = useMemo(() => resolveScopCalcSettings(scopSettings), [scopSettings])
@@ -296,40 +296,6 @@ export default function ScopTab() {
 
   const gcReports = useMemo(() => (dataset.length ? buildAllGCReports(dataset, calc) : []), [dataset, calc])
   const thresholds = scopSettings.agingColorThresholds
-
-  const handleUpload = useCallback(async (file: File) => {
-    setUploading(true)
-    const reader = new FileReader()
-    reader.onload = async (e) => {
-      try {
-        const data = new Uint8Array(e.target?.result as ArrayBuffer)
-        const wb = XLSX.read(data, { type: 'array', cellDates: true })
-        const ws = wb.Sheets['HOPs'] || wb.Sheets[wb.SheetNames.find(n => n.trim().toLowerCase() === 'hops') || '']
-        if (!ws) { alert('Could not find a "HOPs" tab in this file.'); setUploading(false); return }
-
-        const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
-        const override = scopSettings.headerRowOverride
-        const headerIdx = override && override > 0 ? override - 1 : detectScopHeaderRow(rawRows)
-        if (headerIdx < 0) {
-          alert('Could not auto-detect the header row (looking for a row with both "HOP" and "General Contractor"). Set an explicit header row in Settings → SCOP and retry.')
-          setUploading(false); return
-        }
-        const dataRows = rawRows.slice(headerIdx + 1).filter(r => (r || []).some(v => v !== null && v !== undefined && String(v).trim() !== ''))
-        const toStore = [rawRows[headerIdx], ...dataRows]
-
-        const { error } = await saveChunkedReport('scop', file.name, toStore)
-        if (error) { console.error('[scop-upload] save failed', error); alert('SCOP upload failed to save — check console.'); setUploading(false); return }
-
-        setStoreRows(toStore)
-        setInfo({ filename: file.name, uploaded_at: new Date().toISOString(), row_count: dataRows.length })
-      } catch (err) {
-        console.error('[scop-upload] error', err)
-        alert('SCOP upload failed — check the file format.')
-      }
-      setUploading(false)
-    }
-    reader.readAsArrayBuffer(file)
-  }, [scopSettings.headerRowOverride])
 
   const today = fmtDate(calc.asOfDate).replace(/\//g, '-')
 
@@ -347,37 +313,21 @@ export default function ScopTab() {
 
   return (
     <div className="space-y-6">
-      {/* Upload */}
-      <div className="max-w-md">
-        <p className="mb-2 text-sm font-semibold text-gray-400">SCOP TRACKER (COP tracker, HOPs tab)</p>
-        <div
-          className="cursor-pointer rounded-xl border-2 border-dashed border-gray-600 p-5 transition-colors hover:border-blue-500"
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) handleUpload(f) }}
-          onClick={() => document.getElementById('scop-upload')?.click()}
-        >
-          <input id="scop-upload" type="file" accept=".xlsx" className="hidden"
-            // Reset the input value after reading — otherwise re-selecting a
-            // file with the same name (the normal weekly-refresh case) fires
-            // no change event on some browsers, so the re-upload silently
-            // does nothing.
-            onChange={(e) => { const f = e.target.files?.[0]; if (f) handleUpload(f); e.target.value = '' }} />
-          {uploading
-            ? <p className="text-center text-sm text-blue-400">⏳ Processing…</p>
-            : info
-            ? <div>
-                <p className="text-sm font-semibold text-green-400">✅ SCOP tracker loaded</p>
-                <p className="mt-1 text-xs text-gray-500">
-                  {info.filename} · {info.row_count} rows · {new Date(info.uploaded_at).toLocaleDateString('en-US')} at {new Date(info.uploaded_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                </p>
-              </div>
-            : <p className="text-center text-sm text-gray-400">📂 Upload SCOP tracker</p>}
+      {!isAuthenticated && (
+        <div className="max-w-md rounded-xl border border-gray-700 bg-gray-900 p-6 text-center">
+          <p className="mb-3 text-sm text-gray-400">Sign in with your Nokia account to load the SCOP tracker from SharePoint.</p>
+          <div className="flex justify-center"><MicrosoftLogin /></div>
         </div>
-      </div>
+      )}
+      {isAuthenticated && (
+        <div className="max-w-md">
+          <SharePointSourceLine fileKey="scop" />
+        </div>
+      )}
 
-      {dataset.length === 0 && !uploading && (
+      {isAuthenticated && dataset.length === 0 && !scopFile.loading && (
         <div className="rounded-xl border border-gray-700 bg-gray-900 p-12 text-center">
-          <p className="text-xl text-gray-400">📂 Upload the COP tracker above to build the SCOP views</p>
+          <p className="text-xl text-gray-400">No SCOP tracker data found.</p>
         </div>
       )}
 

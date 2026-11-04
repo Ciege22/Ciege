@@ -2,10 +2,13 @@
 
 export const dynamic = 'force-dynamic'
 
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import Link from 'next/link'
-import { loadTrackerSnapshot } from '../lib/supabase'
-import { loadChunkedReport } from '../lib/reportChunks'
+import * as XLSX from 'xlsx'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from '../components/SharePointDataProvider'
+import MicrosoftLogin from '../components/MicrosoftLogin'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import BackToDashboard from '../components/BackToDashboard'
 import NtpCommentsV2 from '../components/NtpCommentsV2'
 import CustomerSlideDeckNav from '../components/CustomerSlideDeckNav'
@@ -28,35 +31,40 @@ import { loadScopSettings } from '../lib/settings'
 // for the full list of behavioral differences) — kept isolated so the old
 // one stays available as a fallback, not because this is still in testing.
 
+// backend/build_deck.py's extract_data(), when given a FILE (not the
+// Supabase tracker_rows fallback), hardcodes pd.read_excel(tracker_path,
+// sheet_name='HOPs', header=1) — it assumes row 0 is always a description
+// row and the real header is row 1, same as every real Nokia tracker
+// export. SharePointDataProvider's parsed tracker.rows has already found
+// and stripped that description row (row 0 IS the real header there), so
+// building a file from it as-is would make the backend treat our actual
+// header as the description row and our first data row as headers. A
+// single blank row has to go back in at the top to keep the file-upload
+// path's assumption true. (Confirmed via a throwaway round-trip test: an
+// empty array `[]` for that row gets dropped entirely by aoa_to_sheet,
+// collapsing row 0 away — it has to be a one-cell row, e.g. [''].)
+function buildTrackerXlsxBlob(rows: unknown[][]): Blob {
+  const wb = XLSX.utils.book_new()
+  const ws = XLSX.utils.aoa_to_sheet([[''], ...rows], { cellDates: true })
+  XLSX.utils.book_append_sheet(wb, ws, 'HOPs')
+  const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx', cellDates: true }) as ArrayBuffer
+  return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
+}
+
 export default function DeckBuilderV2Page() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+  const decomFile = useSharePointFile('decom')
+  const scopFile = useSharePointFile('scop')
+
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [statusMsg, setStatusMsg] = useState('')
 
   const [previousDeckFile, setPreviousDeckFile] = useState<File | null>(null)
-  const [trackerOverrideFile, setTrackerOverrideFile] = useState<File | null>(null)
   const [deckDate, setDeckDate] = useState('')
   const [tab, setTab] = useState<'build' | 'ntp'>('build')
-
-  const [trackerLoaded, setTrackerLoaded] = useState(false)
-  const [trackerInfo, setTrackerInfo] = useState<{ filename: string; uploaded_at: string; hop_count: number } | null>(null)
-
-  useEffect(() => {
-    loadTrackerSnapshot().then(snap => {
-      if (snap) {
-        setTrackerInfo({ filename: snap.filename, uploaded_at: snap.uploaded_at, hop_count: snap.hop_count })
-        setTrackerLoaded(true)
-      }
-    })
-  }, [])
-
-  function fmtDate(iso: string) {
-    if (!iso) return ''
-    const d = new Date(iso)
-    return d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' }) +
-      ' at ' + d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })
-  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -71,35 +79,29 @@ export default function DeckBuilderV2Page() {
       setError('Deck date is required.')
       return
     }
+    if (!trackerFile.rows) {
+      setError('Tracker not loaded from SharePoint yet — sign in and wait for it to finish loading.')
+      return
+    }
 
     setLoading(true)
     try {
-      setStatusMsg('Loading Decom tracker data…')
-      const [decomReport, trackerSnap] = await Promise.all([
-        loadChunkedReport('decom'),
-        loadTrackerSnapshot(),
-      ])
-      const decomRawRows = decomReport?.rows ?? []
-      const trackerRawRows = trackerSnap?.data ?? []
+      setStatusMsg('Building Decom Dashboard slides…')
+      const decomRawRows = decomFile.rows ?? []
       const decomRows = parseDecomRows(decomRawRows)
-      const trackerHops = parseTrackerHopsForDecom(trackerRawRows)
+      const trackerHops = parseTrackerHopsForDecom(trackerFile.rows)
       const missingDecomSites = findMissingDecom(decomRows, trackerHops)
       const extraDroppedOff = countDroppedOffWithoutCxComplete(decomRawRows)
-
-      setStatusMsg('Building Decom Dashboard slides…')
       const decomBlob = await buildDecomDeckBlob(decomRows, missingDecomSites, extraDroppedOff)
 
-      setStatusMsg('Loading SCOP tracker data…')
-      const scopReport = await loadChunkedReport('scop')
+      setStatusMsg('Building SCOP Status Deck slides…')
       const scopSettings = await loadScopSettings()
       const calc = resolveScopCalcSettings(scopSettings)
-      const scopDataset = buildScopDataset(keyScopRows(scopReport?.rows ?? []), calc)
+      const scopDataset = buildScopDataset(keyScopRows(scopFile.rows ?? []), calc)
       const qbv = computeQuickBaseView(scopDataset)
       const pw = computePathwaveView(scopDataset)
       const ov = computeOverallView(scopDataset)
       const notYetConstructed = scopDataset.length - ov.trackedTotal
-
-      setStatusMsg('Building SCOP Status Deck slides…')
       const scopBlob = await buildScopDeckBlob({
         totalNokiaHops: scopDataset.length,
         constructionComplete: ov.trackedTotal,
@@ -111,7 +113,7 @@ export default function DeckBuilderV2Page() {
       setStatusMsg('Building the deck…')
       const formData = new FormData()
       formData.append('previous_deck', previousDeckFile)
-      if (trackerOverrideFile) formData.append('tracker', trackerOverrideFile)
+      formData.append('tracker', buildTrackerXlsxBlob(trackerFile.rows), 'tracker.xlsx')
       const [year, month, day] = deckDate.split('-')
       formData.append('deck_date', `${parseInt(month, 10)}/${parseInt(day, 10)}/${year}`)
       formData.append('decom_pptx', decomBlob, 'decom.pptx')
@@ -186,15 +188,18 @@ export default function DeckBuilderV2Page() {
         <section className="rounded-[32px] border border-white/10 bg-white/5 p-8">
           <form onSubmit={handleSubmit} className="space-y-6">
             <div className="bg-gray-800 border border-gray-600 rounded-lg p-4">
-              {trackerLoaded ? (
+              {!isAuthenticated ? (
                 <div>
-                  <p className="text-green-400 text-sm font-semibold">✅ Tracker loaded from Dashboard</p>
-                  <p className="text-gray-500 text-xs mt-1">
-                    {trackerInfo?.filename} · {trackerInfo?.hop_count} HOPs · {fmtDate(trackerInfo?.uploaded_at ?? '')}
-                  </p>
+                  <p className="text-red-400 text-sm font-semibold mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+                  <MicrosoftLogin />
+                </div>
+              ) : trackerFile.rows ? (
+                <div>
+                  <p className="text-green-400 text-sm font-semibold">✅ Tracker loaded from SharePoint</p>
+                  <div className="mt-1"><SharePointSourceLine fileKey="tracker" /></div>
                 </div>
               ) : (
-                <p className="text-red-400 text-sm font-semibold">⚠️ No tracker found — upload on Dashboard first, or override below</p>
+                <p className="text-amber-400 text-sm font-semibold">{trackerFile.error ?? 'Loading tracker from SharePoint…'}</p>
               )}
             </div>
 
@@ -208,17 +213,6 @@ export default function DeckBuilderV2Page() {
                 className="w-full text-sm text-zinc-300 file:mr-4 file:rounded-lg file:border-0 file:bg-emerald-600 file:px-4 file:py-2 file:text-white file:text-sm"
               />
               {previousDeckFile && <p className="text-xs text-zinc-500 mt-1">{previousDeckFile.name}</p>}
-            </div>
-
-            <div>
-              <label className="mb-2 block text-xs font-medium uppercase tracking-[0.3em] text-zinc-400">
-                Tracker Override <span className="text-zinc-600 normal-case tracking-normal">(.xlsx, optional — overrides Supabase)</span>
-              </label>
-              <input
-                type="file" accept=".xlsx"
-                onChange={e => setTrackerOverrideFile(e.target.files?.[0] ?? null)}
-                className="w-full text-sm text-zinc-300 file:mr-4 file:rounded-lg file:border-0 file:bg-zinc-700 file:px-4 file:py-2 file:text-white file:text-sm"
-              />
             </div>
 
             <div className="max-w-xs">
@@ -245,7 +239,7 @@ export default function DeckBuilderV2Page() {
 
             <div className="flex items-center gap-4">
               <button
-                type="submit" disabled={loading}
+                type="submit" disabled={loading || !isAuthenticated || !trackerFile.rows}
                 className="inline-flex items-center gap-2.5 rounded-2xl bg-emerald-500 px-6 py-3 text-sm font-semibold text-zinc-950 shadow-lg transition hover:bg-emerald-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {loading ? 'Building…' : 'Build Deck (V2)'}

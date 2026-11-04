@@ -3,8 +3,10 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
-import { supabase, loadTrackerSnapshot } from '../lib/supabase'
 import { clearNokiaCache } from '../lib/nokiaCache'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointLazyFile } from '../components/SharePointDataProvider'
+import SharePointSourceLine from '../components/SharePointSourceLine'
 import { GC_CONFIG } from '../lib/gcConfig'
 import { GR_SORT_OPTIONS } from '../lib/grTracker'
 import BackToDashboard from '../components/BackToDashboard'
@@ -15,11 +17,6 @@ import {
   DisplaySettings, DEFAULT_DISPLAY, loadDisplaySettings, saveDisplaySettings,
   ScopSettings, DEFAULT_SCOP, loadScopSettings, saveScopSettings, SCOP_PATHWAVE_ITEM_LABELS,
 } from '../lib/settings'
-
-interface SnapshotInfo {
-  filename: string
-  uploaded_at: string
-}
 
 function SectionCard({ title, subtitle, children }: { title: string; subtitle: string; children: React.ReactNode }) {
   return (
@@ -41,12 +38,17 @@ function SaveButton({ onClick, saved }: { onClick: () => void; saved: boolean })
   )
 }
 
-function fmtTimestamp(iso: string) {
-  const d = new Date(iso)
-  return `${d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric', year: 'numeric' })} at ${d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}`
-}
 
 export default function SettingsPage() {
+  const isAuthenticated = useIsAuthenticated()
+  // tracker/decom/scop/spo aren't read directly here — each
+  // SharePointSourceLine below triggers its own load via its own
+  // useSharePointFile(fileKey) call. CR is the one loaded lazily (not
+  // auto-fetched just for this page's status display) — it's by far the
+  // largest (~30MB), the same reasoning GC Call View's Reports tab uses —
+  // so it needs its own hook here to control that.
+  const crFile = useSharePointLazyFile('cr')
+
   const [loaded, setLoaded] = useState(false)
 
   const [program, setProgram] = useState<ProgramSettings>(DEFAULT_PROGRAM)
@@ -71,10 +73,6 @@ export default function SettingsPage() {
   const [scopAliasRows, setScopAliasRows] = useState<{ raw: string; canonical: string }[]>([])
   const [scopSaved, setScopSaved] = useState(false)
 
-  const [trackerInfo, setTrackerInfo] = useState<SnapshotInfo | null>(null)
-  const [spoInfo, setSpoInfo] = useState<SnapshotInfo | null>(null)
-  const [crInfo, setCrInfo] = useState<SnapshotInfo | null>(null)
-
   useEffect(() => {
     const load = async () => {
       const [p, t, e, d, sc] = await Promise.all([
@@ -98,15 +96,6 @@ export default function SettingsPage() {
       })
       setRoutingRows(initialRouting)
       setDisplay(d)
-
-      const snap = await loadTrackerSnapshot()
-      if (snap) setTrackerInfo({ filename: snap.filename, uploaded_at: snap.uploaded_at })
-
-      const { data: spoSnap } = await supabase.from('report_snapshots').select('filename, uploaded_at').eq('id', 'spo').single()
-      if (spoSnap) setSpoInfo(spoSnap)
-
-      const { data: crSnap } = await supabase.from('report_snapshots').select('filename, uploaded_at').eq('id', 'cr').single()
-      if (crSnap) setCrInfo(crSnap)
 
       setLoaded(true)
     }
@@ -550,36 +539,44 @@ export default function SettingsPage() {
             </SectionCard>
 
             {/* Data Management */}
-            <SectionCard title="Data Management" subtitle="Most recent uploads on file — read-only">
-              <div className="grid grid-cols-3 gap-4 text-sm">
-                <div className="bg-gray-800 rounded-lg p-4">
-                  <p className="text-gray-500 text-xs uppercase font-semibold mb-1">Tracker</p>
-                  {trackerInfo ? (
-                    <>
-                      <p className="text-white">{trackerInfo.filename}</p>
-                      <p className="text-gray-500 text-xs mt-1">{fmtTimestamp(trackerInfo.uploaded_at)}</p>
-                    </>
-                  ) : <p className="text-gray-600">No upload found</p>}
+            <SectionCard title="Data Management" subtitle="Nokia data loaded this session, read live from SharePoint — read-only">
+              {!isAuthenticated ? (
+                <p className="text-gray-500 text-sm">Sign in with your Nokia account on any page to see load status here.</p>
+              ) : (
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <p className="text-gray-500 text-xs uppercase font-semibold mb-1">Tracker</p>
+                    <SharePointSourceLine fileKey="tracker" />
+                  </div>
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <p className="text-gray-500 text-xs uppercase font-semibold mb-1">Decom Tracker</p>
+                    <SharePointSourceLine fileKey="decom" />
+                  </div>
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <p className="text-gray-500 text-xs uppercase font-semibold mb-1">SCOP Tracker</p>
+                    <SharePointSourceLine fileKey="scop" />
+                  </div>
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <p className="text-gray-500 text-xs uppercase font-semibold mb-1">SPO Report</p>
+                    <SharePointSourceLine fileKey="spo" />
+                  </div>
+                  <div className="bg-gray-800 rounded-lg p-4">
+                    <p className="text-gray-500 text-xs uppercase font-semibold mb-1">CR Claims Tracker</p>
+                    {crFile.rows ? (
+                      <SharePointSourceLine fileKey="cr" />
+                    ) : (
+                      <div>
+                        <p className="text-gray-600 text-xs mb-2">Not loaded this session (largest file — only loaded on request)</p>
+                        <button onClick={crFile.load} disabled={crFile.loading}
+                          className="text-blue-400 hover:text-blue-300 disabled:opacity-40 underline disabled:no-underline text-xs">
+                          {crFile.loading ? 'Loading…' : 'Load from SharePoint'}
+                        </button>
+                        {crFile.error && <p className="text-red-400 text-xs mt-1">{crFile.error}</p>}
+                      </div>
+                    )}
+                  </div>
                 </div>
-                <div className="bg-gray-800 rounded-lg p-4">
-                  <p className="text-gray-500 text-xs uppercase font-semibold mb-1">SPO Report</p>
-                  {spoInfo ? (
-                    <>
-                      <p className="text-white">{spoInfo.filename}</p>
-                      <p className="text-gray-500 text-xs mt-1">{fmtTimestamp(spoInfo.uploaded_at)}</p>
-                    </>
-                  ) : <p className="text-gray-600">No upload found</p>}
-                </div>
-                <div className="bg-gray-800 rounded-lg p-4">
-                  <p className="text-gray-500 text-xs uppercase font-semibold mb-1">CR Tracker</p>
-                  {crInfo ? (
-                    <>
-                      <p className="text-white">{crInfo.filename}</p>
-                      <p className="text-gray-500 text-xs mt-1">{fmtTimestamp(crInfo.uploaded_at)}</p>
-                    </>
-                  ) : <p className="text-gray-600">No upload found</p>}
-                </div>
-              </div>
+              )}
             </SectionCard>
 
             <SectionCard title="Local SharePoint Cache" subtitle="On-device copy of Nokia data used to speed up page loads — cleared automatically on sign-out">

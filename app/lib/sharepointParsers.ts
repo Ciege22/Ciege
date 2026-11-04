@@ -1,8 +1,8 @@
 // Parses each Nokia file's raw SharePoint bytes into EXACTLY the shape its
-// Supabase-backed equivalent currently produces, so SharePointDataProvider
-// is a true drop-in for loadTrackerSnapshot()/loadChunkedReport() — every
-// existing consumer (MapView, the Tracker grid, grTracker.ts, decom.ts,
-// scop.ts...) keeps working against this data completely unchanged.
+// now-removed Supabase-backed equivalent (loadTrackerSnapshot()/the old
+// chunked report_snapshots reads) used to produce, so every consumer
+// (MapView, the Tracker grid, grTracker.ts, decom.ts, scop.ts...) kept
+// working against this data unchanged through the migration.
 //
 // Verified against the real upload handlers this mirrors:
 //   tracker -> app/page.tsx handleTrackerUpload
@@ -35,10 +35,9 @@ function trimTrailingBlankRows(rows: unknown[][]): unknown[][] {
 }
 
 // Builds a sparse array of length max(keepCols)+1, keeping only the given
-// column indices and nulling everything else — matches app/reports/page.tsx's
-// stripRow() exactly, since downstream SPO/CR consumers (grTracker.ts) index
-// into these rows by the SAME fixed original positions, with no header row
-// to resolve by name.
+// column indices and nulling everything else, since downstream SPO/CR
+// consumers (grTracker.ts, app/reports/page.tsx) index into these rows by
+// the SAME fixed original positions, with no header row to resolve by name.
 function stripRow(row: unknown[], keepCols: number[]): unknown[] {
   const maxCol = Math.max(...keepCols)
   const out: unknown[] = new Array(maxCol + 1).fill(null)
