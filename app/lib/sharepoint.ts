@@ -135,6 +135,78 @@ export class GraphApiError extends Error {
   }
 }
 
+// Bug fix, 11/2026 ("SharePoint refresh gets stuck"): every fetch() call in
+// this file used to have no timeout and no AbortController at all — on
+// Nokia's locked-down network, a single Graph call (or the direct
+// downloadUrl content fetch) that just never resolves or rejects leaves
+// whatever awaited it paused forever, with no way for the caller to ever
+// know or recover. SharePointDataProvider's in-flight dedupe then keeps
+// EVERY later ensureLoaded()/refresh() call joined to that same permanently-
+// pending promise — which is exactly why clicking Refresh did nothing.
+// Every network call below now goes through fetchWithTimeout: a timeout-
+// driven AbortController (45s for everything except CR's own content
+// fetch, which gets 180s — see timeoutMsFor) combined with an optional
+// caller-supplied AbortSignal, so the provider can both time out AND let a
+// user-initiated Cancel/Refresh abort an in-flight call outright.
+export class SharePointTimeoutError extends Error {
+  constructor(public timeoutMs: number, public context: string) {
+    super(`SharePoint did not respond in ${Math.round(timeoutMs / 1000)}s (${context}).`)
+    this.name = 'SharePointTimeoutError'
+  }
+}
+
+export class SharePointCancelledError extends Error {
+  constructor(public context: string) {
+    super(`Cancelled (${context}).`)
+    this.name = 'SharePointCancelledError'
+  }
+}
+
+export interface FetchControl {
+  // Caller-owned signal (e.g. a per-file AbortController the provider can
+  // fire on Cancel/Refresh) — combined with this call's own timeout signal,
+  // whichever fires first wins.
+  signal?: AbortSignal
+  timeoutMs: number
+}
+
+const DEFAULT_CONTROL: FetchControl = { timeoutMs: 45_000 }
+
+/** 45s for every file's metadata/content calls except CR's own content
+ * fetch, which is by far the largest (~30MB) and gets 180s. The cheap
+ * metadata-only check (getNamedFileMetadata) always uses the 45s default
+ * regardless of file — it's a tiny JSON response either way. */
+export function timeoutMsFor(key: SharePointFileKey): number {
+  return key === 'cr' ? 180_000 : 45_000
+}
+
+function combineSignals(signals: AbortSignal[]): AbortSignal {
+  const live = signals.filter(Boolean)
+  if (live.length === 1) return live[0]
+  const controller = new AbortController()
+  for (const s of live) {
+    if (s.aborted) { controller.abort(s.reason); break }
+    s.addEventListener('abort', () => controller.abort(s.reason), { once: true })
+  }
+  return controller.signal
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit, control: FetchControl, context: string): Promise<Response> {
+  const timeoutController = new AbortController()
+  let timedOut = false
+  const timer = setTimeout(() => { timedOut = true; timeoutController.abort() }, control.timeoutMs)
+  const signal = control.signal ? combineSignals([timeoutController.signal, control.signal]) : timeoutController.signal
+  try {
+    return await fetch(url, { ...init, signal })
+  } catch (err) {
+    if (timedOut) throw new SharePointTimeoutError(control.timeoutMs, context)
+    if (control.signal?.aborted) throw new SharePointCancelledError(context)
+    throw err
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // Site IDs are permanent (don't expire with the token) and this read
 // service is called once per file per page load at most — caching avoids
 // a redundant resolve call every time the same site's file is read again.
@@ -154,13 +226,13 @@ async function assertGraphOk(res: Response, ctx: { siteUrl: string; fileKey?: st
   throw new GraphApiError(ctx.context, detail)
 }
 
-async function resolveSiteId(accessToken: string, siteUrl: string): Promise<string> {
+async function resolveSiteId(accessToken: string, siteUrl: string, control: FetchControl): Promise<string> {
   const cached = siteIdCache.get(siteUrl)
   if (cached) return cached
 
   console.time(`[sp-timing] resolveSiteId ${siteUrl}`)
   const url = `${GRAPH_BASE}/sites/${siteSegment(siteUrl)}`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${accessToken}` } }, control, `resolving site ${siteUrl}`)
   await assertGraphOk(res, { siteUrl, context: `Could not resolve SharePoint site "${siteUrl}"` })
 
   const data = await res.json() as { id: string }
@@ -174,17 +246,18 @@ export async function readSharePointFile(
   accessToken: string,
   siteUrl: string,
   filePath: string,
+  control: FetchControl = DEFAULT_CONTROL,
 ): Promise<ArrayBuffer> {
-  const siteId = await resolveSiteId(accessToken, siteUrl)
+  const siteId = await resolveSiteId(accessToken, siteUrl, control)
 
   // encodeURI (not encodeURIComponent) — keeps the '/' path separators
   // intact while percent-encoding spaces/parens/etc. in each segment,
   // which these real file paths are full of.
   console.time(`[sp-timing] graph content fetch ${filePath}`)
   const url = `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(filePath)}:/content`
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
-  })
+  }, control, `reading ${filePath}`)
   await assertGraphOk(res, { siteUrl, filePath, context: `SharePoint read failed for ${filePath}` })
 
   const buffer = await res.arrayBuffer()
@@ -203,10 +276,10 @@ interface DriveItemResponse {
   '@microsoft.graph.downloadUrl'?: string
 }
 
-async function fetchDriveItem(accessToken: string, siteUrl: string, filePath: string): Promise<DriveItemResponse> {
-  const siteId = await resolveSiteId(accessToken, siteUrl)
+async function fetchDriveItem(accessToken: string, siteUrl: string, filePath: string, control: FetchControl): Promise<DriveItemResponse> {
+  const siteId = await resolveSiteId(accessToken, siteUrl, control)
   const url = `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(filePath)}`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${accessToken}` } }, control, `getting metadata for ${filePath}`)
   await assertGraphOk(res, { siteUrl, filePath, context: `Could not get metadata for ${filePath}` })
   return res.json() as Promise<DriveItemResponse>
 }
@@ -217,16 +290,20 @@ export async function getSharePointFileMetadata(
   accessToken: string,
   siteUrl: string,
   filePath: string,
+  control: FetchControl = DEFAULT_CONTROL,
 ): Promise<SharePointFileMetadata> {
-  const data = await fetchDriveItem(accessToken, siteUrl, filePath)
+  const data = await fetchDriveItem(accessToken, siteUrl, filePath, control)
   return { lastModifiedDateTime: data.lastModifiedDateTime, size: data.size }
 }
 
-/** Convenience wrapper over getSharePointFileMetadata for a named FILES entry. */
-export async function getNamedFileMetadata(accessToken: string, key: SharePointFileKey): Promise<SharePointFileMetadata> {
+/** Convenience wrapper over getSharePointFileMetadata for a named FILES entry.
+ * Always uses the 45s default budget — a metadata-only call is a tiny JSON
+ * response regardless of which file it's for, so CR doesn't need (and
+ * shouldn't get) the longer 180s content-fetch budget here. */
+export async function getNamedFileMetadata(accessToken: string, key: SharePointFileKey, control: FetchControl = DEFAULT_CONTROL): Promise<SharePointFileMetadata> {
   const { site, path } = FILES[key]
   try {
-    return await getSharePointFileMetadata(accessToken, site, path)
+    return await getSharePointFileMetadata(accessToken, site, path, control)
   } catch (err) {
     if (err instanceof SharePointNotFoundError) {
       throw new SharePointNotFoundError(key, path, err.detail)
@@ -236,10 +313,10 @@ export async function getNamedFileMetadata(accessToken: string, key: SharePointF
 }
 
 /** Convenience wrapper over readSharePointFile for one of the named FILES entries. */
-export async function readNamedFile(accessToken: string, key: SharePointFileKey): Promise<ArrayBuffer> {
+export async function readNamedFile(accessToken: string, key: SharePointFileKey, control?: FetchControl): Promise<ArrayBuffer> {
   const { site, path } = FILES[key]
   try {
-    return await readSharePointFile(accessToken, site, path)
+    return await readSharePointFile(accessToken, site, path, control ?? { timeoutMs: timeoutMsFor(key) })
   } catch (err) {
     if (err instanceof SharePointNotFoundError) {
       throw new SharePointNotFoundError(key, path, err.detail)
@@ -260,12 +337,16 @@ export async function readNamedFile(accessToken: string, key: SharePointFileKey)
 export async function readNamedFileWithMetadata(
   accessToken: string,
   key: SharePointFileKey,
+  control: FetchControl = { timeoutMs: timeoutMsFor(key) },
 ): Promise<{ buffer: ArrayBuffer; metadata: SharePointFileMetadata }> {
   const { site, path } = FILES[key]
   console.time(`[sp-timing] graph metadata+downloadUrl ${key}`)
   let item: DriveItemResponse
   try {
-    item = await fetchDriveItem(accessToken, site, path)
+    // The metadata half of this combined call is cheap regardless of file
+    // — always bounded by the 45s default, not CR's longer content budget,
+    // same reasoning as getNamedFileMetadata above.
+    item = await fetchDriveItem(accessToken, site, path, { ...DEFAULT_CONTROL, signal: control.signal })
   } catch (err) {
     if (err instanceof SharePointNotFoundError) throw new SharePointNotFoundError(key, path, err.detail)
     throw err
@@ -276,12 +357,12 @@ export async function readNamedFileWithMetadata(
   const downloadUrl = item['@microsoft.graph.downloadUrl']
   if (!downloadUrl) {
     // Defensive fallback — see doc comment above.
-    const buffer = await readNamedFile(accessToken, key)
+    const buffer = await readNamedFile(accessToken, key, control)
     return { buffer, metadata }
   }
 
   console.time(`[sp-timing] downloadUrl content fetch ${key}`)
-  const res = await fetch(downloadUrl)
+  const res = await fetchWithTimeout(downloadUrl, {}, control, `downloading ${key}`)
   if (!res.ok) {
     throw new GraphApiError(`Direct download failed for ${path}`, { status: res.status, code: '', message: res.statusText })
   }
@@ -304,14 +385,15 @@ export async function listFolderChildren(
   accessToken: string,
   siteUrl: string,
   folderPath: string,
+  control: FetchControl = DEFAULT_CONTROL,
 ): Promise<FolderChild[]> {
-  const siteId = await resolveSiteId(accessToken, siteUrl)
+  const siteId = await resolveSiteId(accessToken, siteUrl, control)
   const trimmed = folderPath.trim()
   const isRoot = trimmed === '' || trimmed === '/'
   const url = isRoot
     ? `${GRAPH_BASE}/sites/${siteId}/drive/root/children`
     : `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(trimmed.startsWith('/') ? trimmed : `/${trimmed}`)}:/children`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  const res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${accessToken}` } }, control, `listing folder "${folderPath || '/'}"`)
   await assertGraphOk(res, { siteUrl, filePath: folderPath, context: `Could not list folder "${folderPath || '/'}"` })
 
   const data = await res.json() as { value: { name: string; folder?: { childCount?: number } }[] }

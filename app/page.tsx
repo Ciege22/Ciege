@@ -1340,11 +1340,19 @@ export default function Home() {
                   Reports use. */}
               {isAuthenticated ? (
                 <>
+                  {/* Bug fix, 11/2026 ("SharePoint refresh gets stuck"): this
+                      button used to be disabled={...loading}, same bug as
+                      SharePointSourceLine's own Refresh button — if any of
+                      the 4 files' loads ever hung, this button went
+                      permanently unclickable, matching the reported
+                      "Refresh does nothing." Never disabled now; each
+                      file's refresh() aborts whatever's currently running
+                      for it and starts fresh, so clicking this always does
+                      something even mid-hang. */}
                   <button
                     type="button"
                     onClick={() => { trackerFile.refresh(); decomFile.refresh(); scopFile.refresh(); spoFile.refresh() }}
-                    disabled={trackerFile.loading || decomFile.loading || scopFile.loading || spoFile.loading}
-                    className="mt-2 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-blue-700 px-3 py-2 text-xs text-blue-300 hover:bg-blue-950/40 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="mt-2 w-full flex items-center justify-center gap-2 rounded-lg border border-dashed border-blue-700 px-3 py-2 text-xs text-blue-300 hover:bg-blue-950/40"
                   >
                     🔄 {(trackerFile.loading || decomFile.loading || scopFile.loading || spoFile.loading) ? 'Refreshing from SharePoint…' : 'Refresh from SharePoint'}
                   </button>

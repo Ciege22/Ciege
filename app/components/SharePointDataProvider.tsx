@@ -3,9 +3,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMsal } from '@azure/msal-react'
 import { graphLoginRequest } from '../lib/msalConfig'
+import { useMsalReady } from '../lib/msalReady'
 import {
-  readNamedFileWithMetadata, getNamedFileMetadata, type SharePointFileKey,
-  SharePointRateLimitError,
+  readNamedFileWithMetadata, getNamedFileMetadata, timeoutMsFor, type SharePointFileKey,
+  SharePointRateLimitError, SharePointCancelledError,
 } from '../lib/sharepoint'
 import {
   parseTrackerWorkbook, parseDecomWorkbook, parseCrWorkbook, parseSpoWorkbook, parseScopWorkbook,
@@ -36,6 +37,23 @@ import { readNokiaCache, writeNokiaCache, isMemoryOnlyFile } from '../lib/nokiaC
 // version-checked the same way instead of only ever being time-checked
 // (the 12h expiry alone couldn't tell a 10-minute-old cache entry from a
 // 10-minute-old SharePoint edit).
+//
+// Bug fix, 11/2026 ("SharePoint refresh gets stuck"): the freshness check
+// this added runs a real Graph call on every ensureLoaded() — and until
+// this fix, NOTHING in the whole chain (the Graph fetch itself, the
+// downloadUrl content fetch, the worker decode, acquireTokenSilent) had any
+// timeout. A single hung network call on Nokia's locked-down connection
+// left `inFlight` permanently populated for that key (its `finally` never
+// ran, because the async function awaiting the hung call never resumed),
+// which meant every later ensureLoaded()/refresh() call — including every
+// click of the Refresh button — just rejoined that same dead promise
+// forever. Every Graph/content/worker/token call below now has its own
+// timeout (see sharepoint.ts's timeoutMsFor and getAccessToken below), each
+// file's in-flight/abort state is cleaned up via a generation counter
+// (`genRef`) that a superseded attempt can check before touching state a
+// newer attempt already owns, and refresh()/cancel() can always abort
+// whatever's currently running for a key, so the Refresh button is never
+// stuck waiting on a hang it has no way to interrupt.
 
 const PARSERS: Record<SharePointFileKey, (buf: ArrayBuffer) => Promise<unknown[][]>> = {
   tracker: parseTrackerWorkbook,
@@ -90,6 +108,18 @@ export interface SharePointFileState {
   // background refetch triggered by that check hasn't landed yet.
   liveLastModifiedDateTime: string | null
   staleVsSharePoint: boolean
+  // When the CURRENT phase started — lets the UI show "stuck for Ns" /
+  // elapsed-seconds instead of a single opaque spinner, and lets a Refresh
+  // click decide whether the in-flight attempt is worth aborting.
+  phaseStartedAt: string | null
+  // Set on every successful CONTENT fetch (not a cache hit, not a freshness
+  // check alone) — independent of whatever `source`/`fromCache` currently
+  // show, which can read 'cache' long after the underlying data was last
+  // actually pulled live if every freshness check since has found no
+  // change. Bug fix, 11/2026: Diagnostics used to derive this from
+  // `source === 'network' ? refreshedAt : null`, which read as a permanent
+  // dash on a page mostly served from a freshness-confirmed cache.
+  lastSuccessfulNetworkAt: string | null
 }
 
 const EMPTY_FILE_STATE: SharePointFileState = {
@@ -99,12 +129,17 @@ const EMPTY_FILE_STATE: SharePointFileState = {
   downloadBytes: null, downloadMs: null, parseMs: null, usedWorker: null,
   lastErrorMessage: null, lastErrorAt: null, revalidateStatus: 'idle',
   liveLastModifiedDateTime: null, staleVsSharePoint: false,
+  phaseStartedAt: null, lastSuccessfulNetworkAt: null,
 }
 
 interface SharePointDataContextValue {
   files: Record<SharePointFileKey, SharePointFileState>
   ensureLoaded: (key: SharePointFileKey) => void
   refresh: (key: SharePointFileKey) => void
+  // Aborts whatever's currently running for this key WITHOUT starting a
+  // new attempt (unlike refresh, which aborts-then-restarts) — the UI's
+  // "Cancel" link while a load is in progress.
+  cancel: (key: SharePointFileKey) => void
 }
 
 const SharePointDataContext = createContext<SharePointDataContextValue | null>(null)
@@ -133,22 +168,57 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
   // the same key at once triggers exactly one read, not two).
   const inFlight = useRef<Partial<Record<SharePointFileKey, Promise<void>>>>({})
   const loadedKeys = useRef<Set<SharePointFileKey>>(new Set())
+  // The AbortController actually driving whatever's currently running for a
+  // key — refresh()/cancel() fire it to interrupt a hung or unwanted
+  // attempt. Overwritten (not merged) as an attempt moves between phases
+  // (e.g. a freshness check's metadata call handing off to the real
+  // content fetch) — it always points at whichever call is actually live.
+  const abortControllers = useRef<Partial<Record<SharePointFileKey, AbortController>>>({})
+  // Bumped once per NEW load() call for a key. Every async function started
+  // by that call captures the value at its start and checks it again before
+  // touching `inFlight`/`abortControllers` in its own `finally` — if the
+  // number's moved on (a newer attempt superseded this one, e.g. via
+  // Refresh), a late-settling old attempt skips cleanup instead of deleting
+  // state a newer attempt already owns.
+  const genRef = useRef<Partial<Record<SharePointFileKey, number>>>({})
+  const msalReady = useMsalReady()
 
   const patchFile = useCallback((key: SharePointFileKey, patch: Partial<SharePointFileState>) => {
     setFiles(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }))
   }, [])
 
+  const SILENT_TOKEN_TIMEOUT_MS = 15_000
+
   const getAccessToken = useCallback(async (): Promise<string> => {
     const account = accounts[0]
     if (!account) throw new Error('Not signed in with a Nokia account.')
     console.time('[sp-timing] msal acquireTokenSilent')
+    let timedOut = false
+    let timer: ReturnType<typeof setTimeout>
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => { timedOut = true; reject(new Error('silent-token-timeout')) }, SILENT_TOKEN_TIMEOUT_MS)
+    })
     try {
-      const result = await instance.acquireTokenSilent({ ...graphLoginRequest, account })
+      const result = await Promise.race([
+        instance.acquireTokenSilent({ ...graphLoginRequest, account }),
+        timeoutPromise,
+      ])
       console.timeEnd('[sp-timing] msal acquireTokenSilent')
       return result.accessToken
     } catch {
       console.timeEnd('[sp-timing] msal acquireTokenSilent')
-      // Silent acquisition fails when the cached token's expired or needs
+      if (timedOut) {
+        // Bug fix, 11/2026: acquireTokenSilent had no timeout of its own —
+        // MSAL doesn't accept an AbortSignal for it, so this can't be
+        // cancelled outright, but giving up waiting after 15s and surfacing
+        // a clear "sign in again" message beats leaving every caller
+        // (and therefore inFlight) stuck on it indefinitely. Deliberately
+        // does NOT fall through to the interactive popup fallback below —
+        // a popup that never got a user gesture can itself hang/get
+        // blocked, which would just trade one indefinite wait for another.
+        throw new Error('Sign in again — SharePoint sign-in did not respond in 15s.')
+      }
+      // Silent acquisition failed outright (not a timeout) — expired/needs
       // re-consent — fall back to an interactive popup once rather than
       // leaving the caller permanently stuck. Only hit if initialize()
       // couldn't restore a usable session at all (see MsalProviderInner).
@@ -156,6 +226,8 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
       const result = await instance.acquireTokenPopup(graphLoginRequest)
       console.timeEnd('[sp-timing] msal acquireTokenPopup')
       return result.accessToken
+    } finally {
+      clearTimeout(timer!)
     }
   }, [instance, accounts])
 
@@ -163,17 +235,27 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
   // network read, regardless of why it was called (first load, explicit
   // refresh, or a freshness check finding SharePoint's version newer than
   // what's shown). `isBackground` only changes which phase/status labels
-  // are used, not the work itself.
-  const fetchAndStore = useCallback(async (key: SharePointFileKey, accountId: string | undefined, isBackground: boolean) => {
+  // are used, not the work itself. `myGen` is this attempt's generation
+  // number (captured by the caller from genRef at the moment it started) —
+  // used ONLY to decide, in the finally block, whether this attempt is
+  // still the current one for `key` before touching inFlight/abortControllers
+  // (see genRef's doc comment above).
+  const fetchAndStore = useCallback(async (
+    key: SharePointFileKey, accountId: string | undefined, isBackground: boolean, myGen: number,
+  ) => {
+    const controller = new AbortController()
+    abortControllers.current[key] = controller
     patchFile(key, {
       loading: true, error: null,
       phase: isBackground ? 'refreshing' : 'downloading',
+      phaseStartedAt: new Date().toISOString(),
       revalidateStatus: isBackground ? 'running' : 'idle',
     })
     try {
       const accessToken = await getAccessToken()
 
-      const readOnce = () => readNamedFileWithMetadata(accessToken, key)
+      const control = { signal: controller.signal, timeoutMs: timeoutMsFor(key) }
+      const readOnce = () => readNamedFileWithMetadata(accessToken, key, control)
       let buffer: ArrayBuffer
       let metadata: { lastModifiedDateTime: string }
       const downloadStart = Date.now()
@@ -191,13 +273,13 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
       }
       const downloadMs = Date.now() - downloadStart
 
-      patchFile(key, { phase: 'parsing' })
+      patchFile(key, { phase: 'parsing', phaseStartedAt: new Date().toISOString() })
       const parseStart = Date.now()
       const rows = await PARSERS[key](buffer)
       const parseMs = Date.now() - parseStart
       const decodeMeta = getLastDecodeMeta(key)
 
-      patchFile(key, { phase: 'building' })
+      patchFile(key, { phase: 'building', phaseStartedAt: new Date().toISOString() })
       loadedKeys.current.add(key)
       const now = new Date().toISOString()
       patchFile(key, {
@@ -206,6 +288,7 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
         refreshedAt: now,
         loading: false,
         phase: 'done',
+        phaseStartedAt: now,
         fromCache: false,
         error: null,
         source: 'network',
@@ -216,6 +299,11 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
         liveLastModifiedDateTime: metadata.lastModifiedDateTime,
         staleVsSharePoint: false,
         revalidateStatus: isBackground ? 'finished' : 'idle',
+        lastSuccessfulNetworkAt: now,
+        // A later success clears whatever error this file was last showing
+        // — a stale "last error" sitting in Diagnostics next to data that's
+        // now loading fine reads as an ongoing problem when it isn't one.
+        lastErrorMessage: null, lastErrorAt: null,
       })
       if (accountId) {
         const writeResult = await writeNokiaCache(key, accountId, rows, metadata.lastModifiedDateTime)
@@ -226,6 +314,10 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
         })
       }
     } catch (err) {
+      // A user-initiated Cancel isn't a failure worth alarming over — quietly
+      // return to idle (whatever was showing stays showing) instead of
+      // leaving a red error banner for something the user asked for.
+      const cancelled = err instanceof SharePointCancelledError
       const message = err instanceof Error ? err.message : 'Load failed.'
       const now = new Date().toISOString()
       // Deliberately does NOT clear `rows` — whatever was showing (cache
@@ -235,12 +327,17 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
       // deliberately NOT added to loadedKeys on failure, so the next
       // ensureLoaded() call retries instead of staying broken forever.
       patchFile(key, {
-        loading: false, phase: 'error', error: message,
-        lastErrorMessage: message, lastErrorAt: now,
-        revalidateStatus: isBackground ? 'failed' : 'idle',
+        loading: false, phase: cancelled ? 'idle' : 'error', phaseStartedAt: now,
+        error: cancelled ? null : message,
+        lastErrorMessage: cancelled ? null : message,
+        lastErrorAt: cancelled ? null : now,
+        revalidateStatus: isBackground ? (cancelled ? 'idle' : 'failed') : 'idle',
       })
     } finally {
-      delete inFlight.current[key]
+      if (genRef.current[key] === myGen) {
+        delete inFlight.current[key]
+        delete abortControllers.current[key]
+      }
     }
   }, [getAccessToken, patchFile])
 
@@ -252,17 +349,35 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
   // always counts as "differs," failing open to a real fetch rather than
   // trusting an unverifiable cache.
   const verifyFreshnessThenFetch = useCallback(async (
-    key: SharePointFileKey, accountId: string | undefined, compareAgainst: string | null,
+    key: SharePointFileKey, accountId: string | undefined, compareAgainst: string | null, myGen: number,
   ) => {
-    patchFile(key, { revalidateStatus: 'running' })
+    const controller = new AbortController()
+    abortControllers.current[key] = controller
+    patchFile(key, { revalidateStatus: 'running', phaseStartedAt: new Date().toISOString() })
     try {
       const accessToken = await getAccessToken()
-      const meta = await getNamedFileMetadata(accessToken, key)
+      // Always the cheap 45s budget here regardless of file — this is a
+      // tiny metadata-only call even for CR.
+      const meta = await getNamedFileMetadata(accessToken, key, { signal: controller.signal, timeoutMs: 45_000 })
       if (compareAgainst && meta.lastModifiedDateTime === compareAgainst) {
+        // Bug fix, 11/2026: this branch used to leave `loading`/`phase`/
+        // `fromCache` exactly as the caller set them before calling here —
+        // for the cache-first load path, that's loading:true,
+        // phase:'refreshing', fromCache:true, and NOTHING ever cleared them
+        // on this success path. A freshness check that found the cache
+        // already current (the common, fast, everything-working case) left
+        // the Dashboard tracker box (and every other SharePointSourceLine)
+        // showing "Refreshing from SharePoint…"/"refreshing…" forever,
+        // with no hang or error involved at all — confirmed as the likely
+        // dominant cause of the reported stuck-UI, independent of the
+        // no-timeout issue this same fix round also addresses.
+        const now = new Date().toISOString()
         patchFile(key, {
           liveLastModifiedDateTime: meta.lastModifiedDateTime,
           staleVsSharePoint: false,
           revalidateStatus: 'finished',
+          loading: false, phase: 'done', phaseStartedAt: now,
+          error: null, lastErrorMessage: null, lastErrorAt: null,
         })
         return
       }
@@ -270,21 +385,50 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
       // version) — the data on screen is confirmed stale until the real
       // fetch below replaces it.
       patchFile(key, { liveLastModifiedDateTime: meta.lastModifiedDateTime, staleVsSharePoint: true })
-      await fetchAndStore(key, accountId, true)
+      await fetchAndStore(key, accountId, true, myGen)
     } catch (err) {
+      const cancelled = err instanceof SharePointCancelledError
       const message = err instanceof Error ? err.message : 'Freshness check failed.'
+      const now = new Date().toISOString()
       patchFile(key, {
-        revalidateStatus: 'failed', error: message,
-        lastErrorMessage: message, lastErrorAt: new Date().toISOString(),
+        loading: false, phase: cancelled ? 'idle' : 'error', phaseStartedAt: now,
+        revalidateStatus: cancelled ? 'idle' : 'failed',
+        error: cancelled ? null : message,
+        lastErrorMessage: cancelled ? null : message,
+        lastErrorAt: cancelled ? null : now,
       })
     } finally {
-      delete inFlight.current[key]
+      if (genRef.current[key] === myGen) {
+        delete inFlight.current[key]
+        delete abortControllers.current[key]
+      }
     }
   }, [getAccessToken, patchFile, fetchAndStore])
 
   const load = useCallback((key: SharePointFileKey, isRefresh: boolean): Promise<void> => {
-    const existing = inFlight.current[key]
-    if (existing) return existing
+    if (!msalReady) {
+      // MSAL hasn't finished restoring its cached session yet (see
+      // msalReady's doc comment) — starting a load now would just throw
+      // "Not signed in" against the stub context. The effect that calls
+      // ensureLoaded() re-runs once msalReady flips true (load's identity
+      // changes because msalReady is in its own dependency array below),
+      // so nothing needs to be queued here.
+      return Promise.resolve()
+    }
+
+    if (isRefresh) {
+      // Explicit Refresh always wins — abort whatever's currently running
+      // for this key so a hung or merely-slow prior attempt can never make
+      // Refresh a no-op. Safe even if nothing's running (abort on an
+      // already-settled/no controller is a no-op).
+      abortControllers.current[key]?.abort(new DOMException('Refresh requested a new attempt.', 'AbortError'))
+    } else {
+      const existing = inFlight.current[key]
+      if (existing) return existing
+    }
+
+    const myGen = (genRef.current[key] ?? 0) + 1
+    genRef.current[key] = myGen
 
     const alreadyLoadedThisSession = loadedKeys.current.has(key)
     const accountId = accounts[0]?.homeAccountId
@@ -295,7 +439,7 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
     if (!isRefresh && alreadyLoadedThisSession) {
       patchFile(key, { source: 'memory' })
       const current = filesRef.current[key]
-      const run = verifyFreshnessThenFetch(key, accountId, current.lastModifiedDateTime)
+      const run = verifyFreshnessThenFetch(key, accountId, current.lastModifiedDateTime, myGen)
       inFlight.current[key] = run
       return run
     }
@@ -312,30 +456,35 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
             rows: cached.rows,
             lastModifiedDateTime: cached.sourceLastModified,
             refreshedAt: cached.savedAt,
-            loading: true, phase: 'refreshing', fromCache: true, error: null,
+            loading: true, phase: 'refreshing', phaseStartedAt: new Date().toISOString(), fromCache: true, error: null,
             source: 'cache', cacheSavedAt: cached.savedAt, cacheExpired: false,
             cacheSourceLastModified: cached.sourceLastModified,
           })
           loadedKeys.current.add(key)
-          await verifyFreshnessThenFetch(key, accountId, cached.sourceLastModified)
+          await verifyFreshnessThenFetch(key, accountId, cached.sourceLastModified, myGen)
           return
         }
       }
       // No usable cache (or an explicit refresh) — go straight to a real fetch.
-      await fetchAndStore(key, accountId, isRefresh)
+      await fetchAndStore(key, accountId, isRefresh, myGen)
     })()
 
     inFlight.current[key] = run
-    run.finally(() => { delete inFlight.current[key] })
+    run.finally(() => {
+      if (genRef.current[key] === myGen) delete inFlight.current[key]
+    })
     return run
-  }, [accounts, patchFile, verifyFreshnessThenFetch, fetchAndStore])
+  }, [accounts, patchFile, verifyFreshnessThenFetch, fetchAndStore, msalReady])
 
   const ensureLoaded = useCallback((key: SharePointFileKey) => { void load(key, false) }, [load])
   const refresh = useCallback((key: SharePointFileKey) => { void load(key, true) }, [load])
+  const cancel = useCallback((key: SharePointFileKey) => {
+    abortControllers.current[key]?.abort(new DOMException('Cancelled by user.', 'AbortError'))
+  }, [])
 
   const value = useMemo<SharePointDataContextValue>(
-    () => ({ files, ensureLoaded, refresh }),
-    [files, ensureLoaded, refresh],
+    () => ({ files, ensureLoaded, refresh, cancel }),
+    [files, ensureLoaded, refresh, cancel],
   )
 
   return <SharePointDataContext.Provider value={value}>{children}</SharePointDataContext.Provider>
@@ -350,10 +499,10 @@ export function SharePointDataProvider({ children }: { children: ReactNode }) {
  * loaded this session" forever (see the bug-fix note at the top of this
  * file) — nothing is written to disk/Supabase except through
  * app/lib/nokiaCache.ts's approved store. */
-export function useSharePointFile(key: SharePointFileKey): SharePointFileState & { refresh: () => void } {
+export function useSharePointFile(key: SharePointFileKey): SharePointFileState & { refresh: () => void; cancel: () => void } {
   const ctx = useContext(SharePointDataContext)
   if (!ctx) throw new Error('useSharePointFile must be used within SharePointDataProvider')
-  const { files, ensureLoaded, refresh } = ctx
+  const { files, ensureLoaded, refresh, cancel } = ctx
 
   // An effect, not a direct call during render — ensureLoaded ends up
   // calling setFiles (via patchFile) on the PROVIDER, and updating one
@@ -363,7 +512,7 @@ export function useSharePointFile(key: SharePointFileKey): SharePointFileState &
   // per key no matter how many components call this hook for it.
   useEffect(() => { ensureLoaded(key) }, [key, ensureLoaded])
 
-  return useMemo(() => ({ ...files[key], refresh: () => refresh(key) }), [files, key, refresh])
+  return useMemo(() => ({ ...files[key], refresh: () => refresh(key), cancel: () => cancel(key) }), [files, key, refresh, cancel])
 }
 
 /** Like useSharePointFile, but does NOT trigger a load on mount — the
@@ -371,12 +520,12 @@ export function useSharePointFile(key: SharePointFileKey): SharePointFileState &
  * needs some of the time (e.g. GC Call View's Reports tab needing 'cr',
  * by far the largest file), so it isn't eagerly fetched just because the
  * page itself mounted — only once that tab is actually opened. */
-export function useSharePointLazyFile(key: SharePointFileKey): SharePointFileState & { refresh: () => void; load: () => void } {
+export function useSharePointLazyFile(key: SharePointFileKey): SharePointFileState & { refresh: () => void; cancel: () => void; load: () => void } {
   const ctx = useContext(SharePointDataContext)
   if (!ctx) throw new Error('useSharePointLazyFile must be used within SharePointDataProvider')
-  const { files, ensureLoaded, refresh } = ctx
+  const { files, ensureLoaded, refresh, cancel } = ctx
   return useMemo(
-    () => ({ ...files[key], refresh: () => refresh(key), load: () => ensureLoaded(key) }),
-    [files, key, ensureLoaded, refresh],
+    () => ({ ...files[key], refresh: () => refresh(key), cancel: () => cancel(key), load: () => ensureLoaded(key) }),
+    [files, key, ensureLoaded, refresh, cancel],
   )
 }

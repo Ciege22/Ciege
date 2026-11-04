@@ -69,8 +69,30 @@ function DiagnosticsFileBlock({ fileKey, accountId }: { fileKey: SharePointFileK
   return <DiagnosticsRowView row={row} memoryOnly={memoryOnly} />
 }
 
+const SOURCE_LABEL: Record<SharePointFileState['source'], string> = {
+  none: 'none', memory: 'memory (this session)', cache: 'on-device cache', network: 'SharePoint network',
+}
+
+function elapsedSecondsSince(iso: string | null): number | null {
+  if (!iso) return null
+  return Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
+}
+
 function DiagnosticsRowView({ row, memoryOnly }: { row: DiagnosticsRow; memoryOnly: boolean }) {
   const { state } = row
+  // Date.now() belongs in the effect, not render (React's purity rule) —
+  // ticks once a second while loading so elapsed-in-phase stays live.
+  const [elapsed, setElapsed] = useState<number | null>(null)
+  useEffect(() => {
+    if (!state.loading || !state.phaseStartedAt) return
+    const tick = () => setElapsed(elapsedSecondsSince(state.phaseStartedAt))
+    // Deferred (not called synchronously in the effect body) — same
+    // reasoning as SharePointSourceLine's ElapsedSeconds.
+    const kick = setTimeout(tick, 0)
+    const id = setInterval(tick, 1000)
+    return () => { clearTimeout(kick); clearInterval(id) }
+  }, [state.loading, state.phaseStartedAt])
+
   const cacheLine = memoryOnly
     ? 'memory-only — never written to IndexedDB (largest file, kept in memory for this session only)'
     : row.cachePeek === 'loading'
@@ -82,17 +104,17 @@ function DiagnosticsRowView({ row, memoryOnly }: { row: DiagnosticsRow; memoryOn
   return (
     <div className="bg-gray-800 rounded-lg p-3 text-xs font-mono text-gray-300 space-y-1">
       <p className="text-white font-bold font-sans">{row.key}</p>
-      <p>source: <span className="text-cyan-300">{state.source}</span>{state.fromCache ? ' (currently showing cached data)' : ''}</p>
+      <p>source: <span className="text-cyan-300">{SOURCE_LABEL[state.source]}</span>{state.fromCache ? ' (currently showing cached data)' : ''}</p>
       <p>cache: {cacheLine}</p>
       <p>SharePoint lastModified (of data shown): {fmt(state.lastModifiedDateTime)}</p>
       <p>SharePoint lastModified (latest known, from a freshness check): {fmt(state.liveLastModifiedDateTime)}{state.staleVsSharePoint ? ' — NEWER than what is shown' : ''}</p>
-      <p>last successful network load: {fmt(state.source === 'network' ? state.refreshedAt : null)}</p>
+      <p>last successful network load: {fmt(state.lastSuccessfulNetworkAt)}</p>
       <p>row count: {row.rowCount} · newest {row.newestDateLabel}: {row.newestDateValue}</p>
       <p>download: {fmtMB(state.downloadBytes)} in {fmtMs(state.downloadMs)} · parse: {fmtMs(state.parseMs)} · worker used: {state.usedWorker === null ? '—' : state.usedWorker ? 'yes' : 'no'}</p>
       <p>cache write: {state.cacheWriteStatus ?? '—'}{state.cacheWriteError ? ` (${state.cacheWriteError})` : ''}</p>
       <p>last error: {state.lastErrorMessage ? `${state.lastErrorMessage} (at ${fmt(state.lastErrorAt)})` : 'none'}</p>
       <p>background revalidation: {state.revalidateStatus}</p>
-      <p>loading: {state.loading ? `yes (${state.phase})` : 'no'}</p>
+      <p>loading: {state.loading ? `yes (${state.phase}${elapsed !== null ? `, ${elapsed}s in this phase` : ''})` : 'no'}</p>
     </div>
   )
 }
@@ -101,18 +123,19 @@ function buildDiagnosticsText(rows: { key: SharePointFileKey; state: SharePointF
   const lines: string[] = [`Ciege SharePoint diagnostics — ${new Date().toLocaleString('en-US')}`, '']
   rows.forEach(r => {
     const memoryOnly = isMemoryOnlyFile(r.key)
+    const elapsed = elapsedSecondsSince(r.state.phaseStartedAt)
     lines.push(`[${r.key}]`)
-    lines.push(`  source: ${r.state.source}${r.state.fromCache ? ' (currently showing cached data)' : ''}`)
+    lines.push(`  source: ${SOURCE_LABEL[r.state.source]}${r.state.fromCache ? ' (currently showing cached data)' : ''}`)
     lines.push(`  cache: ${memoryOnly ? 'memory-only, never cached to disk' : r.cachePeek === 'loading' ? 'checking…' : r.cachePeek === null ? 'none' : `savedAt ${fmt(r.cachePeek.savedAt)}, ${r.cachePeek.expired ? 'EXPIRED' : 'not expired'}, source version at save ${fmt(r.cachePeek.sourceLastModified)}`}`)
     lines.push(`  SharePoint lastModified (shown data): ${fmt(r.state.lastModifiedDateTime)}`)
     lines.push(`  SharePoint lastModified (latest known): ${fmt(r.state.liveLastModifiedDateTime)}${r.state.staleVsSharePoint ? ' (NEWER than shown)' : ''}`)
-    lines.push(`  last successful network load: ${fmt(r.state.source === 'network' ? r.state.refreshedAt : null)}`)
+    lines.push(`  last successful network load: ${fmt(r.state.lastSuccessfulNetworkAt)}`)
     lines.push(`  row count: ${r.rowCount}, newest ${r.newestDateLabel}: ${r.newestDateValue}`)
     lines.push(`  download: ${fmtMB(r.state.downloadBytes)} in ${fmtMs(r.state.downloadMs)}, parse: ${fmtMs(r.state.parseMs)}, worker used: ${r.state.usedWorker === null ? '—' : r.state.usedWorker ? 'yes' : 'no'}`)
     lines.push(`  cache write: ${r.state.cacheWriteStatus ?? '—'}${r.state.cacheWriteError ? ` (${r.state.cacheWriteError})` : ''}`)
     lines.push(`  last error: ${r.state.lastErrorMessage ? `${r.state.lastErrorMessage} (at ${fmt(r.state.lastErrorAt)})` : 'none'}`)
     lines.push(`  background revalidation: ${r.state.revalidateStatus}`)
-    lines.push(`  loading: ${r.state.loading ? `yes (${r.state.phase})` : 'no'}`)
+    lines.push(`  loading: ${r.state.loading ? `yes (${r.state.phase}${elapsed !== null ? `, ${elapsed}s in this phase` : ''})` : 'no'}`)
     lines.push('')
   })
   return lines.join('\n')

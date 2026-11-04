@@ -475,11 +475,14 @@ export default function ReportsPage() {
             <p className="text-gray-400 mt-1">SPO, CR, and Decom master reports from SharePoint — download GC-specific filtered Excel files on demand</p>
           </div>
           {isAuthenticated ? (
+            // Bug fix, 11/2026 ("SharePoint refresh gets stuck"): never
+            // disabled — same fix as the Dashboard's tracker box. Each
+            // file's refresh() aborts whatever's currently running for it
+            // and starts fresh, so this is never a no-op even mid-hang.
             <button
               type="button"
               onClick={() => { spoFile.refresh(); crFile.refresh(); decomFile.refresh(); trackerFile.refresh() }}
-              disabled={spoFile.loading || crFile.loading || decomFile.loading || trackerFile.loading}
-              className="flex items-center gap-2 rounded-lg border border-dashed border-blue-700 px-4 py-2 text-sm text-blue-300 hover:bg-blue-950/40 disabled:opacity-50 whitespace-nowrap">
+              className="flex items-center gap-2 rounded-lg border border-dashed border-blue-700 px-4 py-2 text-sm text-blue-300 hover:bg-blue-950/40 whitespace-nowrap">
               🔄 {(spoFile.loading || crFile.loading || decomFile.loading || trackerFile.loading) ? 'Refreshing…' : 'Refresh from SharePoint'}
             </button>
           ) : (

@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { useSharePointFile } from './SharePointDataProvider'
 import type { SharePointFileKey } from '../lib/sharepoint'
 
@@ -39,9 +40,39 @@ const PHASE_LABEL: Record<string, string> = {
  * displaying an old version with nothing to indicate a newer one exists
  * and is on its way. If that background refetch then fails, the amber line
  * is replaced by the normal error + "Retry" path below — it never just
- * goes back to looking "done" with stale data still on screen. */
+ * goes back to looking "done" with stale data still on screen.
+ *
+ * Bug fix, 11/2026 ("SharePoint refresh gets stuck"): the Refresh button
+ * used to be `disabled={loading}` — if a load ever hung (nothing in the
+ * chain had a timeout at the time), `loading` stayed true forever and the
+ * button was permanently unclickable, exactly matching the reported
+ * "Refresh does nothing." The button is never disabled now; clicking it
+ * while something's already running aborts that attempt and starts a fresh
+ * one (see SharePointDataProvider's refresh()). While loading, this also
+ * shows elapsed seconds in the current phase and a Cancel link. */
+function ElapsedSeconds({ since }: { since: string | null }) {
+  // Date.now() belongs in the effect, not render — computing elapsed time
+  // directly during render is an impure read (React's purity rule), even
+  // though it's only cosmetic here.
+  const [secs, setSecs] = useState<number | null>(null)
+  useEffect(() => {
+    if (!since) return
+    const sinceMs = new Date(since).getTime()
+    const tick = () => setSecs(Math.max(0, Math.floor((Date.now() - sinceMs) / 1000)))
+    // Deferred, not called synchronously in the effect body — satisfies
+    // React's "no setState directly in an effect" rule while still showing
+    // a value on the first render after `since` appears, not a full second
+    // later.
+    const kick = setTimeout(tick, 0)
+    const id = setInterval(tick, 1000)
+    return () => { clearTimeout(kick); clearInterval(id) }
+  }, [since])
+  if (secs === null) return null
+  return <span className="text-gray-500">({secs}s)</span>
+}
+
 export default function SharePointSourceLine({ fileKey }: { fileKey: SharePointFileKey }) {
-  const { lastModifiedDateTime, refreshedAt, loading, phase, fromCache, error, staleVsSharePoint, revalidateStatus, refresh } = useSharePointFile(fileKey)
+  const { lastModifiedDateTime, refreshedAt, loading, phase, phaseStartedAt, fromCache, error, staleVsSharePoint, revalidateStatus, refresh, cancel } = useSharePointFile(fileKey)
 
   const firstLoadInProgress = loading && !refreshedAt
   const buttonLabel = error ? 'Retry' : loading && !fromCache ? 'Refreshing…' : 'Refresh'
@@ -57,15 +88,21 @@ export default function SharePointSourceLine({ fileKey }: { fileKey: SharePointF
         </span>
       )}
       {fromCache && phase === 'refreshing' && !showingOlderData && (
-        <span className="text-blue-400 italic">refreshing…</span>
+        <span className="text-blue-400 italic">refreshing… <ElapsedSeconds since={phaseStartedAt} /></span>
       )}
       {showingOlderData && (
-        <span className="text-amber-400 font-semibold">⚠ Showing older data, refreshing…</span>
+        <span className="text-amber-400 font-semibold">⚠ Showing older data, refreshing… <ElapsedSeconds since={phaseStartedAt} /></span>
       )}
-      <button onClick={refresh} disabled={loading}
-        className={`underline disabled:no-underline disabled:opacity-40 ${error ? 'text-red-300 hover:text-red-200 font-semibold' : 'text-blue-400 hover:text-blue-300'}`}>
+      <button onClick={refresh}
+        className={`underline ${error ? 'text-red-300 hover:text-red-200 font-semibold' : 'text-blue-400 hover:text-blue-300'}`}>
         {buttonLabel}
       </button>
+      {loading && (
+        <>
+          <ElapsedSeconds since={phaseStartedAt} />
+          <button onClick={cancel} className="underline text-gray-400 hover:text-gray-300">Cancel</button>
+        </>
+      )}
       {error && <span className="text-red-400">{error}</span>}
     </div>
   )

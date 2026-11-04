@@ -25,6 +25,7 @@ import * as XLSX from 'xlsx'
 import { detectScopHeaderRow } from './scop'
 import { trimSheetRowRange } from './xlsxTrim'
 import type { DecodeSheetRequest, DecodeSheetResponse } from './xlsxSheetWorker'
+import { timeoutMsFor, type SharePointFileKey } from './sharepoint'
 
 function trimTrailingBlankRows(rows: unknown[][]): unknown[][] {
   let last = rows.length - 1
@@ -104,12 +105,33 @@ function getWorker(): Worker | null {
   return worker
 }
 
-function decodeSheetInWorker(buffer: ArrayBuffer, sheetName: string): Promise<unknown[][]> {
+// Bug fix, 11/2026 ("SharePoint refresh gets stuck"): this had no timeout at
+// all — if the worker never posted back (message silently dropped by a
+// locked-down browser's worker sandboxing, or the worker thread wedged),
+// the Promise here just never settled, and everything awaiting it (up
+// through SharePointDataProvider's in-flight dedupe) hung forever right
+// along with it. `timeoutMs` matches the same per-file budget the network
+// fetch itself uses (timeoutMsFor) — CR gets 180s since it's the only file
+// that actually crosses the worker threshold. On timeout, the pending
+// entry is dropped (a late response is simply ignored) AND the worker
+// itself is torn down and rebuilt fresh next time — a job that didn't
+// finish in budget means the worker may be wedged, not just slow, so
+// reusing it for the next request isn't safe.
+function decodeSheetInWorker(buffer: ArrayBuffer, sheetName: string, timeoutMs: number): Promise<unknown[][]> {
   return new Promise((resolve, reject) => {
     const w = getWorker()
     if (!w) { reject(new Error('Worker unavailable')); return }
     const id = ++reqId
-    pending.set(id, { resolve, reject })
+    const timer = setTimeout(() => {
+      pending.delete(id)
+      reject(new Error(`Worker did not respond in ${Math.round(timeoutMs / 1000)}s decoding "${sheetName}".`))
+      try { worker?.terminate() } catch { /* best effort */ }
+      worker = null
+    }, timeoutMs)
+    pending.set(id, {
+      resolve: rows => { clearTimeout(timer); resolve(rows) },
+      reject: err => { clearTimeout(timer); reject(err) },
+    })
     // Transfer a COPY, never the caller's own buffer — if the worker call
     // fails, decodeTargetSheet falls back to re-reading the ORIGINAL buffer
     // synchronously, which would silently see 0 bytes if that one had been
@@ -140,14 +162,14 @@ export function getLastDecodeMeta(label: string): LastDecodeMeta | undefined {
  * other sheets are never parsed at all — with styles/formulas/HTML/number-
  * format parsing off, after trimming its declared range. `label` is also
  * the key getLastDecodeMeta() reports against. */
-async function decodeTargetSheet(buffer: ArrayBuffer, sheetName: string, label: string): Promise<unknown[][]> {
+async function decodeTargetSheet(buffer: ArrayBuffer, sheetName: string, label: SharePointFileKey): Promise<unknown[][]> {
   const start = Date.now()
   let usedWorker = false
   console.time(`[sp-parse] ${label}: decode+toRows (${(buffer.byteLength / 1024).toFixed(0)}KB)`)
   try {
     if (buffer.byteLength > WORKER_THRESHOLD_BYTES) {
       try {
-        const rows = await decodeSheetInWorker(buffer, sheetName)
+        const rows = await decodeSheetInWorker(buffer, sheetName, timeoutMsFor(label))
         usedWorker = true
         return rows
       } catch (err) {

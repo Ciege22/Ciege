@@ -5,6 +5,7 @@ import { PublicClientApplication, EventType, type AuthenticationResult } from '@
 import { MsalProvider } from '@azure/msal-react'
 import { msalConfig } from '../lib/msalConfig'
 import { clearNokiaCache } from '../lib/nokiaCache'
+import { MsalReadyContext } from '../lib/msalReady'
 
 // The actual MSAL instance/provider — split out from MsalProviderWrapper so
 // that one can load it via next/dynamic(ssr:false). PublicClientApplication
@@ -59,7 +60,14 @@ export default function MsalProviderInner({ children }: { children: ReactNode })
 
   // Children render immediately either way (same as before) — only the MSAL
   // context itself waits, and that wait is a cache read, not a network
-  // round trip, so it resolves within a render or two.
+  // round trip, so it resolves within a render or two. MsalReadyContext
+  // stays at its default `false` for every render before this point (see
+  // that module) — only this branch ever provides `true`, which is what
+  // SharePointDataProvider waits on before starting any load.
   if (!ready) return <>{children}</>
-  return <MsalProvider instance={msalInstance}>{children}</MsalProvider>
+  return (
+    <MsalProvider instance={msalInstance}>
+      <MsalReadyContext.Provider value={true}>{children}</MsalReadyContext.Provider>
+    </MsalProvider>
+  )
 }

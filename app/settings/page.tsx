@@ -568,10 +568,18 @@ export default function SettingsPage() {
                     ) : (
                       <div>
                         <p className="text-gray-600 text-xs mb-2">Not loaded this session (largest file — only loaded on request)</p>
-                        <button onClick={crFile.load} disabled={crFile.loading}
-                          className="text-blue-400 hover:text-blue-300 disabled:opacity-40 underline disabled:no-underline text-xs">
+                        {/* Bug fix, 11/2026 ("SharePoint refresh gets stuck"):
+                            never disabled, and uses refresh() (not load())
+                            so clicking again while a first attempt is stuck
+                            aborts it and starts fresh instead of rejoining
+                            the same hung promise. */}
+                        <button onClick={crFile.refresh}
+                          className="text-blue-400 hover:text-blue-300 underline text-xs">
                           {crFile.loading ? 'Loading…' : 'Load from SharePoint'}
                         </button>
+                        {crFile.loading && (
+                          <button onClick={crFile.cancel} className="text-gray-400 hover:text-gray-300 underline text-xs ml-2">Cancel</button>
+                        )}
                         {crFile.error && <p className="text-red-400 text-xs mt-1">{crFile.error}</p>}
                       </div>
                     )}
