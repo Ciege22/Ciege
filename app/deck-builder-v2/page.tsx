@@ -3,6 +3,7 @@
 export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
 import { loadTrackerSnapshot } from '../lib/supabase'
 import { loadChunkedReport } from '../lib/reportChunks'
 import BackToDashboard from '../components/BackToDashboard'
@@ -238,7 +239,7 @@ export default function DeckBuilderV2Page() {
             {success && (
               <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
                 Deck built successfully — your download should have started.{' '}
-                <a href="/deck-preview" className="underline font-semibold text-emerald-200">Open the slide preview and comment on it →</a>
+                <Link href="/deck-preview" className="underline font-semibold text-emerald-200">Open the slide preview and comment on it →</Link>
               </div>
             )}
 

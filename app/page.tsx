@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useCallback } from 'react'
+import Link from 'next/link'
 import * as XLSX from 'xlsx'
 import { useIsAuthenticated } from '@azure/msal-react'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, supabase } from './lib/supabase'
@@ -1393,10 +1394,10 @@ export default function Home() {
             `}</style>
             <nav>
               {navItems.map((item) => (
-                <a key={item.label} href={item.href} className="nav-card">
+                <Link key={item.label} href={item.href} className="nav-card">
                   <span className="nav-card-emoji">{item.emoji}</span>
                   <span className="nav-card-label">{item.label}</span>
-                </a>
+                </Link>
               ))}
             </nav>
           </aside>

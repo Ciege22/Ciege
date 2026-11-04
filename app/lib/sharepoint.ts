@@ -159,12 +159,14 @@ async function resolveSiteId(accessToken: string, siteUrl: string): Promise<stri
   const cached = siteIdCache.get(siteUrl)
   if (cached) return cached
 
+  console.time(`[sp-timing] resolveSiteId ${siteUrl}`)
   const url = `${GRAPH_BASE}/sites/${siteSegment(siteUrl)}`
   const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
   await assertGraphOk(res, { siteUrl, context: `Could not resolve SharePoint site "${siteUrl}"` })
 
   const data = await res.json() as { id: string }
   siteIdCache.set(siteUrl, data.id)
+  console.timeEnd(`[sp-timing] resolveSiteId ${siteUrl}`)
   return data.id
 }
 
@@ -179,18 +181,35 @@ export async function readSharePointFile(
   // encodeURI (not encodeURIComponent) — keeps the '/' path separators
   // intact while percent-encoding spaces/parens/etc. in each segment,
   // which these real file paths are full of.
+  console.time(`[sp-timing] graph content fetch ${filePath}`)
   const url = `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(filePath)}:/content`
   const res = await fetch(url, {
     headers: { Authorization: `Bearer ${accessToken}` },
   })
   await assertGraphOk(res, { siteUrl, filePath, context: `SharePoint read failed for ${filePath}` })
 
-  return res.arrayBuffer()
+  const buffer = await res.arrayBuffer()
+  console.timeEnd(`[sp-timing] graph content fetch ${filePath}`)
+  return buffer
 }
 
 export interface SharePointFileMetadata {
   lastModifiedDateTime: string
   size: number
+}
+
+interface DriveItemResponse {
+  lastModifiedDateTime: string
+  size: number
+  '@microsoft.graph.downloadUrl'?: string
+}
+
+async function fetchDriveItem(accessToken: string, siteUrl: string, filePath: string): Promise<DriveItemResponse> {
+  const siteId = await resolveSiteId(accessToken, siteUrl)
+  const url = `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(filePath)}`
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
+  await assertGraphOk(res, { siteUrl, filePath, context: `Could not get metadata for ${filePath}` })
+  return res.json() as Promise<DriveItemResponse>
 }
 
 /** Fetches a file's metadata (no content) — the DriveItem resource itself,
@@ -200,12 +219,7 @@ export async function getSharePointFileMetadata(
   siteUrl: string,
   filePath: string,
 ): Promise<SharePointFileMetadata> {
-  const siteId = await resolveSiteId(accessToken, siteUrl)
-  const url = `${GRAPH_BASE}/sites/${siteId}/drive/root:${encodeURI(filePath)}`
-  const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } })
-  await assertGraphOk(res, { siteUrl, filePath, context: `Could not get metadata for ${filePath}` })
-
-  const data = await res.json() as { lastModifiedDateTime: string; size: number }
+  const data = await fetchDriveItem(accessToken, siteUrl, filePath)
   return { lastModifiedDateTime: data.lastModifiedDateTime, size: data.size }
 }
 
@@ -233,6 +247,48 @@ export async function readNamedFile(accessToken: string, key: SharePointFileKey)
     }
     throw err
   }
+}
+
+/** Perf fix, 11/2026: one Graph API call (the DriveItem, which already
+ * carries @microsoft.graph.downloadUrl) instead of two — the previous path
+ * made a separate /content call AND a separate metadata call for the same
+ * file every load. The downloadUrl is a pre-authenticated, time-limited
+ * direct link straight to the file's bytes (no Authorization header, often
+ * CDN-backed) — fetching it is a plain request, not a second Graph API
+ * call. Falls back to the old two-call path only if a DriveItem somehow
+ * lacks a downloadUrl (shouldn't happen for a real file, but never seen in
+ * this account's tenant either way, so this is defensive, not load-bearing). */
+export async function readNamedFileWithMetadata(
+  accessToken: string,
+  key: SharePointFileKey,
+): Promise<{ buffer: ArrayBuffer; metadata: SharePointFileMetadata }> {
+  const { site, path } = FILES[key]
+  console.time(`[sp-timing] graph metadata+downloadUrl ${key}`)
+  let item: DriveItemResponse
+  try {
+    item = await fetchDriveItem(accessToken, site, path)
+  } catch (err) {
+    if (err instanceof SharePointNotFoundError) throw new SharePointNotFoundError(key, path, err.detail)
+    throw err
+  }
+  console.timeEnd(`[sp-timing] graph metadata+downloadUrl ${key}`)
+
+  const metadata: SharePointFileMetadata = { lastModifiedDateTime: item.lastModifiedDateTime, size: item.size }
+  const downloadUrl = item['@microsoft.graph.downloadUrl']
+  if (!downloadUrl) {
+    // Defensive fallback — see doc comment above.
+    const buffer = await readNamedFile(accessToken, key)
+    return { buffer, metadata }
+  }
+
+  console.time(`[sp-timing] downloadUrl content fetch ${key}`)
+  const res = await fetch(downloadUrl)
+  if (!res.ok) {
+    throw new GraphApiError(`Direct download failed for ${path}`, { status: res.status, code: '', message: res.statusText })
+  }
+  const buffer = await res.arrayBuffer()
+  console.timeEnd(`[sp-timing] downloadUrl content fetch ${key}`)
+  return { buffer, metadata }
 }
 
 export interface FolderChild {

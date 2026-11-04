@@ -4,6 +4,7 @@ export const dynamic = 'force-dynamic'
 
 import { useState, useEffect } from 'react'
 import { supabase, loadTrackerSnapshot } from '../lib/supabase'
+import { clearNokiaCache } from '../lib/nokiaCache'
 import { GC_CONFIG } from '../lib/gcConfig'
 import { GR_SORT_OPTIONS } from '../lib/grTracker'
 import BackToDashboard from '../components/BackToDashboard'
@@ -202,6 +203,17 @@ export default function SettingsPage() {
   // Email Routing — per-type To/CC textareas
   const updateRouting = (id: string, field: 'toText' | 'ccText', val: string) =>
     setRoutingRows(r => ({ ...r, [id]: { toText: r[id]?.toText ?? '', ccText: r[id]?.ccText ?? '', [field]: val } }))
+
+  // Local SharePoint cache (app/lib/nokiaCache.ts) — the on-device copy of
+  // Nokia data used for stale-while-revalidate. Clears automatically on
+  // sign-out already (see MsalProviderInner); this is the manual version
+  // for "I want this gone right now."
+  const [cacheCleared, setCacheCleared] = useState(false)
+  const handleClearLocalData = async () => {
+    await clearNokiaCache()
+    setCacheCleared(true)
+    setTimeout(() => setCacheCleared(false), 2000)
+  }
 
   return (
     <div className="min-h-screen bg-gray-950 text-white p-6">
@@ -568,6 +580,18 @@ export default function SettingsPage() {
                   ) : <p className="text-gray-600">No upload found</p>}
                 </div>
               </div>
+            </SectionCard>
+
+            <SectionCard title="Local SharePoint Cache" subtitle="On-device copy of Nokia data used to speed up page loads — cleared automatically on sign-out">
+              <p className="text-gray-500 text-xs mb-3">
+                Tracker/Decom/SCOP/SPO/CR rows cached in this browser for up to 12 hours so pages render instantly on revisit. Nothing here is sent anywhere — it only ever lives in this browser.
+              </p>
+              <button
+                onClick={handleClearLocalData}
+                className="bg-gray-700 hover:bg-gray-600 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors"
+              >
+                {cacheCleared ? '✓ Cleared' : 'Clear local data'}
+              </button>
             </SectionCard>
           </>
         )}

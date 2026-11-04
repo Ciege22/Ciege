@@ -129,9 +129,15 @@ function parseTrackerRows(rows: unknown[][]): { sites: SitePoint[]; connections:
   return { sites: siteList, connections: conns, error: null }
 }
 
+const PHASE_LABEL: Record<string, string> = {
+  downloading: 'Downloading tracker from SharePoint…',
+  parsing: 'Parsing tracker…',
+  building: 'Building map…',
+}
+
 export default function MapView() {
   const isAuthenticated = useIsAuthenticated()
-  const { rows, loading, error: loadError } = useSharePointFile('tracker')
+  const { rows, loading, phase, error: loadError } = useSharePointFile('tracker')
 
   const parsed = useMemo(() => (rows ? parseTrackerRows(rows) : null), [rows])
   const sites = parsed?.sites ?? []
@@ -153,10 +159,14 @@ export default function MapView() {
       </div>
     )
   }
-  if (loading) {
-    return <div className="flex items-center justify-center h-[70vh] text-zinc-400 text-sm">Loading tracker from SharePoint…</div>
+  // Only a full-page block when there's nothing to show yet — a cached
+  // entry (stale-while-revalidate) renders the map immediately instead,
+  // with SharePointSourceLine's "refreshing…" indicator covering the
+  // background fetch instead of blocking the page on it.
+  if (loading && !rows) {
+    return <div className="flex items-center justify-center h-[70vh] text-zinc-400 text-sm">{PHASE_LABEL[phase] ?? 'Loading tracker from SharePoint…'}</div>
   }
-  if (loadError) {
+  if (loadError && !rows) {
     return (
       <div className="rounded-2xl border border-red-500/20 bg-red-500/10 px-4 py-3 text-sm text-red-300">
         {loadError}

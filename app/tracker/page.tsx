@@ -724,11 +724,15 @@ export default function TrackerGridPage() {
   // loadTrackerSnapshot() directly — "the fetch attempt finished," whether
   // or not it produced data.
   const isAuthenticated = useIsAuthenticated()
-  const { rows: spRows, loading: spLoading } = useSharePointFile('tracker')
+  const { rows: spRows, loading: spLoading, phase: spPhase } = useSharePointFile('tracker')
   const parsedTracker = useMemo(() => (spRows ? parseAllTrackerRows(spRows) : EMPTY_PARSED_TRACKER), [spRows])
   const headers = parsedTracker.headers
   const trackerRows = parsedTracker.trackerRows
-  const loaded = !spLoading
+  // True the moment there's something to render (cached OR live rows) —
+  // a background refresh of an already-rendered cache entry should never
+  // re-block the grid behind a loading screen, only false while there's
+  // truly nothing yet to show.
+  const loaded = !!spRows || !spLoading
 
   const [views, setViews] = useState<TrackerView[]>([])
   const [viewsLoaded, setViewsLoaded] = useState(false)
@@ -2027,7 +2031,9 @@ export default function TrackerGridPage() {
         </div>
       )}
       {isAuthenticated && !loaded && (
-        <div className="bg-white border border-gray-300 rounded-lg px-4 py-8 text-center text-gray-500">Loading tracker...</div>
+        <div className="bg-white border border-gray-300 rounded-lg px-4 py-8 text-center text-gray-500">
+          {spPhase === 'parsing' ? 'Parsing tracker…' : spPhase === 'building' ? 'Building view…' : 'Downloading tracker from SharePoint…'}
+        </div>
       )}
       {isAuthenticated && loaded && headers.length === 0 && (
         <div className="bg-white border border-gray-300 rounded-lg px-4 py-8 text-center text-gray-500">
