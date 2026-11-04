@@ -22,9 +22,26 @@ const DB_VERSION = 1
 const STORE_NAME = 'files'
 const EXPIRY_MS = 12 * 60 * 60 * 1000 // 12 hours
 
+// CR is never written to IndexedDB — it's by far the largest parsed set
+// (the source file is ~30MB; a 30MB structured-clone write is the kind of
+// thing a locked-down/managed corporate browser profile can throttle,
+// quota-restrict, or silently fail in ways a normal desktop Chrome profile
+// wouldn't — and there's no way to verify that from this environment.
+// Rather than risk a write that succeeds unreliably (or "succeeds" but
+// serves a corrupted/partial entry later), CR stays memory-only: refetched
+// every session, never persisted. Settings' Diagnostics panel says so
+// explicitly. Every other file is small enough that this isn't a concern.
+const MEMORY_ONLY_KEYS = new Set(['cr'])
+
 export interface NokiaCacheEntry {
   rows: unknown[][]
-  savedAt: string // ISO timestamp
+  savedAt: string // ISO timestamp — when this entry was written
+  // The SharePoint file's Graph lastModifiedDateTime AT THE TIME this entry
+  // was written — lets a reader tell "is this cache entry from an older
+  // version of the source file than what's live now," independent of how
+  // long ago it was saved. null only for entries written before this field
+  // existed (treated as unknown-freshness, not implicitly stale).
+  sourceLastModified: string | null
 }
 
 function killSwitchOn(): boolean {
@@ -50,12 +67,21 @@ function isMobileDevice(): boolean {
   }
 }
 
-function cacheEnabled(): boolean {
+function cacheEnabled(fileKey: string): boolean {
   if (typeof window === 'undefined') return false
   if (killSwitchOn()) return false
+  if (MEMORY_ONLY_KEYS.has(fileKey)) return false
   if (isMobileDevice() && !mobileOverrideOn()) return false
   if (!('indexedDB' in window) || !window.indexedDB) return false
   return true
+}
+
+/** Whether this file is deliberately never written to IndexedDB (see
+ * MEMORY_ONLY_KEYS above) — exported so the Diagnostics panel can say so
+ * explicitly instead of just showing "no cache entry" indistinguishably
+ * from "cache write failed" or "never loaded yet." */
+export function isMemoryOnlyFile(fileKey: string): boolean {
+  return MEMORY_ONLY_KEYS.has(fileKey)
 }
 
 function keyFor(fileKey: string, accountId: string): string {
@@ -95,11 +121,11 @@ export function isCacheEntryExpired(savedAt: string, now: number = Date.now()): 
 
 /** Returns the cached entry for this file+account, or null if there isn't
  * one, it's expired (and has just been deleted), the cache is disabled
- * (kill switch / mobile / IndexedDB unavailable), or anything about the
- * read failed — every failure path is silent, falling back to "no cache,"
- * never a thrown error the caller has to handle. */
+ * (kill switch / mobile / IndexedDB unavailable / memory-only file), or
+ * anything about the read failed — every failure path is silent, falling
+ * back to "no cache," never a thrown error the caller has to handle. */
 export async function readNokiaCache(fileKey: string, accountId: string): Promise<NokiaCacheEntry | null> {
-  if (!accountId || !cacheEnabled()) return null
+  if (!accountId || !cacheEnabled(fileKey)) return null
   const key = keyFor(fileKey, accountId)
   try {
     const db = await openDb()
@@ -120,6 +146,30 @@ export async function readNokiaCache(fileKey: string, accountId: string): Promis
   }
 }
 
+/** Diagnostics-only — reads the raw stored entry (if any) WITHOUT applying
+ * or acting on expiry, so Settings' Diagnostics panel can show "there's a
+ * cache entry and here's whether it's expired" even when nothing has
+ * actually tried to read (and thus auto-delete) it recently. Never used by
+ * any real data-loading path — readNokiaCache above is what every page
+ * actually gets served from. */
+export async function peekNokiaCache(fileKey: string, accountId: string): Promise<{ savedAt: string; sourceLastModified: string | null; expired: boolean } | null> {
+  if (!accountId) return null
+  const key = keyFor(fileKey, accountId)
+  try {
+    const db = await openDb()
+    const entry = await new Promise<NokiaCacheEntry | undefined>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly')
+      const req = tx.objectStore(STORE_NAME).get(key)
+      req.onsuccess = () => resolve(req.result as NokiaCacheEntry | undefined)
+      req.onerror = () => reject(req.error ?? new Error('IndexedDB read failed'))
+    })
+    if (!entry) return null
+    return { savedAt: entry.savedAt, sourceLastModified: entry.sourceLastModified, expired: isCacheEntryExpired(entry.savedAt) }
+  } catch {
+    return null
+  }
+}
+
 async function deleteKey(key: string): Promise<void> {
   try {
     const db = await openDb()
@@ -134,14 +184,27 @@ async function deleteKey(key: string): Promise<void> {
   }
 }
 
-/** Writes/replaces the cached entry for this file+account. Silently does
- * nothing if the cache is disabled or the write fails for any reason — the
- * caller already has the freshly-fetched rows in memory regardless, so a
- * failed cache write never blocks or degrades the page itself. */
-export async function writeNokiaCache(fileKey: string, accountId: string, rows: unknown[][]): Promise<void> {
-  if (!accountId || !cacheEnabled()) return
+export interface WriteCacheResult {
+  // 'written': succeeded. 'skipped': disabled/memory-only/not signed in —
+  // not an error, just never attempted. 'failed': actually attempted and
+  // threw (e.g. IndexedDB quota, a managed-browser storage restriction) —
+  // this is the case that used to be swallowed with no caller visibility
+  // at all; now it's returned, not just caught, so Diagnostics can show it.
+  status: 'written' | 'skipped' | 'failed'
+  error?: string
+}
+
+/** Writes/replaces the cached entry for this file+account. Never throws —
+ * the caller already has the freshly-fetched rows in memory regardless, so
+ * a failed cache write never blocks or degrades the page itself — but
+ * DOES report success/skip/failure back via the return value instead of
+ * swallowing it silently, so Diagnostics can show real write status. */
+export async function writeNokiaCache(
+  fileKey: string, accountId: string, rows: unknown[][], sourceLastModified: string | null,
+): Promise<WriteCacheResult> {
+  if (!accountId || !cacheEnabled(fileKey)) return { status: 'skipped' }
   const key = keyFor(fileKey, accountId)
-  const entry: NokiaCacheEntry = { rows, savedAt: new Date().toISOString() }
+  const entry: NokiaCacheEntry = { rows, savedAt: new Date().toISOString(), sourceLastModified }
   try {
     const db = await openDb()
     await new Promise<void>((resolve, reject) => {
@@ -150,8 +213,9 @@ export async function writeNokiaCache(fileKey: string, accountId: string, rows: 
       tx.oncomplete = () => resolve()
       tx.onerror = () => reject(tx.error ?? new Error('IndexedDB write failed'))
     })
-  } catch {
-    // silent fallback to memory-only
+    return { status: 'written' }
+  } catch (err) {
+    return { status: 'failed', error: err instanceof Error ? err.message : 'IndexedDB write failed' }
   }
 }
 

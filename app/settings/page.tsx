@@ -7,6 +7,7 @@ import { clearNokiaCache } from '../lib/nokiaCache'
 import { useIsAuthenticated } from '@azure/msal-react'
 import { useSharePointLazyFile } from '../components/SharePointDataProvider'
 import SharePointSourceLine from '../components/SharePointSourceLine'
+import SharePointDiagnostics from '../components/SharePointDiagnostics'
 import { GC_CONFIG } from '../lib/gcConfig'
 import { GR_SORT_OPTIONS } from '../lib/grTracker'
 import BackToDashboard from '../components/BackToDashboard'
@@ -578,6 +579,8 @@ export default function SettingsPage() {
                 </div>
               )}
             </SectionCard>
+
+            <SharePointDiagnostics />
 
             <SectionCard title="Local SharePoint Cache" subtitle="On-device copy of Nokia data used to speed up page loads — cleared automatically on sign-out">
               <p className="text-gray-500 text-xs mb-3">

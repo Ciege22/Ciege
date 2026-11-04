@@ -120,16 +120,36 @@ function decodeSheetInWorker(buffer: ArrayBuffer, sheetName: string): Promise<un
   })
 }
 
+// Diagnostics side-channel — Settings' Diagnostics panel wants "was the
+// worker used" and "how long did decoding take" per file, but changing
+// every parseXWorkbook's return type to thread that through would ripple
+// into the provider's PARSERS signature and every caller. A plain module-
+// level record, written right before decodeTargetSheet returns and read
+// by the provider right after calling the parser, is lower-risk and keeps
+// this strictly informational — nothing reads it for correctness.
+export interface LastDecodeMeta {
+  usedWorker: boolean
+  decodeMs: number
+}
+const lastDecodeMeta: Partial<Record<string, LastDecodeMeta>> = {}
+export function getLastDecodeMeta(label: string): LastDecodeMeta | undefined {
+  return lastDecodeMeta[label]
+}
+
 /** Decodes exactly one sheet — via the `sheets` filter, so the workbook's
  * other sheets are never parsed at all — with styles/formulas/HTML/number-
- * format parsing off, after trimming its declared range. `label` is just
- * for the timing/console output. */
+ * format parsing off, after trimming its declared range. `label` is also
+ * the key getLastDecodeMeta() reports against. */
 async function decodeTargetSheet(buffer: ArrayBuffer, sheetName: string, label: string): Promise<unknown[][]> {
+  const start = Date.now()
+  let usedWorker = false
   console.time(`[sp-parse] ${label}: decode+toRows (${(buffer.byteLength / 1024).toFixed(0)}KB)`)
   try {
     if (buffer.byteLength > WORKER_THRESHOLD_BYTES) {
       try {
-        return await decodeSheetInWorker(buffer, sheetName)
+        const rows = await decodeSheetInWorker(buffer, sheetName)
+        usedWorker = true
+        return rows
       } catch (err) {
         console.warn(`[sp-parse] ${label}: worker decode failed, falling back to main thread`, err)
       }
@@ -140,6 +160,7 @@ async function decodeTargetSheet(buffer: ArrayBuffer, sheetName: string, label: 
     trimSheetRowRange(ws)
     return XLSX.utils.sheet_to_json(ws, { header: 1, defval: null }) as unknown[][]
   } finally {
+    lastDecodeMeta[label] = { usedWorker, decodeMs: Date.now() - start }
     console.timeEnd(`[sp-parse] ${label}: decode+toRows (${(buffer.byteLength / 1024).toFixed(0)}KB)`)
   }
 }
@@ -236,4 +257,75 @@ export async function parseSpoWorkbook(buffer: ArrayBuffer): Promise<unknown[][]
   console.timeEnd('[sp-parse] spo: reshape')
   console.timeEnd('[sp-parse] spo: total')
   return result
+}
+
+// ─────────────────────────────────────────────
+// DIAGNOSTICS — "newest meaningful date" per file, for Settings' Diagnostics
+// panel only (not used anywhere for business logic). tracker/decom/scop
+// still carry a header row at index 0, so their column is resolved by
+// name; spo/cr are already column-stripped to fixed original positions
+// with no header row, so theirs is resolved by that fixed index instead.
+// ─────────────────────────────────────────────
+
+function parseAnyDate(val: unknown): Date | null {
+  if (val === null || val === undefined || val === '') return null
+  if (val instanceof Date) return isNaN(val.getTime()) ? null : val
+  if (typeof val === 'number') {
+    if (val > 25000 && val < 60000) {
+      const d = new Date((val - 25569) * 86400 * 1000)
+      return isNaN(d.getTime()) ? null : d
+    }
+    return null
+  }
+  const d = new Date(String(val))
+  return isNaN(d.getTime()) || d.getFullYear() < 1990 ? null : d
+}
+
+function newestDateByHeader(rows: unknown[][], headerName: string): Date | null {
+  if (rows.length === 0) return null
+  const headers = (rows[0] as unknown[]).map(h => String(h ?? '').trim().toLowerCase())
+  const col = headers.indexOf(headerName.toLowerCase())
+  if (col === -1) return null
+  let newest: Date | null = null
+  for (let i = 1; i < rows.length; i++) {
+    const d = parseAnyDate((rows[i] as unknown[])[col])
+    if (d && (!newest || d > newest)) newest = d
+  }
+  return newest
+}
+
+function newestDateByIndex(rows: unknown[][], colIdx: number): Date | null {
+  let newest: Date | null = null
+  for (const row of rows) {
+    const d = parseAnyDate((row as unknown[])[colIdx])
+    if (d && (!newest || d > newest)) newest = d
+  }
+  return newest
+}
+
+export interface NewestDateResult {
+  columnLabel: string
+  date: Date | null
+}
+
+/** `rows` is each file's already-parsed output (same shape parseXWorkbook
+ * returns) — never re-reads the source buffer. */
+export function computeNewestMeaningfulDate(key: 'tracker' | 'decom' | 'scop' | 'spo' | 'cr', rows: unknown[][]): NewestDateResult {
+  switch (key) {
+    case 'tracker':
+      return { columnLabel: 'MS16 Implementation Ends A', date: newestDateByHeader(rows, 'MS16 Implementation Ends A') }
+    case 'decom':
+      return { columnLabel: 'DECOM Drop Off', date: newestDateByHeader(rows, 'DECOM Drop Off') }
+    case 'scop':
+      return { columnLabel: 'Construction Complete Actual', date: newestDateByHeader(rows, 'Construction Complete Actual') }
+    case 'spo':
+      // SPO_COL_IDX[4] = 41 = 'SPO Creation Date' (SPO_HEADERS[4]) — the
+      // stripped rows have no header row, so this is a fixed position.
+      return { columnLabel: 'SPO Creation Date', date: newestDateByIndex(rows, 41) }
+    case 'cr':
+      // CR_COL_IDX[18] = 29 = 'SPO Issued Date' (CR_HEADERS[18]) — the
+      // closest thing CR has to a claim/submission/updated date, already
+      // used elsewhere in the CR report.
+      return { columnLabel: 'SPO Issued Date', date: newestDateByIndex(rows, 29) }
+  }
 }

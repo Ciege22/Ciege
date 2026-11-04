@@ -30,12 +30,22 @@ const PHASE_LABEL: Record<string, string> = {
  * read as "broken," not "working." Now shows the actual load phase
  * (Downloading/Parsing/Building) during that first load, and relabels the
  * button "Retry" (still the same refresh() call) when there's an error, so
- * the fix action is obvious instead of generic. */
+ * the fix action is obvious instead of generic.
+ *
+ * Bug fix, 11/2026 ("CR still shows stale data"): staleVsSharePoint (set by
+ * the provider's cheap metadata-version check — see
+ * SharePointDataProvider's bug-fix note) now surfaces as an explicit amber
+ * "Showing older data, refreshing…" line, instead of the page quietly
+ * displaying an old version with nothing to indicate a newer one exists
+ * and is on its way. If that background refetch then fails, the amber line
+ * is replaced by the normal error + "Retry" path below — it never just
+ * goes back to looking "done" with stale data still on screen. */
 export default function SharePointSourceLine({ fileKey }: { fileKey: SharePointFileKey }) {
-  const { lastModifiedDateTime, refreshedAt, loading, phase, fromCache, error, refresh } = useSharePointFile(fileKey)
+  const { lastModifiedDateTime, refreshedAt, loading, phase, fromCache, error, staleVsSharePoint, revalidateStatus, refresh } = useSharePointFile(fileKey)
 
   const firstLoadInProgress = loading && !refreshedAt
   const buttonLabel = error ? 'Retry' : loading && !fromCache ? 'Refreshing…' : 'Refresh'
+  const showingOlderData = staleVsSharePoint && !error && (revalidateStatus === 'running' || loading)
 
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
@@ -46,8 +56,11 @@ export default function SharePointSourceLine({ fileKey }: { fileKey: SharePointF
           Source: SharePoint · last modified {fmt(lastModifiedDateTime)} · Last loaded from SharePoint: {fmt(refreshedAt)}
         </span>
       )}
-      {fromCache && phase === 'refreshing' && (
+      {fromCache && phase === 'refreshing' && !showingOlderData && (
         <span className="text-blue-400 italic">refreshing…</span>
+      )}
+      {showingOlderData && (
+        <span className="text-amber-400 font-semibold">⚠ Showing older data, refreshing…</span>
       )}
       <button onClick={refresh} disabled={loading}
         className={`underline disabled:no-underline disabled:opacity-40 ${error ? 'text-red-300 hover:text-red-200 font-semibold' : 'text-blue-400 hover:text-blue-300'}`}>
