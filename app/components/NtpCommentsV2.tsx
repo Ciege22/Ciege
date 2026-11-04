@@ -1,12 +1,23 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
+import { useIsAuthenticated } from '@azure/msal-react'
+import { useSharePointFile } from './SharePointDataProvider'
+import MicrosoftLogin from './MicrosoftLogin'
 import ColumnFilterMenu from './ColumnFilterMenu'
+import { buildTrackerXlsxBlob } from '../lib/trackerXlsxBlob'
 
 // NTP comments for Deck Builder V2. Nothing saves until you press Save (per
 // row or Save all); the server reads back what it wrote before confirming.
 // Every build reads the saved comments into the NTP slides, and the Excel
 // export is only for the customer after the call.
+//
+// Stage 6, 11/2026: the backend no longer reads the tracker from Supabase
+// (stateless w.r.t. Nokia data — see backend/api.py's _ntp_months). Both
+// /ntp_comments and /ntp_comments/export changed from GET to POST and now
+// need the tracker sent with every call, same as /build_v2 — this
+// component sends what useSharePointFile('tracker') already has in memory,
+// built into an xlsx the same way deck-builder-v2/page.tsx does.
 
 const RAILWAY = 'https://ciege-production.up.railway.app'
 
@@ -57,6 +68,9 @@ function cellValue(r: NtpRow, key: ColKey): string {
 }
 
 export default function NtpCommentsV2() {
+  const isAuthenticated = useIsAuthenticated()
+  const trackerFile = useSharePointFile('tracker')
+
   const [data, setData] = useState<NtpPayload | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
@@ -70,6 +84,8 @@ export default function NtpCommentsV2() {
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [savedAt, setSavedAt] = useState<string | null>(null)
+  const [exporting, setExporting] = useState(false)
+  const [exportError, setExportError] = useState<string | null>(null)
 
   const dirtyCount = Object.keys(dirty).length
 
@@ -82,23 +98,31 @@ export default function NtpCommentsV2() {
   }, [dirtyCount])
 
   useEffect(() => {
+    if (!trackerFile.rows) return
     let cancelled = false
-    fetch(`${RAILWAY}/ntp_comments`)
-      .then(async res => {
+    const run = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const formData = new FormData()
+        formData.append('tracker', buildTrackerXlsxBlob(trackerFile.rows!), 'tracker.xlsx')
+        const res = await fetch(`${RAILWAY}/ntp_comments`, { method: 'POST', body: formData })
         const json = await res.json()
         if (!res.ok) throw new Error(json.error || `Server error: ${res.status}`)
-        return json as NtpPayload
-      })
-      .then(json => {
         if (cancelled) return
-        setData(json)
-        const firstWithRows = json.months.find(m => m.rows.length > 0) ?? json.months[0]
+        const payload = json as NtpPayload
+        setData(payload)
+        const firstWithRows = payload.months.find(m => m.rows.length > 0) ?? payload.months[0]
         setActiveSheet(firstWithRows?.sheet ?? '')
-      })
-      .catch(err => { if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load NTP comments.') })
-      .finally(() => { if (!cancelled) setLoading(false) })
+      } catch (err) {
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Could not load NTP comments.')
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    run()
     return () => { cancelled = true }
-  }, [])
+  }, [trackerFile.rows])
 
   const month = data?.months.find(m => m.sheet === activeSheet)
 
@@ -191,17 +215,48 @@ export default function NtpCommentsV2() {
     })
   }
 
-  function exportUrl() {
-    const date = data?.deck_date ?? ''
-    return `${RAILWAY}/ntp_comments/export?deck_date=${encodeURIComponent(date)}`
-  }
-
-  function confirmExport(e: React.MouseEvent<HTMLAnchorElement>) {
+  async function handleExport() {
+    if (!trackerFile.rows) return
     if (dirtyCount > 0 && !window.confirm(`${dirtyCount} comment(s) are not saved yet, so the export will leave them out. Export anyway?`)) {
-      e.preventDefault()
+      return
+    }
+    setExporting(true)
+    setExportError(null)
+    try {
+      const formData = new FormData()
+      formData.append('tracker', buildTrackerXlsxBlob(trackerFile.rows), 'tracker.xlsx')
+      const date = data?.deck_date ?? ''
+      const res = await fetch(`${RAILWAY}/ntp_comments/export?deck_date=${encodeURIComponent(date)}`, {
+        method: 'POST', body: formData,
+      })
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        throw new Error(json.error || `Export failed: ${res.status}`)
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `NTP_Pending_${date.replace(/\//g, '-')}.xlsx`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      setExportError(err instanceof Error ? err.message : 'Export failed.')
+    } finally {
+      setExporting(false)
     }
   }
 
+  if (!isAuthenticated) {
+    return (
+      <div className="rounded-2xl border border-white/10 bg-white/5 p-6 text-center">
+        <p className="text-sm text-zinc-400 mb-3">Sign in with your Nokia account to load the tracker from SharePoint.</p>
+        <MicrosoftLogin />
+      </div>
+    )
+  }
   if (loading) return <p className="text-sm text-zinc-400">Loading NTP pending HOPs…</p>
   if (error) return <p className="text-sm text-red-300">{error}</p>
   if (!data) return null
@@ -213,12 +268,15 @@ export default function NtpCommentsV2() {
           <p className="text-xs uppercase tracking-[0.3em] text-zinc-400">NTP comments</p>
           <p className="text-sm text-zinc-500">Call date {data.deck_date} · press Save to store changes · shows on the NTP slides in the next build</p>
         </div>
-        <a
-          href={exportUrl()} onClick={confirmExport}
-          className="inline-flex items-center rounded-2xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-white"
-        >
-          Export for customer (.xlsx)
-        </a>
+        <div className="flex flex-col items-end gap-1">
+          <button
+            type="button" onClick={handleExport} disabled={exporting}
+            className="inline-flex items-center rounded-2xl bg-zinc-100 px-4 py-2 text-sm font-semibold text-zinc-950 hover:bg-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {exporting ? 'Exporting…' : 'Export for customer (.xlsx)'}
+          </button>
+          {exportError && <span className="text-xs text-red-300">{exportError}</span>}
+        </div>
       </div>
 
       <div className="flex flex-wrap gap-2">

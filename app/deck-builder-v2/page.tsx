@@ -3,8 +3,6 @@
 export const dynamic = 'force-dynamic'
 
 import { useState } from 'react'
-import Link from 'next/link'
-import * as XLSX from 'xlsx'
 import { useIsAuthenticated } from '@azure/msal-react'
 import { useSharePointFile } from '../components/SharePointDataProvider'
 import MicrosoftLogin from '../components/MicrosoftLogin'
@@ -23,6 +21,7 @@ import {
 } from '../lib/scop'
 import { buildScopDeckBlob } from '../lib/scopDeck'
 import { loadScopSettings } from '../lib/settings'
+import { buildTrackerXlsxBlob } from '../lib/trackerXlsxBlob'
 
 // Deck Builder V2 — now the primary deck builder (confirmed by CJ
 // 10/13/2026, first real weekly build and comparison baseline out the
@@ -30,26 +29,6 @@ import { loadScopSettings } from '../lib/settings'
 // legacy /deck-builder (see backend/build_deck_v2.py's module docstring
 // for the full list of behavioral differences) — kept isolated so the old
 // one stays available as a fallback, not because this is still in testing.
-
-// backend/build_deck.py's extract_data(), when given a FILE (not the
-// Supabase tracker_rows fallback), hardcodes pd.read_excel(tracker_path,
-// sheet_name='HOPs', header=1) — it assumes row 0 is always a description
-// row and the real header is row 1, same as every real Nokia tracker
-// export. SharePointDataProvider's parsed tracker.rows has already found
-// and stripped that description row (row 0 IS the real header there), so
-// building a file from it as-is would make the backend treat our actual
-// header as the description row and our first data row as headers. A
-// single blank row has to go back in at the top to keep the file-upload
-// path's assumption true. (Confirmed via a throwaway round-trip test: an
-// empty array `[]` for that row gets dropped entirely by aoa_to_sheet,
-// collapsing row 0 away — it has to be a one-cell row, e.g. [''].)
-function buildTrackerXlsxBlob(rows: unknown[][]): Blob {
-  const wb = XLSX.utils.book_new()
-  const ws = XLSX.utils.aoa_to_sheet([[''], ...rows], { cellDates: true })
-  XLSX.utils.book_append_sheet(wb, ws, 'HOPs')
-  const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx', cellDates: true }) as ArrayBuffer
-  return new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' })
-}
 
 export default function DeckBuilderV2Page() {
   const isAuthenticated = useIsAuthenticated()
@@ -232,8 +211,7 @@ export default function DeckBuilderV2Page() {
             )}
             {success && (
               <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/10 px-4 py-3 text-sm text-emerald-300">
-                Deck built successfully — your download should have started.{' '}
-                <Link href="/deck-preview" className="underline font-semibold text-emerald-200">Open the slide preview and comment on it →</Link>
+                Deck built successfully — your download should have started.
               </div>
             )}
 

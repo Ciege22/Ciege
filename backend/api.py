@@ -13,7 +13,6 @@ from flask import Flask, request, send_file, jsonify
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 from supabase import create_client
-from pptx import Presentation
 
 # Ensure backend package path is importable when running this file directly
 sys.path.append(os.path.dirname(__file__))
@@ -23,6 +22,10 @@ import ntp_comments_v2
 
 app = Flask(__name__)
 CORS(app)
+# Trackers run well past 10MB for this program; cap well above that so a
+# legitimately large upload never gets cut off, while still bounding worst-case
+# memory per request.
+app.config['MAX_CONTENT_LENGTH'] = 100 * 1024 * 1024
 
 SUPABASE_URL = os.environ.get('SUPABASE_URL', '')
 SUPABASE_KEY = os.environ.get('SUPABASE_KEY', '')
@@ -51,33 +54,19 @@ def build_endpoint():
 
 		if not previous_deck or not deck_date:
 			return jsonify({'error': 'Missing required fields: previous_deck, deck_date'}), 400
+		if not tracker:
+			# Stage 6: no more Supabase tracker_snapshot fallback — the
+			# tracker must come from the request every time, same as
+			# /build_v2. `snapshot` (the previous session's numbers, for
+			# the "what changed" comparison) stays optional: without one,
+			# build_deck.build() just skips that comparison, same as a
+			# first-ever build always has.
+			return jsonify({'error': 'Missing tracker: upload a .xlsx file with this request.'}), 400
 
-		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx') if tracker else ''
+		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx')
 		previous_deck_path = _save_uploaded_file(previous_deck, tmpdir, 'previous_deck.pptx')
 		snapshot_path = _save_uploaded_file(snapshot, tmpdir, 'snapshot.json') if snapshot else ''
 		ntp_comments_path = _save_uploaded_file(ntp_comments, tmpdir, 'ntp_comments.xlsx') if ntp_comments else ''
-
-		# Fall back to Supabase if tracker or snapshot not uploaded
-		tracker_rows = None
-		prev_snapshot_data = None
-		if (not tracker or not snapshot) and supabase_client:
-			try:
-				if not tracker:
-					latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
-					if latest.data:
-						tracker_rows = json.loads(latest.data['data'])
-				if not snapshot:
-					previous = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).range(1, 1).execute()
-					if previous.data:
-						prev_snapshot_data = {
-							'rows': json.loads(previous.data[0]['data']),
-							'uploaded_at': previous.data[0]['uploaded_at']
-						}
-			except Exception as e:
-				print(f'Supabase fetch error: {e}')
-
-		if not tracker_path and tracker_rows is None:
-			return jsonify({'error': 'Missing tracker: upload a .xlsx file or ensure Supabase has a snapshot'}), 400
 
 		# Normalize deck_date to expected format if possible (MM/DD/YYYY)
 		try:
@@ -94,8 +83,8 @@ def build_endpoint():
 			ntp_comments_path=ntp_comments_path,
 			deck_date=deck_date_str,
 			output_dir=tmpdir,
-			tracker_rows=tracker_rows,
-			prev_snapshot_data=prev_snapshot_data,
+			tracker_rows=None,
+			prev_snapshot_data=None,
 		)
 
 		# Create ZIP with outputs
@@ -131,71 +120,6 @@ def build_endpoint():
 			pass
 
 
-V2_LATEST_ID = 'v2-build-latest'
-V2_PRIOR_ID = 'v2-build-prior'
-
-
-def save_v2_build(deck_bytes: bytes, filename: str, deck_date: str):
-	"""Keeps the newest V2 build, rotating the previous latest into the prior slot."""
-	if not supabase_client:
-		return
-	try:
-		old = supabase_client.table('report_snapshots').select('*').eq('id', V2_LATEST_ID).execute()
-		if old.data:
-			supabase_client.table('report_snapshots').upsert({**old.data[0], 'id': V2_PRIOR_ID}).execute()
-		supabase_client.table('report_snapshots').upsert({
-			'id': V2_LATEST_ID,
-			'filename': filename,
-			'uploaded_at': datetime.utcnow().isoformat(),
-			'data': json.dumps({'deck_date': deck_date, 'b64': base64.b64encode(deck_bytes).decode()}),
-		}).execute()
-	except Exception as e:
-		print(f'save_v2_build failed: {e}')
-
-
-def _slide_summary(prs):
-	slides = []
-	for idx, slide in enumerate(prs.slides):
-		texts, tables, charts = [], [], []
-		for sh in slide.shapes:
-			if sh.has_text_frame and sh.text_frame.text.strip():
-				texts.append(sh.text_frame.text.strip())
-			if sh.has_table:
-				rows = [[sh.table.cell(r, c).text.strip() for c in range(len(sh.table.columns))] for r in range(len(sh.table.rows))]
-				tables.append(rows)
-			if sh.has_chart:
-				try:
-					ch = sh.chart
-					cats = [str(c) for c in ch.plots[0].categories]
-					series = [{'name': s.name, 'values': [None if v is None else float(v) for v in s.values]} for s in ch.series]
-					charts.append({'categories': cats, 'series': series})
-				except KeyError:
-					texts.append('[chart missing from this build]')
-		slides.append({'index': idx, 'texts': texts, 'tables': tables, 'charts': charts})
-	return slides
-
-
-@app.route('/v2_slides', methods=['GET'])
-def v2_slides_endpoint():
-	which = request.args.get('which', 'latest')
-	row_id = V2_PRIOR_ID if which == 'prior' else V2_LATEST_ID
-	if not supabase_client:
-		return jsonify({'error': 'Supabase not configured'}), 500
-	res = supabase_client.table('report_snapshots').select('*').eq('id', row_id).execute()
-	if not res.data:
-		return jsonify({'error': f'No {which} build saved yet'}), 404
-	row = res.data[0]
-	payload = json.loads(row['data'])
-	prs = Presentation(io.BytesIO(base64.b64decode(payload['b64'])))
-	return jsonify({
-		'which': which,
-		'filename': row['filename'],
-		'uploaded_at': row['uploaded_at'],
-		'deck_date': payload.get('deck_date'),
-		'slides': _slide_summary(prs),
-	})
-
-
 @app.route('/build_v2', methods=['POST'])
 def build_v2_endpoint():
 	"""Deck Builder V2 — fully separate from /build above (which it never
@@ -214,23 +138,14 @@ def build_v2_endpoint():
 			return jsonify({'error': 'Missing required fields: previous_deck, deck_date'}), 400
 		if not decom_pptx or not scop_pptx:
 			return jsonify({'error': 'Missing required fields: decom_pptx, scop_pptx (generated client-side before upload)'}), 400
+		if not tracker:
+			# Stage 6: no more Supabase tracker_snapshot fallback.
+			return jsonify({'error': 'Missing tracker: upload a .xlsx file with this request.'}), 400
 
-		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx') if tracker else ''
+		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx')
 		previous_deck_path = _save_uploaded_file(previous_deck, tmpdir, 'previous_deck.pptx')
 		decom_pptx_bytes = decom_pptx.read()
 		scop_pptx_bytes = scop_pptx.read()
-
-		tracker_rows = None
-		if not tracker and supabase_client:
-			try:
-				latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
-				if latest.data:
-					tracker_rows = json.loads(latest.data['data'])
-			except Exception as e:
-				print(f'Supabase tracker fetch error: {e}')
-
-		if not tracker_path and tracker_rows is None:
-			return jsonify({'error': 'Missing tracker: upload a .xlsx file or ensure Supabase has a snapshot'}), 400
 
 		try:
 			parsed = datetime.strptime(deck_date, '%m/%d/%Y')
@@ -243,7 +158,7 @@ def build_v2_endpoint():
 			previous_deck_path=previous_deck_path,
 			deck_date=deck_date_str,
 			output_dir=tmpdir,
-			tracker_rows=tracker_rows,
+			tracker_rows=None,
 			supabase_client=supabase_client,
 			decom_pptx_bytes=decom_pptx_bytes,
 			scop_pptx_bytes=scop_pptx_bytes,
@@ -256,7 +171,6 @@ def build_v2_endpoint():
 		# zip buffer instead of a path).
 		with open(out['deck_path'], 'rb') as f:
 			deck_bytes = f.read()
-		save_v2_build(deck_bytes, os.path.basename(out['deck_path']), deck_date_str)
 		buffer = io.BytesIO(deck_bytes)
 		return send_file(
 			buffer,
@@ -278,19 +192,22 @@ def build_v2_endpoint():
 
 @app.route('/ntp_emails', methods=['POST'])
 def ntp_emails_endpoint():
+	tmpdir = tempfile.mkdtemp(prefix='ciege_ntp_emails_')
 	try:
 		ntp_file = request.files.get('ntp_comments')
 		if not ntp_file:
 			return jsonify({'error': 'No NTP Comments file uploaded'}), 400
-		with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as tmp:
-			ntp_file.save(tmp.name)
-			ntp_path = tmp.name
+		ntp_path = _save_uploaded_file(ntp_file, tmpdir, 'ntp_comments.xlsx')
 		emails = build_deck.generate_ntp_emails_from_file(ntp_path)
-		os.unlink(ntp_path)
 		return jsonify(emails)
 	except Exception as e:
 		tb = traceback.format_exc()
 		return jsonify({'error': str(e), 'traceback': tb}), 500
+	finally:
+		try:
+			shutil.rmtree(tmpdir)
+		except Exception:
+			pass
 
 
 # ─────────────────────────────────────────────
@@ -298,18 +215,14 @@ def ntp_emails_endpoint():
 # and the Excel export is generated on demand for the customer.
 # ─────────────────────────────────────────────
 
-def _ntp_months(deck_date_str: str):
+def _ntp_months(deck_date_str: str, tracker_path: str):
 	"""Pending-NTP HOPs for every month in the window around the call, with the
 	saved comment and status merged in. Same POR logic as the V2 slides."""
 	import pandas as pd
 	if not supabase_client:
 		raise RuntimeError('Supabase is not configured')
-	latest = supabase_client.table('tracker_snapshot').select('*').order('uploaded_at', desc=True).limit(1).single().execute()
-	if not latest.data:
-		raise RuntimeError('No tracker snapshot in Supabase')
-	tracker_rows = json.loads(latest.data['data'])
 	call_dt = build_deck_v2.call_tuesday(deck_date_str)
-	data = build_deck.extract_data('', '', '', call_dt.strftime('%m/%d/%Y'), tracker_rows=tracker_rows, prev_snapshot_data=None)
+	data = build_deck.extract_data(tracker_path, '', '', call_dt.strftime('%m/%d/%Y'), tracker_rows=None, prev_snapshot_data=None)
 	# A fixed 90-day lookback silently dropped any pending-NTP HOP whose
 	# forecast start is older than that — confirmed on a real HOP forecast in
 	# June while the call was in October (~115 days back), which had no month
@@ -333,11 +246,16 @@ def _ntp_months(deck_date_str: str):
 	return call_dt, months
 
 
-@app.route('/ntp_comments', methods=['GET'])
+@app.route('/ntp_comments', methods=['POST'])
 def ntp_comments_get():
+	tmpdir = tempfile.mkdtemp(prefix='ciege_ntp_comments_')
 	try:
-		deck_date = request.args.get('deck_date') or datetime.now().strftime('%m/%d/%Y')
-		call_dt, months = _ntp_months(deck_date)
+		tracker = request.files.get('tracker')
+		if not tracker:
+			return jsonify({'error': 'Missing tracker: upload a .xlsx file with this request.'}), 400
+		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx')
+		deck_date = request.form.get('deck_date') or request.args.get('deck_date') or datetime.now().strftime('%m/%d/%Y')
+		call_dt, months = _ntp_months(deck_date, tracker_path)
 		return jsonify({
 			'deck_date': call_dt.strftime('%m/%d/%Y'),
 			'statuses': ntp_comments_v2.STATUS_OPTIONS,
@@ -346,6 +264,11 @@ def ntp_comments_get():
 	except Exception as e:
 		traceback.print_exc()
 		return jsonify({'error': str(e)}), 500
+	finally:
+		try:
+			shutil.rmtree(tmpdir)
+		except Exception:
+			pass
 
 
 @app.route('/ntp_comments/save', methods=['POST'])
@@ -369,17 +292,27 @@ def ntp_comments_save():
 		return jsonify({'error': str(e)}), 500
 
 
-@app.route('/ntp_comments/export', methods=['GET'])
+@app.route('/ntp_comments/export', methods=['POST'])
 def ntp_comments_export():
+	tmpdir = tempfile.mkdtemp(prefix='ciege_ntp_export_')
 	try:
-		deck_date = request.args.get('deck_date') or datetime.now().strftime('%m/%d/%Y')
-		call_dt, months = _ntp_months(deck_date)
+		tracker = request.files.get('tracker')
+		if not tracker:
+			return jsonify({'error': 'Missing tracker: upload a .xlsx file with this request.'}), 400
+		tracker_path = _save_uploaded_file(tracker, tmpdir, 'tracker.xlsx')
+		deck_date = request.form.get('deck_date') or request.args.get('deck_date') or datetime.now().strftime('%m/%d/%Y')
+		call_dt, months = _ntp_months(deck_date, tracker_path)
 		xlsx = ntp_comments_v2.export_workbook([(m['sheet'], m['rows']) for m in months])
 		return send_file(io.BytesIO(xlsx), mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 		                 as_attachment=True, download_name=f'NTP_Pending_{call_dt.strftime("%m-%d-%Y")}.xlsx')
 	except Exception as e:
 		traceback.print_exc()
 		return jsonify({'error': str(e)}), 500
+	finally:
+		try:
+			shutil.rmtree(tmpdir)
+		except Exception:
+			pass
 
 
 if __name__ == '__main__':

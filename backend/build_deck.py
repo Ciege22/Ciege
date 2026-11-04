@@ -836,7 +836,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                             _removed += 1
                         if _removed:
                             print(f"[FIX] removed {_removed} dLbl overrides from col={_col}", flush=True)
-                print(f"[FIX] col={_col} plan={_is_plan} vals[:3]={_nv[:3]}", flush=True)
+                print(f"[FIX] col={_col} plan={_is_plan}", flush=True)
 
             # Positional fallback: first unresolved non-plan series = Forecast, second = Actual
             _unresolved.sort(key=lambda x: x[0])
@@ -845,7 +845,7 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
                 _con = _ref if _ref is not None else _lit
                 if _con is not None:
                     _set_numdata(_con, _fv, n, 'numCache' if _ref is not None else 'numLit')
-                print(f"[FIX] fallback idx={_oi} -> {'fc' if _fi==0 else 'act'} vals[:3]={_fv[:3]}", flush=True)
+                print(f"[FIX] fallback idx={_oi} -> {'fc' if _fi==0 else 'act'}", flush=True)
 
             _decl = xml[:xml.index('?>') + 2] if xml.startswith('<?xml') else ''
             xml = _et.tostring(_lroot, encoding='unicode')
@@ -997,8 +997,6 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
 
     print(f"[CX] starts  chart={_starts_chart_path}  embed={_starts_embed_path}", flush=True)
     print(f"[CX] complete chart={_complete_chart_path} embed={_complete_embed_path}", flush=True)
-    print(f"[CX] starts_fc  = {list(zip(data['starts_labels'], data['cx_starts_fc']))}", flush=True)
-    print(f"[CX] starts_act = {list(zip(data['starts_labels'], data['cx_starts_act']))}", flush=True)
 
     # Fix chart XML numCaches and labels
     if _starts_chart_path in content:
@@ -1284,7 +1282,6 @@ def update_deck(data: dict, previous_deck_path: str, output_path: str):
             # Fallback: read directly from cx column if _cx is empty
             if not cx_val and _la_cx_col:
                 cx_val = gv(r, _la_cx_col)
-            print(f'  HOP={hop} _cx={cx_val[:40]!r}', file=_sys.stderr, flush=True)
             set_table_cell(la_tbl, ri, 0, hop, fill_rgb=row_fill)
             set_table_cell(la_tbl, ri, 1, d['hop_pm'].get(hop, ''), fill_rgb=row_fill)
             set_table_cell(la_tbl, ri, 2, gv(r, 'General Contractor'), fill_rgb=row_fill)
@@ -1897,7 +1894,12 @@ def build(tracker_path: str = '', previous_deck_path: str = '', snapshot_path: s
     generate_ntp_comments(data, ntp_out)
     ntp_emails = generate_ntp_emails(data)
 
-    debug_slides_path = '/tmp/slide_debug.txt'
+    # Stage 6: this used to be a hardcoded '/tmp/slide_debug.txt' — a fixed
+    # path outside the request-scoped output_dir, so it never got cleaned up
+    # and leaked real slide title text (Nokia-derived) across requests on the
+    # same running container. output_dir is deleted by the route's `finally`
+    # once the response is sent, same as every other file built here.
+    debug_slides_path = os.path.join(output_dir, 'slide_debug.txt')
     try:
         import pptx as _pptx_mod
         _prs_check = _pptx_mod.Presentation(deck_out)

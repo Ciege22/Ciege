@@ -23,9 +23,11 @@ Behavioral differences from the original /build, all explicitly requested:
      the previous deck's existing chart XML and written back unchanged —
      never recomputed from a hardcoded table. Forecast/Actual are still
      freshly computed every build from extract_data().
-  4. The "What Changed" delta compares against a snapshot this module saves
-     to Supabase (pm_updates_cache, id='deck-v2-last-snapshot') after every
-     successful build, instead of an unrelated tracker-upload fallback.
+  4. The "What Changed" delta used to compare against a snapshot saved to
+     Supabase after every build (Stage 6, 11/2026: removed — Nokia-derived
+     data can't persist across requests — see the "What Changed" baseline
+     section below for the removal and the suggested client-side redesign).
+     Every build now takes the "no prior build" path.
   5. A new "New Starts & Completions Since Last Meeting" slide lists the
      actual HOP names (extract_data already computes these as
      new_starts/completions; the original builder discards the names and
@@ -40,7 +42,6 @@ import os
 import posixpath
 import re
 import copy
-import json
 import zipfile
 import calendar
 from datetime import datetime, timedelta
@@ -73,10 +74,21 @@ EXT_CONTENT_TYPES = {
 
 
 # ─────────────────────────────────────────────
-# 1. SUPABASE SNAPSHOT (delta baseline) — replaces the tracker-upload fallback
+# 1. "What Changed" baseline
 # ─────────────────────────────────────────────
-
-SNAPSHOT_PREFIX = 'deck-v2-snapshot-'
+#
+# Stage 6, 11/2026: this used to save a snapshot of each build's numbers
+# (total starts/complete/NTP, in-progress HOP names) to Supabase
+# (pm_updates_cache, SNAPSHOT_PREFIX = 'deck-v2-snapshot-') so the next
+# build's "What Changed" slide could diff against it. That snapshot is
+# Nokia-derived data (it included actual HOP names via ip_hops) persisted
+# outside a single request, which the stateless-backend rule no longer
+# allows. load_prior_snapshot()/save_snapshot() are gone; build() below now
+# always starts from last_snapshot={}, the same "no prior build to compare
+# against" path a first-ever build already took gracefully. If a real delta
+# is wanted again, the comparison needs to move client-side (the frontend
+# already holds the tracker in memory and could keep the last build's
+# summary numbers in nokiaCache.ts or IndexedDB alongside it).
 
 # Plan values as they stand on the Cx Start / Cx Complete slides. Used only
 # when the previous deck is missing a month's Plan point — now that
@@ -101,40 +113,6 @@ def call_tuesday(deck_date_str: str) -> datetime:
     if delta > 3:
         delta -= 7
     return d + timedelta(days=delta)
-
-
-def load_prior_snapshot(supabase_client, call_dt: datetime) -> dict:
-    """The saved numbers from the most recent Tuesday call before this one."""
-    if not supabase_client:
-        return {}
-    try:
-        res = supabase_client.table('pm_updates_cache').select('id,updates').like('id', f'{SNAPSHOT_PREFIX}%').execute()
-        best_key, best = None, {}
-        for row in res.data or []:
-            day = row['id'][len(SNAPSHOT_PREFIX):]
-            try:
-                dt = datetime.strptime(day, '%Y-%m-%d')
-            except ValueError:
-                continue
-            if dt < call_dt and (best_key is None or dt > best_key):
-                best_key, best = dt, json.loads(row['updates'])
-        return best
-    except Exception as e:
-        print(f'[v2-snapshot] load failed: {e}', flush=True)
-    return {}
-
-
-def save_snapshot(supabase_client, call_dt: datetime, snapshot: dict):
-    if not supabase_client:
-        return
-    try:
-        supabase_client.table('pm_updates_cache').upsert({
-            'id': SNAPSHOT_PREFIX + call_dt.strftime('%Y-%m-%d'),
-            'updates': json.dumps(snapshot, default=str),
-            'updated_at': datetime.utcnow().isoformat(),
-        }).execute()
-    except Exception as e:
-        print(f'[v2-snapshot] save failed: {e}', flush=True)
 
 
 # ─────────────────────────────────────────────
@@ -1538,17 +1516,6 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
     final_prs.save(output_path)
     os.remove(final_tmp)
 
-    # Persist this build's headline numbers as the baseline for next time.
-    snapshot = {
-        'session_date': NEW_DATE,
-        'total_starts': d['started_count'], 'total_complete': d['complete_count'],
-        'in_progress': d['ip_count'], 'total_ntp': d['ntp_count'],
-        'ip_hops': d['ip_df']['HOP'].tolist(),
-    }
-    for mo_key, mo_name, sheet_key in por_order:
-        snapshot[f'por_{mo_key}_ntp'] = por[mo_key]['ntp']
-    save_snapshot(supabase_client, call_dt or datetime.strptime(NEW_DATE, '%m/%d/%Y'), snapshot)
-
     return output_path
 
 
@@ -1560,16 +1527,12 @@ def build(tracker_path: str = '', previous_deck_path: str = '', deck_date: str =
     deck_date = call_dt.strftime('%m/%d/%Y')
     date_slug = deck_date.replace('/', '-')
 
-    # The prior Tuesday's saved numbers, fed to extract_data via a throwaway
-    # JSON file matching its snapshot_path format exactly, so new_starts and
-    # completions compare call to call.
-    last_snapshot = load_prior_snapshot(supabase_client, call_dt)
-    snapshot_json_path = os.path.join(output_dir, '_last_snapshot.json')
-    with open(snapshot_json_path, 'w') as f:
-        json.dump(last_snapshot, f)
+    # Stage 6: no more cross-request snapshot (see the module-level note
+    # above) — every build now takes the same "no prior build to compare
+    # against" path a first-ever build always took.
+    last_snapshot: dict = {}
 
-    data = extract_data(tracker_path, snapshot_json_path, '', deck_date, tracker_rows=tracker_rows, prev_snapshot_data=None)
-    os.remove(snapshot_json_path)
+    data = extract_data(tracker_path, '', '', deck_date, tracker_rows=tracker_rows, prev_snapshot_data=None)
 
     # NTP comments come from the Supabase store the NTP tab writes to, not an
     # uploaded workbook, so every build carries the latest saved comments.
