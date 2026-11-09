@@ -116,16 +116,19 @@ function isNaText(raw: unknown): boolean {
   return String(raw ?? '').trim().toLowerCase().replace(/[^a-z]/g, '') === 'na'
 }
 
-// Cutover/decom "Completed" columns are legitimately N/A for a site that
-// doesn't need that step — parseDateAny just fails on that text and
-// fmtDate(null) silently drops it to blank, which reads as "not entered"
-// and gets flagged/edited again on every fresh upload (see Main Path
-// Cutover / Diversity Cutover / Decom Complete below). Recovers the N/A
-// instead of losing it.
-function fmtDateOrNA(raw: unknown): string {
+// MSS/Power-Up/Main Cutover/Diversity Cutover/Decom — CJ, 11/2026: reads
+// the cell verbatim once it's cleaned up. A date shows as a date, any
+// spelling of N/A normalizes to 'N/A' (same as fmtDateOrNA above), and
+// anything else actually typed in the cell (e.g. "Complete") shows exactly
+// as typed instead of silently dropping to blank the way fmtDate/
+// fmtDateOrNA did — those two only ever recognized a real date or N/A, so
+// a cell marked "Complete" read as an untouched gap in the Follow-Up
+// section even though the CM had genuinely closed it out.
+function fmtDateOrStatus(raw: unknown): string {
   const d = parseDateAny(raw)
   if (d) return fmtDate(d)
-  return isNaText(raw) ? 'N/A' : ''
+  if (isNaText(raw)) return 'N/A'
+  return String(raw ?? '').trim()
 }
 
 // Some columns (e.g. Material Forecast +4ish) get a status note instead of a
@@ -252,8 +255,16 @@ function EditableDate({ hop, field, value, alwaysEditable = false, editedDates, 
     return `${parseInt(parts[1])}/${parseInt(parts[2])}/${parts[0]}`
   }
 
-  if (value && value !== 'N/A' && !edited && !alwaysEditable) {
-    return <span className="text-green-400 text-xs font-semibold">{value}</span>
+  // Bug fix, 11/2026: a raw tracker value that's already literally "N/A"
+  // (not something CJ clicked this session — see the `edited === 'N/A'`
+  // branch below for that) used to fail this check (`value !== 'N/A'`) and
+  // fall all the way through to a blank, empty date input — so a cell the
+  // CM had already marked N/A in the source tracker looked like an
+  // untouched gap. N/A now displays as read-only text exactly like any
+  // other real value, same as a date or "Complete".
+  if (!edited && !alwaysEditable) {
+    if (value === 'N/A') return <span className="text-gray-400 text-xs font-semibold">N/A</span>
+    if (value) return <span className="text-green-400 text-xs font-semibold">{value}</span>
   }
 
   const display = edited || ''
@@ -484,7 +495,8 @@ const SUB_MILESTONE_FIELDS: { key: 'mss' | 'powerUp' | 'mainCutover' | 'divCutov
 ]
 
 // A HOP counts as having a gap here only when a field is genuinely blank —
-// 'N/A' (fmtDateOrNA, see above) means the step doesn't apply to this site
+// any real value (a date, 'N/A', 'Complete', or whatever else is actually
+// typed in the cell — see fmtDateOrStatus above) means it's been addressed
 // and is not a gap to chase.
 function missingSubMilestones(h: HOP): string[] {
   return SUB_MILESTONE_FIELDS.filter(f => !h[f.key]).map(f => f.label)
@@ -884,8 +896,6 @@ export default function CMViewPage() {
       const matDate  = parseDateAny(row[matCol])
       const wpDate   = parseDateAny(row[wpCol])
       const pickupD  = parseDateAny(row[pickupCol])
-      const mssDate  = parseDateAny(row[mssCol])
-      const powerDate= parseDateAny(row[powerCol])
 
       const hasNtp     = !!(ntpDate && ntpDate.getFullYear() >= 2025)
       const hasMat     = !!(matDate && matDate.getFullYear() >= 2020)
@@ -959,11 +969,11 @@ export default function CMViewPage() {
         ms15a:        fmtDate(ms15a),
         ms16f:        fmtDate(parseDateAny(row[ms16fCol])),
         ms16a:        fmtDate(ms16a),
-        mss:          fmtDate(mssDate),
-        powerUp:      fmtDate(powerDate),
-        mainCutover:  fmtDateOrNA(row[mainCutCol]),
-        divCutover:   fmtDateOrNA(row[divCutCol]),
-        decom:        fmtDateOrNA(row[decomCol]),
+        mss:          fmtDateOrStatus(row[mssCol]),
+        powerUp:      fmtDateOrStatus(row[powerCol]),
+        mainCutover:  fmtDateOrStatus(row[mainCutCol]),
+        divCutover:   fmtDateOrStatus(row[divCutCol]),
+        decom:        fmtDateOrStatus(row[decomCol]),
         hasNtp, hasMat, wpApproved, gcPickup,
         gcPickupDate: fmtDate(pickupD),
         ntpOwner:     String(row[ntpOwnCol] || '').trim() || String(row2?.[ntpOwnCol] || '').trim(),
