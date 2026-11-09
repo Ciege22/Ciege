@@ -955,8 +955,23 @@ export default function TrackerGridPage() {
 
   // Measure the scroll container so the row/column virtualization windows
   // know how many cells actually fit in view. Re-measures on window resize.
+  //
+  // Bug fix, 11/2026 ("columns invisible until I scroll"): the scroll
+  // container below only actually mounts once `isAuthenticated && loaded &&
+  // headers.length > 0` are ALL true, but this effect used to re-run on
+  // `loaded` alone. `loaded` is driven purely by the SharePoint file state
+  // and has no dependency on auth — if it flipped true before
+  // isAuthenticated did (now more likely since the SharePoint provider's
+  // own msalReady gating changed the relative timing of auth vs. data
+  // loading), this effect fired while scrollContainerRef.current was still
+  // null, found nothing to measure, and never ran again — leaving
+  // viewportSize stuck at its 900x600 default forever. Virtualization then
+  // only ever rendered a ~900px-wide slice of columns regardless of the
+  // real window size, with everything past that reading as blank until a
+  // scroll shifted which (still ~900px-wide) slice was rendered. Now
+  // re-runs on the exact same condition that gates the container's mount.
   useEffect(() => {
-    if (!loaded) return
+    if (!isAuthenticated || !loaded || headers.length === 0) return
     const measure = () => {
       const el = scrollContainerRef.current
       if (el) setViewportSize({ width: el.clientWidth, height: el.clientHeight })
@@ -964,7 +979,7 @@ export default function TrackerGridPage() {
     measure()
     window.addEventListener('resize', measure)
     return () => window.removeEventListener('resize', measure)
-  }, [loaded])
+  }, [isAuthenticated, loaded, headers.length])
 
   // Scroll position drives which rows/columns are rendered — rAF-throttled so
   // a fast scroll gesture only triggers at most one state update per frame
