@@ -475,6 +475,125 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
   )
 }
 
+const SUB_MILESTONE_FIELDS: { key: 'mss' | 'powerUp' | 'mainCutover' | 'divCutover' | 'decom'; label: string }[] = [
+  { key: 'mss', label: 'MSS' },
+  { key: 'powerUp', label: 'Power-Up' },
+  { key: 'mainCutover', label: 'Main Cutover' },
+  { key: 'divCutover', label: 'Diversity Cutover' },
+  { key: 'decom', label: 'Decom' },
+]
+
+// A HOP counts as having a gap here only when a field is genuinely blank —
+// 'N/A' (fmtDateOrNA, see above) means the step doesn't apply to this site
+// and is not a gap to chase.
+function missingSubMilestones(h: HOP): string[] {
+  return SUB_MILESTONE_FIELDS.filter(f => !h[f.key]).map(f => f.label)
+}
+
+interface FollowUpSectionProps {
+  rows: HOP[]
+  sessionNotes: Record<string, string>
+  setSessionNotes: React.Dispatch<React.SetStateAction<Record<string, string>>>
+  saveCallNote: (hop: string, note: string) => void
+  noteHistory: Record<string, { id: string; hop_name: string; note: string; logged_at: string }[]>
+  editedDates: Record<string, Record<string, string>>
+  logDateEdit: (hop: string, field: string, oldVal: string, newVal: string) => void
+  setCxNotesModal: (val: { hop: string; notes: string } | null) => void
+  showNokiaPm?: boolean
+}
+
+// MS16 (Implementation Ends A) is the "done" milestone every other section
+// on this page is scoped around — once it's actualized, a HOP drops out of
+// Active/This Week/Next 2 Wks/This Month/Pipeline entirely (see cmHops'
+// !h.complete split above) and its 5 downstream sub-milestones (MSS,
+// Power-Up, Main Cutover, Diversity Cutover, Decom) stop appearing
+// anywhere, even if one is still blank. CJ still goes through these with
+// the CM on calls after MS16, so this section keeps a "complete" HOP
+// visible for exactly as long as it has a real gap — same EditableDate
+// inputs as Active Sites, so a gap can be closed right on the call.
+function FollowUpSection({ rows, sessionNotes, setSessionNotes, saveCallNote, noteHistory, editedDates, logDateEdit, setCxNotesModal, showNokiaPm }: FollowUpSectionProps) {
+  return (
+    <div>
+      <h3 className="text-lg font-semibold text-white mb-3">✅ Complete — Follow-Up Needed ({rows.length})</h3>
+      {rows.length === 0
+        ? <p className="text-gray-500 text-sm">No complete HOPs with an open sub-milestone</p>
+        : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="bg-gray-800 text-gray-400">
+                  <th className="text-left p-2">HOP</th>
+                  <th className="text-left p-2">Path ID</th>
+                  {showNokiaPm && <th className="text-left p-2">Nokia PM</th>}
+                  <th className="text-left p-2">GC</th>
+                  <th className="text-left p-2">MS16 Act</th>
+                  <th className="text-left p-2">Missing</th>
+                  <th className="text-left p-2">MSS</th>
+                  <th className="text-left p-2">Power-Up</th>
+                  <th className="text-left p-2">Main Cutover</th>
+                  <th className="text-left p-2">Diversity Cutover</th>
+                  <th className="text-left p-2">Decom</th>
+                  <th className="text-left p-2">Call Notes</th>
+                  <th className="text-left p-2">Notes History</th>
+                  <th className="text-left p-2">CX Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(h => {
+                  const missing = missingSubMilestones(h)
+                  return (
+                    <tr key={h.hop} className="border-t border-gray-800 bg-gray-900">
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
+                      {showNokiaPm && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
+                      <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
+                      <td className="p-2 text-green-400 font-semibold whitespace-nowrap">{h.ms16a}</td>
+                      <td className="p-2 text-amber-400 font-semibold whitespace-nowrap">{missing.join(', ')}</td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="MSS Completed NMS Ready " value={h.mss} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="Power-Up Completion" value={h.powerUp} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="Main Path Cutover Completed" value={h.mainCutover} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="Diversity Cutover Completed" value={h.divCutover} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <td className="p-2">
+                        <EditableDate hop={h.hop} field="Decom Complete" value={h.decom} editedDates={editedDates} logDateEdit={logDateEdit} />
+                      </td>
+                      <NoteCell
+                        hop={h.hop}
+                        noteValue={sessionNotes[h.hop] || ''}
+                        onNoteChange={(hop, val) => setSessionNotes(n => ({ ...n, [hop]: val }))}
+                        onSave={saveCallNote}
+                      />
+                      <HistoryCell hop={h.hop} noteHistory={noteHistory} />
+                      <td className="p-2">
+                        {h.cxNotes ? (
+                          <button
+                            onClick={() => setCxNotesModal({ hop: h.hop, notes: h.cxNotes })}
+                            className="bg-gray-700 hover:bg-gray-600 text-white text-xs px-2 py-1 rounded flex items-center gap-1 whitespace-nowrap">
+                            📝 {h.cxNotes.split('\n').filter(Boolean).length || 1}
+                          </button>
+                        ) : (
+                          <span className="text-gray-600 text-xs">—</span>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      }
+    </div>
+  )
+}
+
 export default function CMViewPage() {
   const isAuthenticated = useIsAuthenticated()
   const trackerFile = useSharePointFile('tracker')
@@ -919,14 +1038,15 @@ export default function CMViewPage() {
   // silently dropped out of the default "Mine" workload — confirmed live:
   // 69 DON 444 rows had Nokia PM = CJ but Region PM blank/other.
   const cjHops    = hops.filter(h => h.nokiaPm?.trim().toUpperCase() === 'CJ')
-  // Only list a CM if they have at least one HOP that isn't complete —
-  // active + thisWeek + next2Wks + thisMonth + pipeline below is exactly
-  // the set of !h.complete HOPs (inProgress and complete are mutually
-  // exclusive), so a CM whose every HOP is already complete would show
-  // every section empty anyway. Filtering the tab out here avoids
-  // presenting names with genuinely nothing to call about.
+  // Only list a CM if they have at least one HOP that isn't complete, OR a
+  // complete HOP still missing a sub-milestone (the Follow-Up section
+  // below) — otherwise every section on the panel would show empty.
+  // Filtering the tab out here avoids presenting names with genuinely
+  // nothing to call about.
   const cmList    = Array.from(new Set(
-    (workloadMode === 'full' ? hops : cjHops).filter(h => !h.complete).map(h => h.cm?.trim().toLowerCase()).filter(Boolean)
+    (workloadMode === 'full' ? hops : cjHops)
+      .filter(h => !h.complete || missingSubMilestones(h).length > 0)
+      .map(h => h.cm?.trim().toLowerCase()).filter(Boolean)
   )).sort()
   // Per-CM active-site count for the tab badge — "active" is the same
   // in-progress set the panel's ACTIVE SITES section uses (started, not yet
@@ -945,20 +1065,20 @@ export default function CMViewPage() {
   const cmHops    = (workloadMode === 'full' ? hops : cjHops)
     .filter(h => h.cm?.trim().toLowerCase() === selectedCM?.trim().toLowerCase())
   // GCs the selected CM is working with — every distinct GC among cmHops'
-  // non-complete HOPs (already scoped by the My HOPs Only / Full CM Workload
+  // still-open HOPs (already scoped by the My HOPs Only / Full CM Workload
   // toggle, same as everything else on this panel), with a HOP-count badge,
   // most-HOPs-first. Dedup case-insensitively but keep first-seen display
   // casing, same approach the GC/CM tab lists use.
   //
-  // !h.complete matters here: active/thisWeek/next2Wks/thisMonth/pipeline
-  // below are exactly the set of non-complete HOPs (same as cmList's own
-  // filter), so counting complete ones here would show a GC with a nonzero
-  // badge that then filters every section down to nothing — there'd be
-  // real HOPs for that GC, just none of them still open.
+  // "Still open" = !h.complete OR a complete HOP with a sub-milestone gap
+  // (same test cmList uses) — active/thisWeek/next2Wks/thisMonth/pipeline/
+  // followUp below are exactly that set, so counting anything else here
+  // would show a GC with a nonzero badge that then filters every section
+  // down to nothing.
   const cmGcCounts = (() => {
     const counts = new Map<string, number>() // lowercase key -> count
     const display = new Map<string, string>() // lowercase key -> display casing
-    cmHops.filter(h => !h.complete).forEach(h => {
+    cmHops.filter(h => !h.complete || missingSubMilestones(h).length > 0).forEach(h => {
       const raw = h.gc?.trim()
       if (!raw) return
       const key = raw.toLowerCase()
@@ -983,6 +1103,15 @@ export default function CMViewPage() {
   const next2Wks  = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 7 && h.daysOut <= 14).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const thisMonth = cmHops.filter(h => !h.inProgress && !h.complete && h.daysOut !== null && h.daysOut > 14 && h.daysOut <= 30).sort((a, b) => (a.daysOut ?? 0) - (b.daysOut ?? 0))
   const pipeline  = cmHops.filter(h => !h.inProgress && !h.complete && (h.daysOut === null || h.daysOut > 30)).sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999))
+  // MS16 actualized HOPs normally fall out of every section above — this
+  // keeps a complete HOP in view for exactly as long as one of its 5
+  // downstream sub-milestones (MSS/Power-Up/Main Cutover/Diversity
+  // Cutover/Decom) is still genuinely blank (not 'N/A' — see
+  // missingSubMilestones), so CJ can still run through them with the CM
+  // after MS16. Sorted oldest-MS16-first — the longest-standing gap is the
+  // most overdue to close out.
+  const followUp  = cmHops.filter(h => h.complete && missingSubMilestones(h).length > 0)
+    .sort((a, b) => (a.ms16a ? new Date(a.ms16a).getTime() : 0) - (b.ms16a ? new Date(b.ms16a).getTime() : 0))
 
   // Narrows the on-screen section tables to one GC when a "GCs Worked With"
   // pill is active — a display filter only. generateEmail/downloadAllCMs
@@ -996,6 +1125,7 @@ export default function CMViewPage() {
   const displayNext2Wks  = filterByGc(next2Wks)
   const displayThisMonth = filterByGc(thisMonth)
   const displayPipeline  = filterByGc(pipeline)
+  const displayFollowUp  = filterByGc(followUp)
 
   // Short "here's your spreadsheet" note — CJ attaches the actual forecast
   // export manually, so this deliberately doesn't rebuild the site-by-site
@@ -1675,6 +1805,9 @@ export default function CMViewPage() {
                     )
                   }
                 </div>
+
+                {/* Complete, but still has an open sub-milestone */}
+                <FollowUpSection rows={displayFollowUp} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} />
 
                 {/* Pipeline Sections */}
                 <PipelineSection title="⚡ This Week (0–7 days)" rows={displayThisWeek} sessionNotes={sessionNotes} setSessionNotes={setSessionNotes} saveCallNote={saveCallNote} noteHistory={noteHistory} editedDates={editedDates} logDateEdit={logDateEdit} setCxNotesModal={setCxNotesModal} showNokiaPm={workloadMode === 'full'} crewAssignments={crewAssignments} program={program} onCrewChange={setCrewForHop} />
