@@ -99,6 +99,16 @@ interface GridColumn {
   // that's what makes it into the master tracker later, without silently
   // clobbering whatever's already in the real CX Notes cell.
   isCxComments: boolean
+  // The real sheet-backed "CX Notes:" column — still a normal editable
+  // cell (index points at its real row.cells position), but also gets a
+  // click-to-expand modal (see cxNotesModalRowKey) since this is a real,
+  // often multi-line notes field that a single-line truncated cell with
+  // only a hover tooltip makes hard to actually read or edit well. Bug fix,
+  // 11/2026: CJ reported CX Notes "not populating" — the column was never
+  // dropped (Tracker parses every column verbatim, unlike SPO/CR), but
+  // with no click affordance and only a native hover tooltip, real content
+  // in a 130px-wide truncated cell read as empty.
+  isCxNotes: boolean
   width: number
 }
 
@@ -764,6 +774,14 @@ export default function TrackerGridPage() {
   const [cxCommentHistory, setCxCommentHistory] = useState<Record<string, CallNote[]>>({})
   const [cxCommentDrafts, setCxCommentDrafts] = useState<Record<string, string>>({})
   const [cxCommentsModalRowKey, setCxCommentsModalRowKey] = useState<string | null>(null)
+  // Click-to-view-and-edit modal for the REAL "CX Notes:" sheet column
+  // (distinct from cxCommentsModalRowKey above, which is the separate
+  // scratch-comment log) — draft text is seeded from whatever's currently
+  // shown (a staged pending edit if there is one, else the raw cell) when
+  // the modal opens, and Save goes through the same saveEdit() every other
+  // cell edit uses.
+  const [cxNotesModalRowKey, setCxNotesModalRowKey] = useState<string | null>(null)
+  const [cxNotesDraft, setCxNotesDraft] = useState('')
 
   // HOP detail card — tapping a HOP name opens a read-only vertical
   // column:value list (the fixed HOP_CARD_COLUMNS set), combining both of
@@ -1324,16 +1342,16 @@ export default function TrackerGridPage() {
       const name = headers[i] || `Column ${i + 1}`
       const isHop = i === hopColIdx
       const isDate = isDateColumn(name, i, headers)
-      const defaultWidth = isHop ? 220 : (isDate ? 150 : 130)
-      return { index: i, name, isHop, isDate, isBlockers: false, isCrew: false, isCxComments: false, width: columnWidths[name] ?? defaultWidth }
+      const defaultWidth = isHop ? 220 : (isDate ? 150 : (name === 'CX Notes:' ? 220 : 130))
+      return { index: i, name, isHop, isDate, isBlockers: false, isCrew: false, isCxComments: false, isCxNotes: name === 'CX Notes:', width: columnWidths[name] ?? defaultWidth }
     })
     if (real.length === 0) return real
     const crewCol: GridColumn = {
-      index: -1, name: CREW_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: true, isCxComments: false,
+      index: -1, name: CREW_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: true, isCxComments: false, isCxNotes: false,
       width: columnWidths[CREW_COL_NAME] ?? 110,
     }
     const blockersCol: GridColumn = {
-      index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true, isCrew: false, isCxComments: false,
+      index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true, isCrew: false, isCxComments: false, isCxNotes: false,
       width: columnWidths[BLOCKERS_COL_NAME] ?? 260,
     }
     const withComputed = [real[0], crewCol, blockersCol, ...real.slice(1)]
@@ -1345,7 +1363,7 @@ export default function TrackerGridPage() {
     const cxNotesIdx = withComputed.findIndex(c => c.name === 'CX Notes:')
     if (cxNotesIdx === -1) return withComputed
     const cxCommentsCol: GridColumn = {
-      index: -1, name: CX_COMMENTS_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: false, isCxComments: true,
+      index: -1, name: CX_COMMENTS_COL_NAME, isHop: false, isDate: false, isBlockers: false, isCrew: false, isCxComments: true, isCxNotes: false,
       width: columnWidths[CX_COMMENTS_COL_NAME] ?? 220,
     }
     return [...withComputed.slice(0, cxNotesIdx), cxCommentsCol, ...withComputed.slice(cxNotesIdx)]
@@ -2306,6 +2324,31 @@ export default function TrackerGridPage() {
                           </td>
                         )
                       }
+                      if (col.isCxNotes) {
+                        const raw = row.cells[col.index]
+                        const { text: rawDisplay } = cellDisplayValue(raw, false)
+                        const change = changeMap.get(`${row.rowKey}|${col.name}`)
+                        const shown = change ? change.newValue : rawDisplay
+                        return (
+                          <td
+                            key={col.name}
+                            style={{ backgroundColor: change ? AMBER : rowBg, height: ROW_HEIGHT }}
+                            className="px-1 py-1 border-r border-b border-gray-200"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <button
+                              onClick={() => { setCxNotesDraft(shown); setCxNotesModalRowKey(row.rowKey) }}
+                              title={shown || 'No CX Notes yet — click to add'}
+                              className="w-full text-left text-xs px-1.5 py-1 rounded hover:bg-blue-50 whitespace-nowrap overflow-hidden text-ellipsis flex items-center gap-1"
+                            >
+                              <span className="shrink-0">📝</span>
+                              {shown
+                                ? <span className="truncate">{shown}</span>
+                                : <span className="text-gray-300">—</span>}
+                            </button>
+                          </td>
+                        )
+                      }
                       const raw = row.cells[col.index]
                       const { text: displayValue, treatAsDate } = cellDisplayValue(raw, col.isDate)
                       const change = changeMap.get(`${row.rowKey}|${col.name}`)
@@ -2424,6 +2467,46 @@ export default function TrackerGridPage() {
                 >
                   Save
                 </button>
+              </div>
+            </div>
+          </div>
+        )
+      })()}
+
+      {cxNotesModalRowKey && (() => {
+        const modalRow = trackerRows.find(r => r.rowKey === cxNotesModalRowKey)
+        if (!modalRow) return null
+        const cxNotesCol = allColumns.find(c => c.isCxNotes)
+        if (!cxNotesCol) return null
+        const raw = modalRow.cells[cxNotesCol.index]
+        const { text: rawDisplay } = cellDisplayValue(raw, false)
+        const change = changeMap.get(`${modalRow.rowKey}|${cxNotesCol.name}`)
+        const originalValue = change ? change.newValue : rawDisplay
+        const close = () => setCxNotesModalRowKey(null)
+        const save = () => {
+          saveEdit(modalRow.rowKey, modalRow.hop, cxNotesCol.name, originalValue, cxNotesDraft)
+          close()
+        }
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-start justify-center pt-20 px-4" onClick={close}>
+            <div className="bg-white rounded-xl border border-gray-300 w-full max-w-lg max-h-[32rem] overflow-hidden shadow-2xl flex flex-col" onClick={(e) => e.stopPropagation()}>
+              <div className="flex items-center justify-between p-4 border-b border-gray-200" style={{ backgroundColor: NAVY }}>
+                <h2 className="text-base font-bold text-white">📝 CX Notes — {modalRow.hop}</h2>
+                <button onClick={close} className="text-white hover:text-gray-200 text-xl font-bold">✕</button>
+              </div>
+              <div className="p-4 flex-1 overflow-y-auto">
+                <textarea
+                  autoFocus
+                  value={cxNotesDraft}
+                  onChange={(e) => setCxNotesDraft(e.target.value)}
+                  placeholder="No CX Notes yet — add one below"
+                  rows={10}
+                  className="w-full text-sm rounded px-3 py-2 border border-gray-300 focus:outline-none focus:border-blue-500 resize-y"
+                />
+              </div>
+              <div className="flex items-center justify-end gap-2 p-3 border-t border-gray-200 bg-gray-50">
+                <button onClick={close} className="text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded px-3 py-1.5 font-semibold">Cancel</button>
+                <button onClick={save} className="text-sm bg-blue-600 hover:bg-blue-700 text-white rounded px-3 py-1.5 font-semibold">Save</button>
               </div>
             </div>
           </div>
