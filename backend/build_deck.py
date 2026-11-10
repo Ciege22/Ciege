@@ -190,23 +190,49 @@ def set_table_cell(shape, row, col, text, color=None, bold=None, clear_fill=Fals
 
 
 def expand_table_rows(shape, needed_data_rows):
-    """Append duplicate rows so table has at least needed_data_rows data rows (header excluded)."""
+    """Append duplicate rows so table has at least needed_data_rows data rows (header excluded).
+
+    Bug fix, 11/2026 ("Hops in Progress" slide header said "7 HOPs started"
+    but the table only had 5 rows): this used to be one bare `except: pass`
+    wrapping the whole function, including the per-row deepcopy loop. If
+    cloning any single row threw partway through (an lxml quirk specific to
+    that row's structure), every row from that point on silently never got
+    added — and the render loop downstream only ever iterates however many
+    rows actually exist in the table, so a header count built from the same
+    source data as the table rows (they were never two different counts —
+    see ip_count/ip_df) could still end up disagreeing with what's visibly
+    on the slide. Each row clone now has its own try/except so one bad
+    clone can't block the rest, and a shortfall logs row COUNTS only (never
+    HOP names or any cell content) so it's diagnosable from Railway's logs
+    instead of vanishing without a trace.
+    """
     try:
         tbl_el = shape.table._tbl
         trs = tbl_el.findall(qn('a:tr'))
+        if not trs:
+            return
         current_data = len(trs) - 1  # header is row 0
         if current_data >= needed_data_rows:
             return
         last_tr = trs[-1]
-        for _ in range(needed_data_rows - current_data):
-            new_tr = copy.deepcopy(last_tr)
-            for tc in new_tr.findall(qn('a:tc')):
-                for a_r in tc.findall('.//' + qn('a:r')):
-                    t_el = a_r.find(qn('a:t'))
-                    if t_el is not None:
-                        t_el.text = ''
-            tbl_el.append(new_tr)
-    except: pass
+        to_add = needed_data_rows - current_data
+        added = 0
+        for _ in range(to_add):
+            try:
+                new_tr = copy.deepcopy(last_tr)
+                for tc in new_tr.findall(qn('a:tc')):
+                    for a_r in tc.findall('.//' + qn('a:r')):
+                        t_el = a_r.find(qn('a:t'))
+                        if t_el is not None:
+                            t_el.text = ''
+                tbl_el.append(new_tr)
+                added += 1
+            except Exception as _row_err:
+                print(f'[expand_table_rows] row clone {added + 1}/{to_add} failed: {_row_err!r}', file=sys.stderr, flush=True)
+        if added < to_add:
+            print(f'[expand_table_rows] short {to_add - added} row(s) — table has {current_data + added} of {needed_data_rows} needed data rows', file=sys.stderr, flush=True)
+    except Exception as _err:
+        print(f'[expand_table_rows] failed entirely: {_err!r}', file=sys.stderr, flush=True)
 
 
 # ─────────────────────────────────────────────
