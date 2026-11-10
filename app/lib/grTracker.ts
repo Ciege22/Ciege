@@ -10,9 +10,13 @@ const SPO_COL = {
   name: 8,
   sogName: 33,
   spoNumber: 40,
+  spoCreationDate: 41,
   spoVendor: 43,
   spoValue: 47,
+  iaDate: 48,
+  iaUser: 49,
   grDate: 50,
+  grNumber: 51,
 }
 
 export type GrTier = 'init20' | '60' | '70' | '20' | '30' | 'CR' | null
@@ -352,6 +356,33 @@ export function buildGrRows(
     })
   })
   return out
+}
+
+// A GC asking "what's the status of SPO #X" wants a few fields GrRow
+// deliberately doesn't carry — IA Date/User, GR Number, SPO Creation Date
+// aren't needed for the GR-release workflow GrRow computes (trigger met? GR
+// posted?), so buildGrRows never pulled them off the raw row. The Dashboard
+// SPO Lookup wants them anyway, read straight from the raw SPO rows by
+// SPO Number — kept here (not duplicated in page.tsx) so SPO_COL's column
+// positions stay the one place that knows the report's layout.
+export interface SpoRawDetail {
+  spoCreationDate: string
+  iaDate: string
+  iaUser: string
+  grNumber: string
+}
+
+export function findSpoRawDetail(spoRows: unknown[][], spoNumber: string): SpoRawDetail | null {
+  const target = spoNumber.trim().toLowerCase()
+  if (!target) return null
+  const row = spoRows.find(r => String(r[SPO_COL.spoNumber] ?? '').trim().toLowerCase() === target)
+  if (!row) return null
+  return {
+    spoCreationDate: fmtDate(parseDateAny(row[SPO_COL.spoCreationDate])),
+    iaDate: fmtDate(parseDateAny(row[SPO_COL.iaDate])),
+    iaUser: String(row[SPO_COL.iaUser] ?? '').trim(),
+    grNumber: String(row[SPO_COL.grNumber] ?? '').trim(),
+  }
 }
 
 // Sort dropdown shared by the GR Tracker page and Dashboard GR expand panel.

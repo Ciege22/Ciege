@@ -5,7 +5,7 @@ import Link from 'next/link'
 import * as XLSX from 'xlsx'
 import { useIsAuthenticated } from '@azure/msal-react'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, supabase } from './lib/supabase'
-import { GrRow, GrSortOption, GR_SORT_OPTIONS, buildGrRowsFromSources, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
+import { GrRow, GrSortOption, GR_SORT_OPTIONS, buildGrRowsFromSources, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort, findSpoRawDetail, SpoRawDetail } from './lib/grTracker'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings, loadEmailSettings, EmailRouting } from './lib/settings'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
@@ -590,6 +590,12 @@ export default function Home() {
   const [grExpanded, setGrExpanded] = useState(false)
   const [grSortBy, setGrSortBy] = useState<GrSortOption>('trigger')
   const [grRowTypeFilter, setGrRowTypeFilter] = useState<'all' | 'base' | 'cr'>('base')
+  // SPO Lookup — a GC calling in cold with just an SPO number has no quick
+  // way to find it today (GR Tracker / GC Call View's GR tab are both
+  // scoped to whichever GC tab is already open, no search). Always visible
+  // in the sidebar (not gated behind a tab) since the call can come in from
+  // anywhere in the app.
+  const [spoLookupQuery, setSpoLookupQuery] = useState('')
   const [thresholds, setThresholds] = useState<ThresholdSettings>(DEFAULT_THRESHOLDS)
   const [trackerRawRows, setTrackerRawRows] = useState<unknown[][]>([])
   const [decomRawRows, setDecomRawRows] = useState<unknown[][]>([])
@@ -1219,6 +1225,21 @@ export default function Home() {
   const grReady = sortGrRowsBy(grReadyByType, grSortBy)
   const grAwareness = grGroups.awareness
 
+  // SPO Lookup — searches every GC at once (grRows already spans the whole
+  // program, unlike GR Tracker/GC Call View's per-GC-tab tables), matching
+  // anywhere in the SPO Number so a partially-remembered or misheard number
+  // still finds it. IA Date/User, GR Number and SPO Creation Date aren't on
+  // GrRow (buildGrRows never needed them) — looked up separately straight
+  // off the raw SPO rows, by the same SPO Number, for whichever rows match.
+  const spoLookupMatches: (GrRow & { raw: SpoRawDetail | null })[] = (() => {
+    const q = spoLookupQuery.trim().toLowerCase()
+    if (!q) return []
+    return grRows
+      .filter(r => r.spoNumber.toLowerCase().includes(q))
+      .slice(0, 20) // a too-short/common query (e.g. a single digit) shouldn't dump the whole program
+      .map(r => ({ ...r, raw: findSpoRawDetail(spoFile.rows || [], r.spoNumber) }))
+  })()
+
   const focusItems = filteredKpis ? [
     {
       emoji: '🔴',
@@ -1363,6 +1384,45 @@ export default function Home() {
               ) : (
                 <div className="mt-2">
                   <MicrosoftLogin />
+                </div>
+              )}
+            </div>
+
+            <div className="mb-4">
+              <p className="text-xs text-gray-500 uppercase font-semibold mb-2">SPO Lookup</p>
+              <input
+                type="text"
+                value={spoLookupQuery}
+                onChange={(e) => setSpoLookupQuery(e.target.value)}
+                placeholder="SPO number…"
+                className="w-full rounded-lg border border-gray-600 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+              />
+              {spoLookupQuery.trim() && (
+                <div className="mt-2 space-y-2 max-h-80 overflow-y-auto">
+                  {spoLookupMatches.length === 0 ? (
+                    <p className="text-gray-500 text-xs">No SPO number matching &quot;{spoLookupQuery.trim()}&quot;</p>
+                  ) : spoLookupMatches.map((r, i) => (
+                    <div key={`${r.spoNumber}-${i}`} className="rounded-lg border border-gray-700 bg-gray-900 p-2 text-xs">
+                      <p className="font-semibold text-white truncate" title={r.hopDisplay}>{r.hopDisplay}</p>
+                      <p className="text-gray-400">SPO #{r.spoNumber} · {r.gc || '—'}</p>
+                      <p className={
+                        r.status === 'GR Done' ? 'text-green-400 font-semibold'
+                        : r.status === 'Ready to Release' ? 'text-blue-400 font-semibold'
+                        : 'text-yellow-400 font-semibold'
+                      }>
+                        {r.status}{r.status === 'Awaiting Trigger' && r.pendingReason ? ` — ${r.pendingReason}` : ''}
+                      </p>
+                      <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-gray-400">
+                        <span>SOG: <span className="text-gray-300">{r.sogName || r.tierLabel || '—'}</span></span>
+                        <span>Value: <span className="text-gray-300">{fmtMoney(r.spoValue)}</span></span>
+                        <span>SPO Created: <span className="text-gray-300">{r.raw?.spoCreationDate || '—'}</span></span>
+                        <span>GR Date: <span className="text-gray-300">{r.grDate || '—'}</span></span>
+                        <span>IA Date: <span className="text-gray-300">{r.raw?.iaDate || '—'}</span></span>
+                        <span>IA User: <span className="text-gray-300">{r.raw?.iaUser || '—'}</span></span>
+                        <span className="col-span-2">GR #: <span className="text-gray-300">{r.raw?.grNumber || '—'}</span></span>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               )}
             </div>
