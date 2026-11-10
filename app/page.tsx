@@ -5,7 +5,7 @@ import Link from 'next/link'
 import * as XLSX from 'xlsx'
 import { useIsAuthenticated } from '@azure/msal-react'
 import { saveTrackerSnapshot, loadTrackerSnapshot, getPreviousSnapshot, supabase } from './lib/supabase'
-import { GrRow, GrSortOption, GR_SORT_OPTIONS, buildGrRowsFromSources, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort, findSpoRawDetail, SpoRawDetail } from './lib/grTracker'
+import { GrRow, GrSortOption, GR_SORT_OPTIONS, buildGrRowsFromSources, groupGrRows, sortGrRowsBy, fmtMoney, fmtMoneyShort } from './lib/grTracker'
 import { ThresholdSettings, DEFAULT_THRESHOLDS, loadThresholdSettings, loadDisplaySettings, loadEmailSettings, EmailRouting } from './lib/settings'
 import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDecomSite, fmtDecomDate } from './lib/decom'
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
@@ -1228,16 +1228,14 @@ export default function Home() {
   // SPO Lookup — searches every GC at once (grRows already spans the whole
   // program, unlike GR Tracker/GC Call View's per-GC-tab tables), matching
   // anywhere in the SPO Number so a partially-remembered or misheard number
-  // still finds it. IA Date/User, GR Number and SPO Creation Date aren't on
-  // GrRow (buildGrRows never needed them) — looked up separately straight
-  // off the raw SPO rows, by the same SPO Number, for whichever rows match.
-  const spoLookupMatches: (GrRow & { raw: SpoRawDetail | null })[] = (() => {
+  // still finds it. Same 9 columns as GC Call View's GR/Invoicing tab (see
+  // the render block below) — all already on GrRow, no extra lookup needed.
+  const spoLookupMatches: GrRow[] = (() => {
     const q = spoLookupQuery.trim().toLowerCase()
     if (!q) return []
     return grRows
       .filter(r => r.spoNumber.toLowerCase().includes(q))
       .slice(0, 20) // a too-short/common query (e.g. a single digit) shouldn't dump the whole program
-      .map(r => ({ ...r, raw: findSpoRawDetail(spoFile.rows || [], r.spoNumber) }))
   })()
 
   const focusItems = filteredKpis ? [
@@ -1398,31 +1396,58 @@ export default function Home() {
                 className="w-full rounded-lg border border-gray-600 bg-zinc-900 px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
               />
               {spoLookupQuery.trim() && (
-                <div className="mt-2 space-y-2 max-h-80 overflow-y-auto">
+                <div className="mt-2">
                   {spoLookupMatches.length === 0 ? (
                     <p className="text-gray-500 text-xs">No SPO number matching &quot;{spoLookupQuery.trim()}&quot;</p>
-                  ) : spoLookupMatches.map((r, i) => (
-                    <div key={`${r.spoNumber}-${i}`} className="rounded-lg border border-gray-700 bg-gray-900 p-2 text-xs">
-                      <p className="font-semibold text-white truncate" title={r.hopDisplay}>{r.hopDisplay}</p>
-                      <p className="text-gray-400">SPO #{r.spoNumber} · {r.gc || '—'}</p>
-                      <p className={
-                        r.status === 'GR Done' ? 'text-green-400 font-semibold'
-                        : r.status === 'Ready to Release' ? 'text-blue-400 font-semibold'
-                        : 'text-yellow-400 font-semibold'
-                      }>
-                        {r.status}{r.status === 'Awaiting Trigger' && r.pendingReason ? ` — ${r.pendingReason}` : ''}
-                      </p>
-                      <div className="mt-1 grid grid-cols-2 gap-x-2 gap-y-0.5 text-gray-400">
-                        <span>SOG: <span className="text-gray-300">{r.sogName || r.tierLabel || '—'}</span></span>
-                        <span>Value: <span className="text-gray-300">{fmtMoney(r.spoValue)}</span></span>
-                        <span>SPO Created: <span className="text-gray-300">{r.raw?.spoCreationDate || '—'}</span></span>
-                        <span>GR Date: <span className="text-gray-300">{r.grDate || '—'}</span></span>
-                        <span>IA Date: <span className="text-gray-300">{r.raw?.iaDate || '—'}</span></span>
-                        <span>IA User: <span className="text-gray-300">{r.raw?.iaUser || '—'}</span></span>
-                        <span className="col-span-2">GR #: <span className="text-gray-300">{r.raw?.grNumber || '—'}</span></span>
-                      </div>
+                  ) : (
+                    // Same 9 columns, same order, as GC Call View's GR/
+                    // Invoicing tab table (app/gc-call/page.tsx) — CJ asked
+                    // for this to look like what he already knows from
+                    // there, just searchable across every GC instead of
+                    // scoped to whichever GC tab is open.
+                    <div className="overflow-x-auto max-h-80 overflow-y-auto rounded-lg border border-gray-700">
+                      <table className="w-full text-xs">
+                        <thead>
+                          <tr className="bg-gray-800 text-gray-400 sticky top-0">
+                            <th className="text-left p-2 whitespace-nowrap">HOP</th>
+                            <th className="text-left p-2 whitespace-nowrap">Path ID</th>
+                            <th className="text-left p-2 whitespace-nowrap">SOG Name</th>
+                            <th className="text-left p-2 whitespace-nowrap">SPO #</th>
+                            <th className="text-left p-2 whitespace-nowrap">SPO Value</th>
+                            <th className="text-left p-2 whitespace-nowrap">Trigger Date</th>
+                            <th className="text-left p-2 whitespace-nowrap">GR Status</th>
+                            <th className="text-left p-2 whitespace-nowrap">Pending Reason</th>
+                            <th className="text-left p-2 whitespace-nowrap">GR Date</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-gray-900">
+                          {spoLookupMatches.map((r, i) => (
+                            <tr key={`${r.spoNumber}-${i}`} className={`border-t border-gray-800 ${!r.cjActionable ? 'text-gray-600' : 'text-gray-200'}`}>
+                              <td className={`p-2 font-semibold whitespace-nowrap ${!r.cjActionable ? 'text-gray-500' : 'text-white'}`}>
+                                {!r.cjActionable && <span className="mr-1">👁</span>}{r.hopDisplay}
+                              </td>
+                              <td className="p-2 whitespace-nowrap">{r.pathId || '—'}</td>
+                              <td className="p-2 whitespace-nowrap">{r.sogName || 'CR'}</td>
+                              <td className="p-2 whitespace-nowrap">{r.spoNumber || '—'}</td>
+                              <td className="p-2 whitespace-nowrap">{fmtMoney(r.spoValue)}</td>
+                              <td className="p-2 whitespace-nowrap">{r.triggerDate || '—'}</td>
+                              <td className="p-2">
+                                <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap ${
+                                  r.status === 'GR Done' ? 'bg-green-900 text-green-200'
+                                  : r.status === 'Ready to Release' ? 'bg-orange-900 text-orange-200'
+                                  : 'bg-gray-700 text-gray-300'
+                                }`}>
+                                  {r.status === 'GR Done' ? '✓ GR Done' : r.status === 'Ready to Release' ? '⏳ Pending' : 'Not Yet'}
+                                </span>
+                              </td>
+                              <td className="p-2 whitespace-nowrap text-gray-400">{r.pendingReason || '—'}</td>
+                              <td className="p-2 whitespace-nowrap">{r.grDate || '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     </div>
-                  ))}
+                  )}
                 </div>
               )}
             </div>
