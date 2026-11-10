@@ -723,6 +723,11 @@ interface HOP {
   gcPickupF: string
   gcPickupA: string
   cxNotes: string
+  // Deployment Method 11 requires a customer outage notice for pipeline
+  // sites (CJ, 11/2026) — see app/cm-view/page.tsx's matching field for
+  // the full note; same flag here so it's never missed on a GC call either.
+  deployMethod: string
+  requiresOutageNotice: boolean
 }
 
 interface CallNote {
@@ -776,6 +781,21 @@ function fmtDateOrText(raw: unknown): string {
   const d = parseDateAny(raw)
   if (d) return fmtDate(d)
   return String(raw ?? '').trim()
+}
+
+// Deployment Method 11 requires a customer outage notice for pipeline
+// sites (CJ, 11/2026) — same helper as app/cm-view/page.tsx, duplicated
+// rather than shared (this file already duplicates its tracker-column
+// parsing independently of cm-view's). Tolerant of the cell being a plain
+// number (11), a numeric string ("11", "11.0"), or free text ("Method 11",
+// "#11") — matches a standalone "11" token, not a substring of a
+// different number like "110" or "211".
+function isDeployMethod11(raw: unknown): boolean {
+  const s = String(raw ?? '').trim()
+  if (!s) return false
+  const num = Number(s)
+  if (!isNaN(num)) return num === 11
+  return /(^|\D)11(\D|$)/.test(s)
 }
 
 function fmtDM(d: Date | null): string {
@@ -973,6 +993,9 @@ function PipelineTable({ title, rows, sessionNotes, setSessionNotes, saveCallNot
                           <span className={`ml-2 text-xs font-bold px-1.5 py-0.5 rounded ${CREW_BADGE_COLORS[(parseInt(crewAssignments[h.hop].replace('Crew ', ''), 10) - 1) % CREW_BADGE_COLORS.length] || 'bg-gray-700 text-gray-300'}`}>
                             C{crewAssignments[h.hop].replace('Crew ', '')}
                           </span>
+                        )}
+                        {h.requiresOutageNotice && (
+                          <span title="Deployment Method 11 — requires a customer outage notice" className="ml-2 text-xs font-bold px-1.5 py-0.5 rounded bg-red-600 text-white">⚡ Outage</span>
                         )}
                       </td>
                       <td className="p-2">
@@ -1367,6 +1390,7 @@ export default function GCCallPage() {
         return 59
       })()
     const siteCmCol    = col('New CM')
+    const deployMethodCol = col('Hop Deployment Method')
     const mssCol       = col('MSS Completed NMS Ready ')
     const powerCol     = col('Power-Up Completion')
     const mainCutCol   = col('Main Path Cutover Completed')
@@ -1611,7 +1635,9 @@ export default function GCCallPage() {
         decom:       fmtDate(parseDateAny(row[decomCol])),
         gcPickupF: fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA: fmtDate(parseDateAny(row[gcPickupACol])),
-        cxNotes:   String(row[cxNotesCol] || '').trim()
+        cxNotes:   String(row[cxNotesCol] || '').trim(),
+        deployMethod: String(row[deployMethodCol] || '').trim() || String(row2?.[deployMethodCol] || '').trim(),
+        requiresOutageNotice: isDeployMethod11(row[deployMethodCol]) || isDeployMethod11(row2?.[deployMethodCol]),
       }
       hopObj.blockers    = getBlockers(hopObj)
       hopObj.pullInStatus = getPullInStatus(hopObj)
@@ -2263,6 +2289,9 @@ export default function GCCallPage() {
                                     <span className={`ml-2 text-xs font-bold px-1.5 py-0.5 rounded ${CREW_BADGE_COLORS[(parseInt(crewAssignments[h.hop].replace('Crew ', ''), 10) - 1) % CREW_BADGE_COLORS.length] || 'bg-gray-700 text-gray-300'}`}>
                                       C{crewAssignments[h.hop].replace('Crew ', '')}
                                     </span>
+                                  )}
+                                  {h.requiresOutageNotice && (
+                                    <span title="Deployment Method 11 — requires a customer outage notice" className="ml-2 text-xs font-bold px-1.5 py-0.5 rounded bg-red-600 text-white">⚡ Outage</span>
                                   )}
                                 </td>
                                 <td className="p-2">

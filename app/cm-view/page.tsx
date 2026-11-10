@@ -41,6 +41,12 @@ interface HOP {
   matForecast: string
   matReceived: string
   matLocation: string
+  // Deployment Method 11 requires a customer outage notice for pipeline
+  // sites (CJ, 11/2026) — surfaced as a flag on the HOP name everywhere
+  // it's shown, not its own column, so it's never missed scrolling a wide
+  // table on a call.
+  deployMethod: string
+  requiresOutageNotice: boolean
   steelFrom: string
   gcPickupF: string
   gcPickupA: string
@@ -129,6 +135,19 @@ function fmtDateOrStatus(raw: unknown): string {
   if (d) return fmtDate(d)
   if (isNaText(raw)) return 'N/A'
   return String(raw ?? '').trim()
+}
+
+// Deployment Method 11 requires a customer outage notice for pipeline
+// sites (CJ, 11/2026). Tolerant of the cell being a plain number (11),
+// a numeric string ("11", "11.0"), or free text ("Method 11", "#11") —
+// matches a standalone "11" token, not a substring of a different number
+// like "110" or "211".
+function isDeployMethod11(raw: unknown): boolean {
+  const s = String(raw ?? '').trim()
+  if (!s) return false
+  const num = Number(s)
+  if (!isNaN(num)) return num === 11
+  return /(^|\D)11(\D|$)/.test(s)
 }
 
 // Some columns (e.g. Material Forecast +4ish) get a status note instead of a
@@ -368,7 +387,12 @@ function PipelineSection({ title, rows, sessionNotes, setSessionNotes, saveCallN
                   const rowBg       = hasConflict ? 'bg-red-950' : isUrgent ? 'bg-yellow-950' : h.blockers.length === 0 ? 'bg-green-950' : 'bg-gray-900'
                   return (
                     <tr key={h.hop} className={`border-t border-gray-800 ${rowBg}`}>
-                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">
+                        {h.hop}
+                        {h.requiresOutageNotice && (
+                          <span title="Deployment Method 11 — requires a customer outage notice" className="ml-2 text-xs font-bold px-1.5 py-0.5 rounded bg-red-600 text-white">⚡ Outage</span>
+                        )}
+                      </td>
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                       {showNokiaPm && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
@@ -555,7 +579,12 @@ function FollowUpSection({ rows, sessionNotes, setSessionNotes, saveCallNote, no
                   const missing = missingSubMilestones(h)
                   return (
                     <tr key={h.hop} className="border-t border-gray-800 bg-gray-900">
-                      <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                      <td className="p-2 font-semibold text-white whitespace-nowrap">
+                        {h.hop}
+                        {h.requiresOutageNotice && (
+                          <span title="Deployment Method 11 — requires a customer outage notice" className="ml-2 text-xs font-bold px-1.5 py-0.5 rounded bg-red-600 text-white">⚡ Outage</span>
+                        )}
+                      </td>
                       <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                       {showNokiaPm && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                       <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
@@ -839,6 +868,7 @@ export default function CMViewPage() {
     const ntpOwnCol   = col('NTP Action Owner')
     const ntpWaitCol  = col('NTP is waiting on')
     const matLocCol   = col('Material Current Location')
+    const deployMethodCol = col('Hop Deployment Method')
       // Steel From (Nokia/ITW) is at a known position — find by exact index match
       const steelCol = (() => {
         // First try exact match with newline
@@ -981,6 +1011,8 @@ export default function CMViewPage() {
         matForecast:  fmtDateOrText(row[matFcCol]),
         matReceived:  hasMat ? fmtDate(matDate) : '',
         matLocation:  String(row[matLocCol] || '').trim() || String(row2?.[matLocCol] || '').trim(),
+        deployMethod: String(row[deployMethodCol] || '').trim() || String(row2?.[deployMethodCol] || '').trim(),
+        requiresOutageNotice: isDeployMethod11(row[deployMethodCol]) || isDeployMethod11(row2?.[deployMethodCol]),
         steelFrom: (() => {
             for (let i = 0; i < headers.length; i++) {
               const h = String(headers[i])
@@ -1739,7 +1771,12 @@ export default function CMViewPage() {
                           <tbody>
                             {displayActive.map(h => (
                               <tr key={h.hop} className={`border-t border-gray-800 ${h.statuses.some(s => s.includes('⚠️')) ? 'bg-red-950' : 'bg-gray-900'}`}>
-                                <td className="p-2 font-semibold text-white whitespace-nowrap">{h.hop}</td>
+                                <td className="p-2 font-semibold text-white whitespace-nowrap">
+                        {h.hop}
+                        {h.requiresOutageNotice && (
+                          <span title="Deployment Method 11 — requires a customer outage notice" className="ml-2 text-xs font-bold px-1.5 py-0.5 rounded bg-red-600 text-white">⚡ Outage</span>
+                        )}
+                      </td>
                                 <td className="p-2 text-gray-400 text-xs whitespace-nowrap">{h.pathId || '—'}</td>
                                 {workloadMode === 'full' && <td className="p-2 text-gray-300 whitespace-nowrap">{h.nokiaPm || '—'}</td>}
                                 <td className="p-2 text-gray-300 whitespace-nowrap">{h.gc}</td>
