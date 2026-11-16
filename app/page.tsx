@@ -14,7 +14,7 @@ import { SpoBatchForHops } from './components/SpoBatchBar'
 import { buildMaterialWatchEmailMailto, buildHopHardwarePoMap } from './lib/materialWatchEmail'
 import { buildNtpUrgentEmailMailto } from './lib/ntpUrgentEmail'
 import { buildVendorConflictEmailMailto } from './lib/vendorConflictEmail'
-import { buildPendingCpoEmailMailto } from './lib/pendingCpoEmail'
+import { buildPendingCpoEmailMailto, buildHopServiceCpoMap } from './lib/pendingCpoEmail'
 import { useSharePointFile } from './components/SharePointDataProvider'
 import MicrosoftLogin from './components/MicrosoftLogin'
 import SharePointSourceLine from './components/SharePointSourceLine'
@@ -632,7 +632,7 @@ function VendorConflictEmailBar({ hops }: { hops: HopDetail[] }) {
 // issued (Settings → Email Routing's 'pendingCpoEmail' slot isn't filled
 // in yet) so Nokia can request the SPO. Same self-contained pattern as the
 // other tile email bars above.
-function PendingCpoEmailBar({ hops }: { hops: HopDetail[] }) {
+function PendingCpoEmailBar({ hops, trackerRawRows }: { hops: HopDetail[]; trackerRawRows: unknown[][] }) {
   const [routing, setRouting] = useState<Record<string, EmailRouting> | undefined>(undefined)
   const [ccList, setCcList] = useState<string[]>([])
   const [sending, setSending] = useState(false)
@@ -644,8 +644,10 @@ function PendingCpoEmailBar({ hops }: { hops: HopDetail[] }) {
   const send = () => {
     setSending(true)
     try {
+      const cpoMap = buildHopServiceCpoMap(trackerRawRows)
       const items = hops.map(h => ({
         hop: h.hop, pathId: h.pathId, ms15f: h.ms15f, daysOut: h.daysOut,
+        serviceCpos: cpoMap.get(h.hop) ?? [],
       }))
       window.location.href = buildPendingCpoEmailMailto(items, ccList, routing)
     } finally {
@@ -2220,7 +2222,7 @@ export default function Home() {
               : modalTitle === 'Material Watch' ? <MaterialWatchEmailBar hops={modalHops} trackerRawRows={trackerRawRows} />
               : modalTitle === 'NTP Urgent' ? <NtpUrgentEmailBar hops={modalHops} />
               : modalTitle === 'Vendor Conflicts' ? <VendorConflictEmailBar hops={modalHops} />
-              : modalTitle === 'Pending CPO' ? <PendingCpoEmailBar hops={modalHops} />
+              : modalTitle === 'Pending CPO' ? <PendingCpoEmailBar hops={modalHops} trackerRawRows={trackerRawRows} />
               : undefined
           }
         />

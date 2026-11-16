@@ -11,6 +11,48 @@ export interface PendingCpoHop {
   pathId: string
   ms15f: string // forecast start date, already formatted M/D/YYYY
   daysOut: number | null
+  // One entry per physical site row for this HOP (normally two), so the email
+  // can show which side has a Service CPO and which is still missing.
+  serviceCpos: ServiceCpoEntry[]
+}
+
+export interface ServiceCpoEntry {
+  siteName: string
+  cpoNumber: string // blank when the tracker has nothing on file for this site
+}
+
+// 'Service CPO Received' is tracked per physical site, the same one-row-per-
+// site structure as 'Hardware CPO Received' (see materialWatchEmail.ts). Unlike
+// gcCleanup.ts's buildHopCpoMap, which skips blank cells because it only
+// wants the numbers that exist, this keeps blank sites too — the point of this
+// email is to show which side is still missing. Headers are trimmed before
+// matching so a trailing space on the real column name can't break the lookup.
+export function buildHopServiceCpoMap(rows: unknown[][]): Map<string, ServiceCpoEntry[]> {
+  const out = new Map<string, ServiceCpoEntry[]>()
+  let headerRow = -1
+  for (let i = 0; i < 10; i++) {
+    if ((rows[i] as unknown[])?.some(c => String(c).trim() === 'HOP')) { headerRow = i; break }
+  }
+  if (headerRow === -1) return out
+  const headers = (rows[headerRow] as unknown[]).map(h => String(h ?? '').trim())
+  const col = (name: string) => headers.indexOf(name)
+  const hopCol = col('HOP')
+  const don444Col = col('DON 444')
+  const siteCol = col('Site Name')
+  const cpoCol = col('Service CPO Received')
+  if (hopCol === -1) return out
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i] as unknown[]
+    if (!row) continue
+    if (String(row[don444Col] ?? '').trim().toUpperCase() !== 'DON 444') continue
+    const hop = String(row[hopCol] ?? '').trim()
+    if (!hop || hop === 'undefined') continue
+    const siteName = String(row[siteCol] ?? '').trim()
+    const raw = cpoCol !== -1 ? String(row[cpoCol] ?? '').trim() : ''
+    const cpoNumber = raw.toLowerCase() === 'nan' ? '' : raw
+    out.set(hop, [...(out.get(hop) ?? []), { siteName, cpoNumber }])
+  }
+  return out
 }
 
 function todayStr(): string {
@@ -41,6 +83,9 @@ export function buildPendingCpoEmailMailto(
     body += `• ${h.hop}\n`
     body += `Path ID: ${h.pathId || '—'}\n`
     body += `Forecast Start: ${h.ms15f || '—'}${h.daysOut != null ? ` (${h.daysOut}d out)` : ''}\n`
+    h.serviceCpos.forEach(c => {
+      body += `Service CPO (${c.siteName || '—'}): ${c.cpoNumber || 'Not yet received'}\n`
+    })
     body += `\n`
   })
   body += `Thank you,\nCJ`
