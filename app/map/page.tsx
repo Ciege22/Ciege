@@ -24,7 +24,7 @@ export default function MapPage() {
       <BackToDashboard />
       <h1 className="text-2xl font-semibold text-white mb-1">HOP Network Map</h1>
       <p className="text-sm text-zinc-400 mb-4">
-        Every HOP drawn as a line between its two sites, from the latest tracker upload.
+        Every active or not-yet-started HOP drawn as a line between its two sites, read live from the tracker on SharePoint. Completed HOPs are hidden until you turn them on.
       </p>
       <MapView />
     </div>
