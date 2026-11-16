@@ -12,6 +12,8 @@ import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates,
 import { computeSpoStatus, SpoStatus } from './lib/spoStatus'
 import { SpoBatchForHops } from './components/SpoBatchBar'
 import { buildMaterialWatchEmailMailto, buildHopHardwarePoMap } from './lib/materialWatchEmail'
+import { buildNtpUrgentEmailMailto } from './lib/ntpUrgentEmail'
+import { buildVendorConflictEmailMailto } from './lib/vendorConflictEmail'
 import { useSharePointFile } from './components/SharePointDataProvider'
 import MicrosoftLogin from './components/MicrosoftLogin'
 import SharePointSourceLine from './components/SharePointSourceLine'
@@ -259,6 +261,10 @@ interface HopDetail {
   startingThisWeek: boolean, ntpUrgent: boolean,
   needsSpoRequest: boolean, spoRequested: boolean, pendingCpo: boolean,
   materialWatch: boolean, vendorConflict: boolean,
+  // Which vendor(s) and date(s) caused vendorConflict — blank when there's
+  // no conflict. Dashboard → Vendor Conflicts tile's email needs the real
+  // detail, not just the yes/no flag.
+  vendorConflictDetail: string,
   currentMonthFc: boolean, currentMonthAct: boolean,
   currentMonthFcStart: boolean, currentMonthActStart: boolean,
 }
@@ -537,6 +543,85 @@ function MaterialWatchEmailBar({ hops, trackerRawRows }: { hops: HopDetail[]; tr
       <button onClick={send} disabled={hops.length === 0 || sending}
         className="bg-orange-700 hover:bg-orange-600 disabled:opacity-40 text-white text-sm font-semibold rounded px-4 py-2 whitespace-nowrap">
         {sending ? 'Opening…' : '✉️ Email Material Team'}
+      </button>
+    </div>
+  )
+}
+
+// NTP Urgent tile's modal footer — one combined chase email for every HOP
+// missing NTP within the urgent window, regardless of who owns the
+// blocker (see app/lib/ntpUrgentEmail.ts for why this stays combined
+// instead of reusing NTP Tracker's owner-split emails). Same
+// self-contained pattern as MaterialWatchEmailBar.
+function NtpUrgentEmailBar({ hops }: { hops: HopDetail[] }) {
+  const [routing, setRouting] = useState<Record<string, EmailRouting> | undefined>(undefined)
+  const [ccList, setCcList] = useState<string[]>([])
+  const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    loadEmailSettings().then(e => { setRouting(e.routing); setCcList(e.ccList) }).catch(() => {})
+  }, [])
+
+  const send = () => {
+    setSending(true)
+    try {
+      const items = hops.map(h => ({
+        hop: h.hop, gc: h.gc, pathId: h.pathId, ms15f: h.ms15f, daysOut: h.daysOut,
+        ntpWaitingOn: h.ntpWaitingOn,
+      }))
+      window.location.href = buildNtpUrgentEmailMailto(items, ccList, routing)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-gray-400">
+        Drafts one combined email chasing NTP for these {hops.length} HOP{hops.length === 1 ? '' : 's'}.
+      </p>
+      <button onClick={send} disabled={hops.length === 0 || sending}
+        className="bg-orange-700 hover:bg-orange-600 disabled:opacity-40 text-white text-sm font-semibold rounded px-4 py-2 whitespace-nowrap">
+        {sending ? 'Opening…' : '✉️ Email NTP Chase'}
+      </button>
+    </div>
+  )
+}
+
+// Vendor Conflicts tile's modal footer — flags the real vendor + date
+// conflict per HOP (see vendorConflictDetail on HopDetail), not just the
+// yes/no flag. Recipients aren't configured yet — see settings.ts's
+// 'vendorConflictEmail' routing entry.
+function VendorConflictEmailBar({ hops }: { hops: HopDetail[] }) {
+  const [routing, setRouting] = useState<Record<string, EmailRouting> | undefined>(undefined)
+  const [ccList, setCcList] = useState<string[]>([])
+  const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    loadEmailSettings().then(e => { setRouting(e.routing); setCcList(e.ccList) }).catch(() => {})
+  }, [])
+
+  const send = () => {
+    setSending(true)
+    try {
+      const items = hops.map(h => ({
+        hop: h.hop, gc: h.gc, pathId: h.pathId, ms15f: h.ms15f, daysOut: h.daysOut,
+        vendorConflictDetail: h.vendorConflictDetail,
+      }))
+      window.location.href = buildVendorConflictEmailMailto(items, ccList, routing)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-gray-400">
+        Drafts one email flagging the vendor schedule conflict for these {hops.length} HOP{hops.length === 1 ? '' : 's'}.
+      </p>
+      <button onClick={send} disabled={hops.length === 0 || sending}
+        className="bg-orange-700 hover:bg-orange-600 disabled:opacity-40 text-white text-sm font-semibold rounded px-4 py-2 whitespace-nowrap">
+        {sending ? 'Opening…' : '✉️ Email Vendor Conflict'}
       </button>
     </div>
   )
@@ -842,7 +927,7 @@ export default function Home() {
       inProgress: boolean, complete: boolean, over18d: boolean,
       startingThisWeek: boolean, ntpUrgent: boolean,
       needsSpoRequest: boolean, spoRequested: boolean, pendingCpo: boolean,
-      materialWatch: boolean, vendorConflict: boolean,
+      materialWatch: boolean, vendorConflict: boolean, vendorConflictDetail: string,
       currentMonthFc: boolean, currentMonthAct: boolean,
       currentMonthFcStart: boolean, currentMonthActStart: boolean,
     }[] = []
@@ -869,14 +954,23 @@ export default function Home() {
       const daysElapsed = inProgress && ms15a ? Math.round((today.getTime() - ms15a.getTime()) / (1000*60*60*24)) : null
       const fmtD = (d: Date | null) => d ? `${d.getMonth()+1}/${d.getDate()}/${d.getFullYear()}` : ''
       let hasConflict2 = false
+      // Which vendor + date range actually caused the conflict — the
+      // Vendor Conflicts tile's email needs this, not just the boolean.
+      const conflictParts: string[] = []
       rows2.forEach(r => {
         const itwS = parseD(r[itwSCol]); const itwE = parseD(r[itwECol])
         const ssS  = parseD(r[ssSCol]);  const ssE  = parseD(r[ssECol])
         const awS  = parseD(r[awSCol]);  const awE  = parseD(r[awECol])
+        const checkV = (name: string, s: Date | null, e: Date | null) => {
+          if (s && e && ms15f && s <= ms15f && ms15f <= e) {
+            hasConflict2 = true
+            conflictParts.push(`${name} on site through ${fmtD(e)}`)
+          }
+        }
         if (ms15f) {
-          if (itwS && itwE && itwS <= ms15f && ms15f <= itwE) hasConflict2 = true
-          if (ssS && ssE && ssS <= ms15f && ms15f <= ssE) hasConflict2 = true
-          if (awS && awE && awS <= ms15f && ms15f <= awE) hasConflict2 = true
+          checkV('ITW', itwS, itwE)
+          checkV('Samsung', ssS, ssE)
+          checkV('Allwave', awS, awE)
         }
       })
       details.push({
@@ -900,6 +994,7 @@ export default function Home() {
         pendingCpo: !complete && computeSpoStatus(hasSpo, hasCpo, hasSpoRequest).status === 'pending_cpo',
         materialWatch: !hasMat && !complete && daysOut !== null && daysOut <= thresholds.materialWatchDays,
         vendorConflict: hasConflict2 && !complete,
+        vendorConflictDetail: Array.from(new Set(conflictParts)).join(' | '),
         currentMonthFc: !!(ms16f && ms16f.getMonth() === currentMonth && ms16f.getFullYear() === currentYear),
         currentMonthAct: !!(ms16a && ms16a.getMonth() === currentMonth && ms16a.getFullYear() === currentYear),
         currentMonthFcStart: !!(ms15f && ms15f.getMonth() === currentMonth && ms15f.getFullYear() === currentYear),
@@ -967,12 +1062,13 @@ export default function Home() {
 
   useEffect(() => {
     const loadFocusChecks = async () => {
-      // Checkoffs are scoped to today's date in the id itself, so this
-      // naturally only ever picks up today's checked items — a new
-      // calendar day means a new prefix, so nothing matches until checked
-      // again today.
-      const todayKey = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
-      const prefix = `focus-check-${todayKey}-`
+      // Durable — not scoped by date (CJ, 11/2026: "Needs Attention Now"
+      // becoming a real to-do list means a checked item needs to STAY
+      // checked next time the Dashboard loads, from any device, not reset
+      // every calendar day the way this used to). Open Actions no longer
+      // uses this table at all — see toggleFocusItem — so this is now only
+      // ever 'overdue'-type (Needs Attention Now) keys.
+      const prefix = 'focus-check-'
       const { data } = await supabase
         .from('pm_updates_cache')
         .select('id')
@@ -1054,12 +1150,24 @@ export default function Home() {
     console.log('[focus-save] history — upsert error:', error)
   }
 
-  // Daily checkoff — independent of comment history, resets every calendar
-  // day since the Supabase id embeds today's date.
+  // Open Actions — checking it off marks the REAL hop_actions row complete
+  // (and removes it from the list immediately) instead of the generic
+  // pm_updates_cache flag below. Bug fix, 11/2026: this used to ONLY touch
+  // the generic flag, which never actually set hop_actions.completed —
+  // loadOpenActions' own `.eq('completed', false)` query never saw the
+  // change, so a "checked off" action just reappeared on the next load.
+  const toggleOpenAction = async (actionId: string) => {
+    const { error } = await supabase.from('hop_actions').update({ completed: true }).eq('id', actionId)
+    if (error) { console.error('[focus-save] hop_actions completion update failed:', error); return }
+    setOpenActionsData(prev => prev.filter(a => a.id !== actionId))
+  }
+
+  // Needs Attention Now — durable, not date-scoped (see loadFocusChecks'
+  // note above for why this changed from a daily reset to a real to-do
+  // checkoff).
   const toggleFocusItem = async (hop: string, actionType: string) => {
     const compositeKey = `${hop}-${actionType}`
-    const todayKey = new Date().toLocaleDateString('en-US').replace(/\//g, '-')
-    const checkId = `focus-check-${todayKey}-${compositeKey}`
+    const checkId = `focus-check-${compositeKey}`
     const isChecked = !!focusChecks[compositeKey]
 
     if (isChecked) {
@@ -1251,50 +1359,14 @@ export default function Home() {
       valueColor: 'text-red-400',
       getItems: () => filteredDetails.filter(h => !h.complete && !h.inProgress && h.daysOut !== null && h.daysOut <= 14 && (!h.hasNtp || !h.hasMat)),
     },
-    {
-      emoji: '🔴',
-      label: 'SPOs Needing Request',
-      type: 'spo',
-      value: filteredDetails.filter(h => h.needsSpoRequest).length,
-      unit: 'HOPs',
-      sub: 'CPO in hand — request the SPO before GC call',
-      color: 'border-yellow-800 hover:border-yellow-600',
-      valueColor: 'text-yellow-400',
-      getItems: () => filteredDetails.filter(h => h.needsSpoRequest),
-    },
-    {
-      emoji: '⚡',
-      label: 'NTP Urgent ≤14 Days',
-      type: 'ntp',
-      value: filteredDetails.filter(h => h.ntpUrgent).length,
-      unit: 'HOPs',
-      sub: 'missing NTP — chase program team',
-      color: 'border-orange-800 hover:border-orange-600',
-      valueColor: 'text-orange-400',
-      getItems: () => filteredDetails.filter(h => h.ntpUrgent),
-    },
-    {
-      emoji: '📦',
-      label: 'Material Watch',
-      type: 'material',
-      value: filteredDetails.filter(h => h.materialWatch).length,
-      unit: 'HOPs',
-      sub: 'no material ≤14 days to start',
-      color: 'border-orange-800 hover:border-orange-600',
-      valueColor: 'text-orange-400',
-      getItems: () => filteredDetails.filter(h => h.materialWatch),
-    },
-    {
-      emoji: '🟡',
-      label: 'Vendor Conflicts',
-      type: 'vendor',
-      value: filteredDetails.filter(h => h.vendorConflict).length,
-      unit: 'HOPs',
-      sub: 'Samsung/ITW on site at FC start',
-      color: 'border-yellow-800 hover:border-yellow-600',
-      valueColor: 'text-yellow-400',
-      getItems: () => filteredDetails.filter(h => h.vendorConflict),
-    },
+    // SPOs Needing Request, NTP Urgent, Material Watch, and Vendor
+    // Conflicts used to ALSO appear here as a generic note+checkbox card —
+    // the exact same shape as every other item in this list, with no
+    // tailored action underneath (CJ: "all the tiles and dropdowns are
+    // the same... I don't use much in the updates"). Those four now have
+    // a dedicated one-click email instead, reached through the KPI tile
+    // grid above (openModal → the HopsModal footer), so they're removed
+    // from this accordion entirely rather than existing in both places.
     {
       emoji: '📋',
       label: 'Open Actions',
@@ -1703,7 +1775,12 @@ export default function Home() {
                         <p className="text-gray-500 text-sm">No completed items yet today — check off items as you action them below.</p>
                       )}
                       <div className="space-y-2">
-                        {focusItems.filter(item => item.value > 0).map(item => (
+                        {/* Open Actions excluded here — checking one off now
+                            removes it from the list immediately (see
+                            toggleOpenAction) rather than staying visible
+                            struck-through, so it has nothing to show in a
+                            "what did I complete today" summary. */}
+                        {focusItems.filter(item => item.value > 0 && item.label !== 'Open Actions').map(item => (
                           <div key={item.label}>
                             {item.getItems().map(h => {
                               const compositeKey = `${h.hop}-${item.type}`
@@ -1717,25 +1794,6 @@ export default function Home() {
                                     className="w-4 h-4 cursor-pointer accent-green-500" />
                                   <span className={`text-sm flex-1 ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                   <span className="text-gray-500 text-xs">{item.label}</span>
-                                  {isChecked && latest && (
-                                    <span className="text-green-400 text-xs">✓ {latest}</span>
-                                  )}
-                                </div>
-                              )
-                            })}
-                            {item.label === 'Open Actions' && openActionsData.map(a => {
-                              const actionType = `action-${a.id}`
-                              const compositeKey = `${a.hop_name}-${actionType}`
-                              const isChecked = !!focusChecks[compositeKey]
-                              const history = focusHistory[compositeKey] || []
-                              const latest = history[history.length - 1]?.text
-                              return (
-                                <div key={compositeKey} className={`flex items-center gap-3 p-2 rounded-lg ${isChecked ? 'opacity-60' : ''}`}>
-                                  <input type="checkbox" checked={isChecked}
-                                    onChange={() => toggleFocusItem(a.hop_name, actionType)}
-                                    className="w-4 h-4 cursor-pointer accent-green-500" />
-                                  <span className={`text-sm flex-1 ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
-                                  <span className="text-gray-500 text-xs">{a.action_type}</span>
                                   {isChecked && latest && (
                                     <span className="text-green-400 text-xs">✓ {latest}</span>
                                   )}
@@ -1871,85 +1929,44 @@ export default function Home() {
                           </div>
                         </div>
 
+                        {/* Reshaped into a plain to-do list, 11/2026 (CJ:
+                            "I don't use much in the updates in those
+                            dropdowns") — dropped the per-item comment
+                            input/save button neither of these two items
+                            got much use out of. Open Actions checks off
+                            the real hop_actions row and disappears from
+                            the list immediately; Needs Attention Now stays
+                            checked (durable, not a daily reset) with a
+                            strikethrough instead of vanishing, since it's
+                            still useful to see what you already handled
+                            today without the item re-litigating itself. */}
                         {expandedFocusItem === item.label && (
                           <div className="bg-gray-900 border border-t-0 border-gray-700 rounded-b-xl p-4 space-y-2">
-                            {item.label === 'Open Actions' && openActionsData.map(a => {
-                              const actionType = `action-${a.id}`
-                              const compositeKey = `${a.hop_name}-${actionType}`
-                              const isChecked = !!focusChecks[compositeKey]
-                              const history = focusHistory[compositeKey] || []
-                              return (
-                                <div key={compositeKey} className={`bg-gray-800 rounded-lg p-3 ${isChecked ? 'opacity-50' : ''}`}>
-                                  <div className="flex items-center gap-2 mb-2">
-                                    <span className={`text-sm font-semibold flex-1 ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{a.hop_name}</span>
-                                    <span className="text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">{a.action_type}</span>
-                                    <span className="text-xs text-gray-500">{a.action_text}</span>
-                                  </div>
-                                  {history.length > 0 && (
-                                    <div className="mb-2">
-                                      <p className="text-gray-500 text-xs font-semibold mb-0.5">📋 History</p>
-                                      {history.map((entry, i) => (
-                                        <p key={i} className="text-gray-500 text-xs">{entry.date.split('/').slice(0, 2).join('/')}: {entry.text}</p>
-                                      ))}
-                                    </div>
-                                  )}
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <input type="text" placeholder="What did you do? Add note..."
-                                      value={focusCommentInput[compositeKey] || ''}
-                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [compositeKey]: e.target.value }))}
-                                      onKeyDown={(e) => { if (e.key === 'Enter') saveComment(a.hop_name, actionType) }}
-                                      className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
-                                    />
-                                    <button onClick={() => saveComment(a.hop_name, actionType)}
-                                      className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
-                                      💾 Save
-                                    </button>
-                                    <input type="checkbox" checked={isChecked}
-                                      onChange={() => toggleFocusItem(a.hop_name, actionType)}
-                                      className="w-4 h-4 cursor-pointer accent-green-500" />
-                                  </div>
-                                </div>
-                              )
-                            })}
+                            {item.label === 'Open Actions' && openActionsData.map(a => (
+                              <div key={a.id} className="flex items-center gap-3 bg-gray-800 rounded-lg p-3">
+                                <input type="checkbox" checked={false}
+                                  onChange={() => toggleOpenAction(a.id)}
+                                  className="w-4 h-4 cursor-pointer accent-green-500" />
+                                <span className="text-sm font-semibold text-white flex-1">{a.hop_name}</span>
+                                <span className="text-xs text-gray-500 bg-gray-700 px-2 py-0.5 rounded">{a.action_type}</span>
+                                <span className="text-xs text-gray-500">{a.action_text}</span>
+                              </div>
+                            ))}
                             {item.label !== 'Open Actions' && item.getItems().map(h => {
                               const compositeKey = `${h.hop}-${item.type}`
                               const isChecked = !!focusChecks[compositeKey]
-                              const history = focusHistory[compositeKey] || []
                               return (
-                                <div key={compositeKey} className={`bg-gray-800 rounded-lg p-3 ${isChecked ? 'opacity-50' : ''}`}>
-                                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                <div key={compositeKey} className={`flex items-center gap-3 bg-gray-800 rounded-lg p-3 ${isChecked ? 'opacity-50' : ''}`}>
+                                  <input type="checkbox" checked={isChecked}
+                                    onChange={() => toggleFocusItem(h.hop, item.type)}
+                                    className="w-4 h-4 cursor-pointer accent-green-500" />
+                                  <div className="flex-1 flex items-center gap-2 flex-wrap">
                                     <span className={`text-sm font-semibold ${isChecked ? 'line-through text-gray-500' : 'text-white'}`}>{h.hop}</span>
                                     <span className="text-gray-400 text-xs">{h.gc}</span>
                                     {h.daysOut !== null && !h.inProgress && <span className={`text-xs font-bold ${h.daysOut <= 7 ? 'text-red-400' : 'text-yellow-400'}`}>{h.daysOut}d out</span>}
                                     {!h.hasNtp && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">NTP ✗</span>}
                                     {!h.hasMat && <span className="bg-orange-900 text-orange-200 text-xs px-2 py-0.5 rounded-full">Mat ✗</span>}
-                                    {h.needsSpoRequest && <span className="bg-yellow-800 text-yellow-200 text-xs px-2 py-0.5 rounded-full">⚡ Needs SPO Request</span>}
-                                    {h.spoRequested && <span className="bg-blue-900 text-blue-200 text-xs px-2 py-0.5 rounded-full">📨 SPO Requested</span>}
-                                    {h.pendingCpo && <span className="bg-red-900 text-red-200 text-xs px-2 py-0.5 rounded-full">Pending CPO</span>}
                                     {h.ntpWaitingOn && <span className="text-gray-500 text-xs">Waiting: {h.ntpWaitingOn.slice(0,40)}</span>}
-                                  </div>
-                                  {history.length > 0 && (
-                                    <div className="mb-2">
-                                      <p className="text-gray-500 text-xs font-semibold mb-0.5">📋 History</p>
-                                      {history.map((entry, i) => (
-                                        <p key={i} className="text-gray-500 text-xs">{entry.date.split('/').slice(0, 2).join('/')}: {entry.text}</p>
-                                      ))}
-                                    </div>
-                                  )}
-                                  <div className="flex items-center gap-2 mt-1">
-                                    <input type="text" placeholder="What did you do? Add note..."
-                                      value={focusCommentInput[compositeKey] || ''}
-                                      onChange={(e) => setFocusCommentInput(prev => ({ ...prev, [compositeKey]: e.target.value }))}
-                                      onKeyDown={(e) => { if (e.key === 'Enter') saveComment(h.hop, item.type) }}
-                                      className="flex-1 bg-gray-700 text-white text-xs rounded px-2 py-1 border border-gray-600 focus:outline-none focus:border-blue-500"
-                                    />
-                                    <button onClick={() => saveComment(h.hop, item.type)}
-                                      className="bg-blue-700 hover:bg-blue-600 text-white text-xs px-3 py-1 rounded font-semibold whitespace-nowrap">
-                                      💾 Save
-                                    </button>
-                                    <input type="checkbox" checked={isChecked}
-                                      onChange={() => toggleFocusItem(h.hop, item.type)}
-                                      className="w-4 h-4 cursor-pointer accent-green-500" />
                                   </div>
                                 </div>
                               )
@@ -2162,6 +2179,8 @@ export default function Home() {
           footer={
             modalTitle === 'Needs SPO Requested' ? <SpoBatchForHops hopNames={modalHops.map(h => h.hop)} />
               : modalTitle === 'Material Watch' ? <MaterialWatchEmailBar hops={modalHops} trackerRawRows={trackerRawRows} />
+              : modalTitle === 'NTP Urgent' ? <NtpUrgentEmailBar hops={modalHops} />
+              : modalTitle === 'Vendor Conflicts' ? <VendorConflictEmailBar hops={modalHops} />
               : undefined
           }
         />

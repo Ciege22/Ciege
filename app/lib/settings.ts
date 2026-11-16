@@ -63,6 +63,8 @@ export const EMAIL_TYPES: EmailTypeConfig[] = [
   { id: 'gcCleanupCpoEmail', label: 'GC Clean-Up — CPO Request to Finance (New SPO)', hasBaseTo: true },
   { id: 'gcCleanupGrApprovalEmail', label: 'GC Clean-Up — GR Approval to Finance (Punch Complete)', hasBaseTo: true },
   { id: 'materialWatchEmail', label: 'Dashboard — Material Watch (Upcoming Starts)', hasBaseTo: false },
+  { id: 'ntpUrgentEmail', label: 'Dashboard — NTP Urgent (≤14 Days)', hasBaseTo: false },
+  { id: 'vendorConflictEmail', label: 'Dashboard — Vendor Conflicts', hasBaseTo: false },
 ]
 
 export interface EmailRouting {
