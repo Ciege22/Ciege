@@ -645,7 +645,7 @@ function PendingCpoEmailBar({ hops }: { hops: HopDetail[] }) {
     setSending(true)
     try {
       const items = hops.map(h => ({
-        hop: h.hop, gc: h.gc, pathId: h.pathId, ms15f: h.ms15f, daysOut: h.daysOut,
+        hop: h.hop, pathId: h.pathId, ms15f: h.ms15f, daysOut: h.daysOut,
       }))
       window.location.href = buildPendingCpoEmailMailto(items, ccList, routing)
     } finally {

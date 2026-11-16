@@ -1,5 +1,5 @@
-// Dashboard → "Pending CPO" tile email: every HOP still waiting on a CPO
-// (Customer PO, from Viaero to Nokia — see app/lib/spoStatus.ts's doc
+// Dashboard → "Pending CPO" tile email: every HOP still waiting on a Service
+// CPO (Customer PO, from Viaero to Nokia — see app/lib/spoStatus.ts's doc
 // comment for the full procurement chain) before Nokia can even request
 // the SPO. Recipients aren't set up yet; CJ adds them in Settings → Email
 // Routing (pendingCpoEmail) after this ships. Same self-contained pattern
@@ -8,7 +8,6 @@ import { applyEmailRouting, type EmailRouting } from './settings'
 
 export interface PendingCpoHop {
   hop: string
-  gc: string
   pathId: string
   ms15f: string // forecast start date, already formatted M/D/YYYY
   daysOut: number | null
@@ -25,18 +24,21 @@ export function buildPendingCpoEmailMailto(
   routing: Record<string, EmailRouting> | undefined,
 ): string {
   const dateStr = todayStr()
-  const subject = `Pending CPO — SPO Request Blocked | ${dateStr}`
+  const subject = `Needed Service CPOs | SPO Requests on Hold | ${dateStr}`
 
   // Soonest-to-start first, same convention as every other Dashboard tile
   // email — a HOP closer to construction is more urgent to unblock.
   const sorted = [...hops].sort((a, b) => (a.daysOut ?? 999) - (b.daysOut ?? 999))
 
+  // CJ asked for a one-sentence intro with no explanation of why the CPO is
+  // needed, and no GC line per HOP (recipients here are the CPO owners, not
+  // the contractors). Plain "\n" line breaks (no HTML table, no tabs) so this
+  // opens cleanly as a plain-text mailto in Outlook.
   let body = `Hi Team,\n\n`
-  body += `These sites don't have a CPO on file yet, so Nokia can't request the SPO to the contractor. Please advise on status so we can keep procurement moving.\n\n`
-  body += `${hops.length} HOP${hops.length === 1 ? '' : 's'}:\n\n`
+  body += `Please advise on the status of the Service CPOs needed for the sites below.\n\n`
+  body += `${hops.length} site${hops.length === 1 ? '' : 's'} needing a Service CPO:\n\n`
   sorted.forEach(h => {
     body += `• ${h.hop}\n`
-    body += `GC: ${h.gc || '—'}\n`
     body += `Path ID: ${h.pathId || '—'}\n`
     body += `Forecast Start: ${h.ms15f || '—'}${h.daysOut != null ? ` (${h.daysOut}d out)` : ''}\n`
     body += `\n`
