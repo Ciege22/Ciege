@@ -65,6 +65,7 @@ export const EMAIL_TYPES: EmailTypeConfig[] = [
   { id: 'materialWatchEmail', label: 'Dashboard — Material Watch (Upcoming Starts)', hasBaseTo: false },
   { id: 'ntpUrgentEmail', label: 'Dashboard — NTP Urgent (≤14 Days)', hasBaseTo: false },
   { id: 'vendorConflictEmail', label: 'Dashboard — Vendor Conflicts', hasBaseTo: false },
+  { id: 'pendingCpoEmail', label: 'Dashboard — Pending CPO', hasBaseTo: false },
 ]
 
 export interface EmailRouting {

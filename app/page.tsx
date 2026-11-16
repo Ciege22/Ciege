@@ -14,6 +14,7 @@ import { SpoBatchForHops } from './components/SpoBatchBar'
 import { buildMaterialWatchEmailMailto, buildHopHardwarePoMap } from './lib/materialWatchEmail'
 import { buildNtpUrgentEmailMailto } from './lib/ntpUrgentEmail'
 import { buildVendorConflictEmailMailto } from './lib/vendorConflictEmail'
+import { buildPendingCpoEmailMailto } from './lib/pendingCpoEmail'
 import { useSharePointFile } from './components/SharePointDataProvider'
 import MicrosoftLogin from './components/MicrosoftLogin'
 import SharePointSourceLine from './components/SharePointSourceLine'
@@ -622,6 +623,44 @@ function VendorConflictEmailBar({ hops }: { hops: HopDetail[] }) {
       <button onClick={send} disabled={hops.length === 0 || sending}
         className="bg-orange-700 hover:bg-orange-600 disabled:opacity-40 text-white text-sm font-semibold rounded px-4 py-2 whitespace-nowrap">
         {sending ? 'Opening…' : '✉️ Email Vendor Conflict'}
+      </button>
+    </div>
+  )
+}
+
+// Pending CPO tile's modal footer — chases whoever owns getting the CPO
+// issued (Settings → Email Routing's 'pendingCpoEmail' slot isn't filled
+// in yet) so Nokia can request the SPO. Same self-contained pattern as the
+// other tile email bars above.
+function PendingCpoEmailBar({ hops }: { hops: HopDetail[] }) {
+  const [routing, setRouting] = useState<Record<string, EmailRouting> | undefined>(undefined)
+  const [ccList, setCcList] = useState<string[]>([])
+  const [sending, setSending] = useState(false)
+
+  useEffect(() => {
+    loadEmailSettings().then(e => { setRouting(e.routing); setCcList(e.ccList) }).catch(() => {})
+  }, [])
+
+  const send = () => {
+    setSending(true)
+    try {
+      const items = hops.map(h => ({
+        hop: h.hop, gc: h.gc, pathId: h.pathId, ms15f: h.ms15f, daysOut: h.daysOut,
+      }))
+      window.location.href = buildPendingCpoEmailMailto(items, ccList, routing)
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <p className="text-xs text-gray-400">
+        Drafts one email chasing the CPO for these {hops.length} HOP{hops.length === 1 ? '' : 's'}.
+      </p>
+      <button onClick={send} disabled={hops.length === 0 || sending}
+        className="bg-orange-700 hover:bg-orange-600 disabled:opacity-40 text-white text-sm font-semibold rounded px-4 py-2 whitespace-nowrap">
+        {sending ? 'Opening…' : '✉️ Email Pending CPO'}
       </button>
     </div>
   )
@@ -2181,6 +2220,7 @@ export default function Home() {
               : modalTitle === 'Material Watch' ? <MaterialWatchEmailBar hops={modalHops} trackerRawRows={trackerRawRows} />
               : modalTitle === 'NTP Urgent' ? <NtpUrgentEmailBar hops={modalHops} />
               : modalTitle === 'Vendor Conflicts' ? <VendorConflictEmailBar hops={modalHops} />
+              : modalTitle === 'Pending CPO' ? <PendingCpoEmailBar hops={modalHops} />
               : undefined
           }
         />
