@@ -35,8 +35,8 @@ export function buildPendingCpoEmailMailto(
   // the contractors). Plain "\n" line breaks (no HTML table, no tabs) so this
   // opens cleanly as a plain-text mailto in Outlook.
   let body = `Hi Team,\n\n`
-  body += `Please advise on the status of the Service CPOs needed for the sites below.\n\n`
-  body += `${hops.length} site${hops.length === 1 ? '' : 's'} needing a Service CPO:\n\n`
+  body += `Please advise on the status of the Service CPOs needed for the HOPs below.\n\n`
+  body += `${hops.length} HOP${hops.length === 1 ? '' : 's'} needing a Service CPO:\n\n`
   sorted.forEach(h => {
     body += `• ${h.hop}\n`
     body += `Path ID: ${h.pathId || '—'}\n`
