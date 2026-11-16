@@ -11,7 +11,7 @@ import { parseDecomRows, parseTrackerHopsForDecom, findMissingDecom, MissingDeco
 import { PendingUpdate, SOURCE_LABELS, SOURCE_BADGE_CLASSES, loadPendingUpdates, persistPendingUpdates } from './lib/pendingUpdates'
 import { computeSpoStatus, SpoStatus } from './lib/spoStatus'
 import { SpoBatchForHops } from './components/SpoBatchBar'
-import { buildMaterialWatchEmailMailto } from './lib/materialWatchEmail'
+import { buildMaterialWatchEmailMailto, buildHopHardwarePoMap } from './lib/materialWatchEmail'
 import { useSharePointFile } from './components/SharePointDataProvider'
 import MicrosoftLogin from './components/MicrosoftLogin'
 import SharePointSourceLine from './components/SharePointSourceLine'
@@ -506,7 +506,7 @@ function HopsModal({ title, hops, onClose, footer }: { title: string; hops: HopD
 // Material Watch tile's modal footer — one email to the material team
 // confirming forecasted material dates for every site in the list. Same
 // self-contained load-its-own-settings pattern as SpoBatchForHops.
-function MaterialWatchEmailBar({ hops }: { hops: HopDetail[] }) {
+function MaterialWatchEmailBar({ hops, trackerRawRows }: { hops: HopDetail[]; trackerRawRows: unknown[][] }) {
   const [routing, setRouting] = useState<Record<string, EmailRouting> | undefined>(undefined)
   const [ccList, setCcList] = useState<string[]>([])
   const [sending, setSending] = useState(false)
@@ -518,9 +518,10 @@ function MaterialWatchEmailBar({ hops }: { hops: HopDetail[] }) {
   const send = () => {
     setSending(true)
     try {
+      const poMap = buildHopHardwarePoMap(trackerRawRows)
       const items = hops.map(h => ({
-        hop: h.hop, gc: h.gc, ms15f: h.ms15f, daysOut: h.daysOut,
-        hasNtp: h.hasNtp, ntpWaitingOn: h.ntpWaitingOn,
+        hop: h.hop, gc: h.gc, pathId: h.pathId, ms15f: h.ms15f, daysOut: h.daysOut,
+        hardwarePos: poMap.get(h.hop) ?? [],
       }))
       window.location.href = buildMaterialWatchEmailMailto(items, ccList, routing)
     } finally {
@@ -2160,7 +2161,7 @@ export default function Home() {
           onClose={() => setShowModal(false)}
           footer={
             modalTitle === 'Needs SPO Requested' ? <SpoBatchForHops hopNames={modalHops.map(h => h.hop)} />
-              : modalTitle === 'Material Watch' ? <MaterialWatchEmailBar hops={modalHops} />
+              : modalTitle === 'Material Watch' ? <MaterialWatchEmailBar hops={modalHops} trackerRawRows={trackerRawRows} />
               : undefined
           }
         />
