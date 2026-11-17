@@ -14,6 +14,10 @@ export interface DecomRow {
   cxStart: Date | null
   cxComplete: Date | null
   dropOffDate: Date | null
+  // Drop Off cell has a note but no usable date (e.g. "SS to Complete DECOM"
+  // — the decom is being handled by someone else, not Nokia/the GC). Counts as
+  // a drop-off and closes the row out. See hasDropOffComment().
+  commentOnlyDropOff: boolean
   comment: string
   cm: string
   gc: string
@@ -124,9 +128,19 @@ export function parseDropOff(raw: unknown): { date: Date | null; comment: string
       }
     }
   }
-  // No date found in the cell — treat the whole string as a comment; the
-  // row is still "outstanding" since no drop-off date was ever extracted.
+  // No date found in the cell — the whole string is a comment. (Whether that
+  // comment counts as a drop-off is decided by hasDropOffComment below.)
   return { date: null, comment: str }
+}
+
+// CJ's rule (11/2026): any note in the DECOM Drop Off cell counts as a
+// drop-off even with no date — e.g. "SS to Complete DECOM" means someone other
+// than Nokia/the GC is doing the decom, so there is nothing left to chase.
+// Only guard: a cell with no letters or digits at all (a lone "-" or ".") is
+// a placeholder, not a comment. A cell with a real date is counted by its
+// date instead, so this never double counts.
+export function hasDropOffComment(dropOffDate: Date | null, comment: string): boolean {
+  return !dropOffDate && /[a-z0-9]/i.test(comment)
 }
 
 // "POD In Pathwave" / "POD In QuickBase": "Yes" means the signed POD is on
@@ -200,7 +214,7 @@ export function countDroppedOffWithoutCxComplete(allRows: unknown[][]): number {
 
     const dropOffParsed = parseDropOff(row[dropOffCol])
     const dropOffDate = yearOk(dropOffParsed.date) ? dropOffParsed.date : null
-    if (dropOffDate) count++
+    if (dropOffDate || hasDropOffComment(dropOffDate, dropOffParsed.comment)) count++
   }
   return count
 }
@@ -239,6 +253,9 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
   let blankRowSkipped = 0
   let blankHopSkipped = 0
   let noCxCompleteSkipped = 0
+  // Distinct comment-only Drop Off notes and how many rows each covers, logged
+  // below so it is easy to see exactly what got counted as a drop-off.
+  const commentOnlyTexts = new Map<string, number>()
 
   for (let i = 1; i < allRows.length; i++) {
     const row = allRows[i]
@@ -261,6 +278,8 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     // typo'd date (e.g. 1/1/1900) shouldn't be treated as a real drop-off.
     const dropOffDate = yearOk(dropOffParsed.date) ? dropOffParsed.date : null
     const comment = dropOffParsed.comment
+    const commentOnlyDropOff = hasDropOffComment(dropOffDate, comment)
+    if (commentOnlyDropOff) commentOnlyTexts.set(comment, (commentOnlyTexts.get(comment) ?? 0) + 1)
 
     // Strict "Yes" only — NA is deliberately not folded in here (see the POD
     // In Pathwave / POD In QuickBase comment above), so it never inflates the
@@ -279,7 +298,7 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     // rows without CX Complete are excluded above before this runs.
     const aging = daysBetween(cxComplete, today)
 
-    const status: DecomRow['status'] = noDecomRequired
+    const status: DecomRow['status'] = (noDecomRequired || commentOnlyDropOff)
       ? 'complete'
       : dropOffDate
         ? ((podPathwave && podQuickBase) ? 'complete' : 'pod_gap')
@@ -301,7 +320,7 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
       siteName,
       siteNumber,
       cxStart, cxComplete,
-      dropOffDate, comment,
+      dropOffDate, commentOnlyDropOff, comment,
       cm: String(row[cmCol] ?? '').trim(),
       gc,
       podPathwave, podQuickBase,
@@ -310,6 +329,7 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     })
   }
 
+  console.log('[decom-parse] comment-only Drop Off notes counted as dropped off:', Object.fromEntries(commentOnlyTexts))
   console.log(`[decom-parse] ${allRows.length - 1} data rows in → ${rows.length} parsed out (${blankRowSkipped} fully blank, ${blankHopSkipped} blank HOP, ${noCxCompleteSkipped} no CX Complete)`)
 
   return rows
@@ -340,13 +360,16 @@ export interface DecomFunnel {
 // than the tracked denominator) when it does.
 export function computeDecomFunnel(decomRows: DecomRow[], extraDroppedOff: number = 0): DecomFunnel {
   const totalTracked = decomRows.length
-  const droppedOff = decomRows.filter(r => !!r.dropOffDate).length + extraDroppedOff
+  const commentOnly = decomRows.filter(r => r.commentOnlyDropOff).length
+  const droppedOff = decomRows.filter(r => !!r.dropOffDate).length + commentOnly + extraDroppedOff
   const podPathwave = decomRows.filter(r => r.podPathwave).length
   const podQuickBase = decomRows.filter(r => r.podQuickBase).length
   return {
     totalTracked, droppedOff, podPathwave, podQuickBase,
     gap1: totalTracked - droppedOff,
-    gap2: droppedOff - podPathwave,
+    // Comment-only drop-offs (decom done by someone else) will never get a POD
+    // from us, so they count as dropped off but not as "awaiting POD".
+    gap2: droppedOff - commentOnly - podPathwave,
     gap3: podPathwave - podQuickBase,
   }
 }
