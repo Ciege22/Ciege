@@ -21,8 +21,12 @@ export interface DecomRow {
   comment: string
   cm: string
   gc: string
+  // POD flags are true for a "Yes" OR any NA variation (see isPodNa).
   podPathwave: boolean
   podQuickBase: boolean
+  // POD In Pathwave is NA: no decom paperwork needed for this site at all.
+  // Counts as dropped off and as done in both POD buckets.
+  noDecomRequired: boolean
   aging: number | null
   status: 'complete' | 'pod_gap' | 'outstanding' | 'pending'
 }
@@ -144,19 +148,22 @@ export function hasDropOffComment(dropOffDate: Date | null, comment: string): bo
 }
 
 // "POD In Pathwave" / "POD In QuickBase": "Yes" means the signed POD is on
-// file. "NA" / "N/A" means "not applicable" — no POD is required for this
-// site at all, there's no equipment to decom, so there's nothing for
-// Pathwave/QuickBase to sign off (confirmed by CJ on a GC call). NA takes the
-// site out of the pipeline entirely: it forces the row to `complete` (see
-// noDecomRequired below), the same as done, so the site stops showing a POD
-// gap and stops aging against the GC — but it's explicitly NOT a "Yes", so it
-// must not be counted toward the POD Pathwave / POD QuickBase totals either.
-// Those totals should only reflect sites where a POD was actually confirmed;
-// "not applicable" means the site is outside that count, not a positive hit
-// in it. Blank or "No" is still a genuine gap.
-const POD_NA_VALUES = new Set(['na', 'n/a', 'n\\a', 'n.a.', 'not applicable'])
-function isPodNa(val: unknown): boolean {
-  return POD_NA_VALUES.has(String(val || '').trim().toLowerCase())
+// file. "NA" in any spelling — NA, N/A, N.A, N A, n\a, "not applicable" —
+// means no POD is required for this site (no equipment to decom, or someone
+// else does the decom, e.g. "SS to Complete DECOM"), so there is nothing for
+// Pathwave/QuickBase to sign off.
+//
+// CJ's rule (11/17/2026, reversing the earlier "NA is not a Yes" rule): NA
+// counts as COMPLETED. It closes the row out (status `complete`, no aging, no
+// GC chase), counts in whichever POD bucket carries the NA, and — via
+// noDecomRequired — counts as dropped off too, so the funnel stages line up
+// instead of showing a phantom gap for sites that need no paperwork.
+const NA_LETTERS = new Set(['na', 'notapplicable'])
+export function isPodNa(val: unknown): boolean {
+  // Letters only, so "N/A", "n.a.", "N A" and "n\\a" all reduce to "na"
+  // while "No", "Not yet" or "NA - waiting" (letters "nawaiting") do not.
+  const letters = String(val ?? '').toLowerCase().replace(/[^a-z]/g, '')
+  return NA_LETTERS.has(letters)
 }
 function parsePodYes(val: unknown): boolean {
   const s = String(val || '').trim().toLowerCase()
@@ -281,16 +288,17 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
     const commentOnlyDropOff = hasDropOffComment(dropOffDate, comment)
     if (commentOnlyDropOff) commentOnlyTexts.set(comment, (commentOnlyTexts.get(comment) ?? 0) + 1)
 
-    // Strict "Yes" only — NA is deliberately not folded in here (see the POD
-    // In Pathwave / POD In QuickBase comment above), so it never inflates the
-    // POD Pathwave / POD QuickBase totals.
-    const podPathwave = parsePodYes(row[podPathwaveCol])
-    const podQuickBase = parsePodYes(row[podQuickBaseCol])
-    // "NA" in POD In Pathwave = this site has no decom to do at all (handled
-    // by another vendor, or Viaero waived it) — nothing for the GC to drop
-    // off or POD, so it's closed out, not aging. Confirmed by CJ on a GC
-    // call. Takes precedence over the drop-off / aging branch below.
-    const noDecomRequired = isPodNa(row[podPathwaveCol])
+    // "NA" in POD In Pathwave = this site has no decom paperwork at all
+    // (handled by another vendor such as Samsung, or not required) — nothing
+    // for the GC to drop off or POD, so it's closed out, not aging. It takes
+    // precedence over the drop-off / aging branch below, counts as dropped off
+    // in the funnel, and counts as done in BOTH POD buckets. In each bucket a
+    // "Yes" or any NA spelling (isPodNa) is a completed POD.
+    const podPathwaveRaw = row[podPathwaveCol]
+    const podQuickBaseRaw = row[podQuickBaseCol]
+    const noDecomRequired = isPodNa(podPathwaveRaw)
+    const podPathwave = parsePodYes(podPathwaveRaw) || isPodNa(podPathwaveRaw)
+    const podQuickBase = parsePodYes(podQuickBaseRaw) || isPodNa(podQuickBaseRaw) || noDecomRequired
 
     const gc = resolveGc(String(row[gcCol] ?? ''), String(row[cgCol] ?? ''))
 
@@ -323,7 +331,7 @@ export function parseDecomRows(allRows: unknown[][]): DecomRow[] {
       dropOffDate, commentOnlyDropOff, comment,
       cm: String(row[cmCol] ?? '').trim(),
       gc,
-      podPathwave, podQuickBase,
+      podPathwave, podQuickBase, noDecomRequired,
       aging,
       status,
     })
@@ -360,16 +368,18 @@ export interface DecomFunnel {
 // than the tracked denominator) when it does.
 export function computeDecomFunnel(decomRows: DecomRow[], extraDroppedOff: number = 0): DecomFunnel {
   const totalTracked = decomRows.length
-  const commentOnly = decomRows.filter(r => r.commentOnlyDropOff).length
-  const droppedOff = decomRows.filter(r => !!r.dropOffDate).length + commentOnly + extraDroppedOff
+  // Dropped off = a real date, OR a note with no date, OR "NA" paperwork (no
+  // decom required). Each row counts once however many of those apply.
+  const droppedOff = decomRows.filter(r => !!r.dropOffDate || r.commentOnlyDropOff || r.noDecomRequired).length + extraDroppedOff
   const podPathwave = decomRows.filter(r => r.podPathwave).length
   const podQuickBase = decomRows.filter(r => r.podQuickBase).length
+  // A comment-only drop-off with no POD on file is closed out (status
+  // `complete`), so it must not show up as "dropped off, awaiting POD".
+  const commentOnlyNoPod = decomRows.filter(r => r.commentOnlyDropOff && !r.podPathwave).length
   return {
     totalTracked, droppedOff, podPathwave, podQuickBase,
     gap1: totalTracked - droppedOff,
-    // Comment-only drop-offs (decom done by someone else) will never get a POD
-    // from us, so they count as dropped off but not as "awaiting POD".
-    gap2: droppedOff - commentOnly - podPathwave,
+    gap2: droppedOff - commentOnlyNoPod - podPathwave,
     gap3: podPathwave - podQuickBase,
   }
 }
