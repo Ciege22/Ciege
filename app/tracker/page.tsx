@@ -122,6 +122,10 @@ interface CallNote {
 // Three starter views, auto-created on first load if no saved views exist yet.
 // "keep" lists are matched against normalized header names — anything not in
 // the list gets hidden.
+// The saved view the Tracker Grid opens on (CJ, 11/2026). If it doesn't
+// exist (renamed/deleted) the grid falls back to Default.
+const DEFAULT_VIEW_NAME = 'Main CX'
+
 const STARTER_VIEW_DEFS: { name: string; keep: string[] }[] = [
   {
     name: 'Decom',
@@ -871,6 +875,17 @@ export default function TrackerGridPage() {
       })
       setViews(loadedViews)
       setViewsLoaded(true)
+      // Open on CJ's "Main CX" view (its hidden columns AND saved filter/
+      // sort) instead of Default every time the page loads. Matched
+      // case/space-insensitively; if no such view exists the grid just
+      // stays on Default as before.
+      const norm = (s: string) => s.trim().replace(/\s+/g, ' ').toLowerCase()
+      const home = loadedViews.find(v => norm(v.name) === norm(DEFAULT_VIEW_NAME))
+      if (home) {
+        setActiveViewName(home.name)
+        setColumnFilters(home.columnFilters ?? {})
+        setSortOrder(home.sortOrder ?? [])
+      }
     }
     load()
   }, [])
