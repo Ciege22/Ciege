@@ -21,6 +21,35 @@ const SELECTED_ROW = '#DCEAFB'
 // Virtualization tuning — fixed row height lets us compute the visible window
 // from scrollTop with simple arithmetic instead of measuring the DOM.
 const ROW_HEIGHT = 36
+
+// Blockers column chips (NTP A / Material A / SPO Issued) — green ✓ done,
+// red ✗ missing, amber ⏳ SPO requested but not issued yet. All three done
+// collapses to a single "Ready" chip.
+type ChipState = 'ok' | 'bad' | 'wait'
+interface BlockersInfo { parts: string[]; ntp: ChipState; mat: ChipState; spo: ChipState }
+const CHIP_STYLE: Record<ChipState, { bg: string; fg: string; icon: string }> = {
+  ok:   { bg: '#DCFCE7', fg: '#166534', icon: '✓' },
+  bad:  { bg: '#FEE2E2', fg: '#991B1B', icon: '✗' },
+  wait: { bg: '#FEF3C7', fg: '#92400E', icon: '⏳' },
+}
+function BlockerChips({ info }: { info: BlockersInfo }) {
+  const chip = (label: string, state: ChipState) => {
+    const c = CHIP_STYLE[state]
+    return (
+      <span
+        key={label}
+        style={{ backgroundColor: c.bg, color: c.fg, display: 'inline-flex', alignItems: 'center', gap: 3, padding: '1px 7px', borderRadius: 10, fontSize: 11, fontWeight: 600, marginRight: 4 }}
+      >
+        <span aria-hidden="true">{c.icon}</span>{label}
+      </span>
+    )
+  }
+  if (info.ntp === 'ok' && info.mat === 'ok' && info.spo === 'ok') {
+    const c = CHIP_STYLE.ok
+    return <span style={{ color: c.fg, fontSize: 11, fontWeight: 600 }}>✓ Ready</span>
+  }
+  return <>{chip('NTP', info.ntp)}{chip('MAT', info.mat)}{chip('SPO', info.spo)}</>
+}
 // Header row only — taller than ROW_HEIGHT so a full column name can wrap to
 // two lines instead of truncating. Independent of ROW_HEIGHT/virtualization
 // math on purpose: that math is driven by scrollTop/viewportSize, not by
@@ -884,11 +913,11 @@ export default function TrackerGridPage() {
       }
       return out
     }
-    try {
-      const raw = localStorage.getItem(COL_WIDTHS_LS_KEY)
-      if (raw) setColumnWidths(prev => ({ ...clean(JSON.parse(raw)), ...prev }))
-    } catch {}
-    const loadRemote = async () => {
+    const loadWidths = async () => {
+      try {
+        const raw = localStorage.getItem(COL_WIDTHS_LS_KEY)
+        if (raw) setColumnWidths(prev => ({ ...clean(JSON.parse(raw)), ...prev }))
+      } catch {}
       const { data } = await supabase.from('pm_updates_cache').select('updates').eq('id', COL_WIDTHS_ROW_ID).maybeSingle()
       if (!data?.updates) return
       try {
@@ -897,7 +926,7 @@ export default function TrackerGridPage() {
         try { localStorage.setItem(COL_WIDTHS_LS_KEY, JSON.stringify(remote)) } catch {}
       } catch {}
     }
-    loadRemote()
+    loadWidths()
   }, [])
 
   // Load saved views.
@@ -1434,7 +1463,7 @@ export default function TrackerGridPage() {
     }
     const blockersCol: GridColumn = {
       index: -1, name: BLOCKERS_COL_NAME, isHop: false, isDate: false, isBlockers: true, isCrew: false, isCxComments: false, isCxNotes: false,
-      width: columnWidths[BLOCKERS_COL_NAME] ?? 260,
+      width: columnWidths[BLOCKERS_COL_NAME] ?? 180,
     }
     const withComputed = [real[0], crewCol, blockersCol, ...real.slice(1)]
 
@@ -1579,7 +1608,10 @@ export default function TrackerGridPage() {
   // Material Received A / Material Forecast +4ish / CX SPO Issued, honoring
   // any pending in-grid edit to those same source columns (same changeMap
   // lookup cellText uses) rather than only the original sheet value.
-  const blockersText = useCallback((row: TrackerRowData): string => {
+  // One pass over the same rules for both the chips and the text: `parts` is
+  // the hover/search/filter/export text, `ntp`/`mat`/`spo` drive the chips.
+  // SPO is 'wait' (amber) when a request is in but the SPO isn't issued yet.
+  const blockersInfo = useCallback((row: TrackerRowData): BlockersInfo => {
     const { ntpA, ntpWaiting, matA, matForecast, spo, spoRequest } = blockerSourceCols
     const rawFor = (idx: number) => {
       if (idx < 0) return undefined
@@ -1587,10 +1619,14 @@ export default function TrackerGridPage() {
       return change ? change.newValue : row.cells[idx]
     }
     const parts: string[] = []
+    let ntp: ChipState = 'ok'
+    let mat: ChipState = 'ok'
+    let spoState: ChipState = 'ok'
 
     const ntpDate = ntpA >= 0 ? parseDateAny(rawFor(ntpA)) : null
     const hasNtp = !!(ntpDate && ntpDate.getFullYear() >= 2025)
     if (!hasNtp) {
+      ntp = 'bad'
       const waitingOn = ntpWaiting >= 0 ? String(rawFor(ntpWaiting) ?? '').trim() : ''
       parts.push(waitingOn ? `🔴 NTP pending — ${waitingOn}` : '🔴 NTP pending')
     }
@@ -1598,6 +1634,7 @@ export default function TrackerGridPage() {
     const matDate = matA >= 0 ? parseDateAny(rawFor(matA)) : null
     const hasMat = !!(matDate && matDate.getFullYear() >= 2020)
     if (!hasMat) {
+      mat = 'bad'
       const forecast = matForecast >= 0 ? cellDisplayValue(rawFor(matForecast), true).text : ''
       parts.push(forecast ? `🔴 Material not received — forecast ${forecast}` : '🔴 Material not received')
     }
@@ -1605,11 +1642,22 @@ export default function TrackerGridPage() {
     const spoDate = spo >= 0 ? parseDateAny(rawFor(spo)) : null
     if (!spoDate) {
       const spoRequestDate = spoRequest >= 0 ? parseDateAny(rawFor(spoRequest)) : null
-      parts.push(spoRequestDate ? '📨 SPO requested — pending creation' : '🔴 SPO not requested')
+      if (spoRequestDate) {
+        spoState = 'wait'
+        parts.push('📨 SPO requested — pending creation')
+      } else {
+        spoState = 'bad'
+        parts.push('🔴 SPO not requested')
+      }
     }
 
-    return parts.join(' | ') || '✅ No blockers'
+    return { parts, ntp, mat, spo: spoState }
   }, [blockerSourceCols, changeMap, headers])
+
+  const blockersText = useCallback(
+    (row: TrackerRowData): string => blockersInfo(row).parts.join(' | ') || '✅ No blockers',
+    [blockersInfo]
+  )
 
   // Row's own General Contractor value (honoring a pending edit to that
   // column, same as every other lookup here) — Crew's dropdown option count
@@ -2318,7 +2366,7 @@ export default function TrackerGridPage() {
                             className="px-2 py-1 text-xs whitespace-nowrap border-r border-b border-gray-200 overflow-hidden text-ellipsis"
                             title={text}
                           >
-                            {text}
+                            <BlockerChips info={blockersInfo(row)} />
                           </td>
                         )
                       }
@@ -2363,7 +2411,7 @@ export default function TrackerGridPage() {
                             className="px-2 py-1 text-xs whitespace-nowrap border-r border-b border-gray-200 overflow-hidden text-ellipsis"
                             title={text}
                           >
-                            {text}
+                            <BlockerChips info={blockersInfo(row)} />
                           </td>
                         )
                       }
