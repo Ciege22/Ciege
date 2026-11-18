@@ -783,6 +783,24 @@ function fmtDateOrText(raw: unknown): string {
   return String(raw ?? '').trim()
 }
 
+// Sub-milestone cells (MSS, Power-Up, cutovers, Decom): a real date wins,
+// checking this site row first and then the HOP's other row; if neither
+// has a date, any text typed in the cell ("Complete", "N/A") shows as typed.
+// Blank cells and the 1899/1970 blank-cell artifacts stay empty.
+function fmtDateOrStatusEither(a: unknown, b: unknown): string {
+  const da = parseDateAny(a)
+  if (da) return fmtDate(da)
+  const db = parseDateAny(b)
+  if (db) return fmtDate(db)
+  const isBlankArtifact = (v: unknown) => /^(1899-12-30|1970-01-01)/.test(String(v ?? '').trim())
+  for (const v of [a, b]) {
+    if (v == null || typeof v === 'number' || v instanceof Date) continue
+    const s = String(v).trim()
+    if (s && !isBlankArtifact(s)) return s
+  }
+  return ''
+}
+
 // Deployment Method 11 requires a customer outage notice for pipeline
 // sites (CJ, 11/2026) — same helper as app/cm-view/page.tsx, duplicated
 // rather than shared (this file already duplicates its tracker-column
@@ -1391,7 +1409,10 @@ export default function GCCallPage() {
       })()
     const siteCmCol    = col('New CM')
     const deployMethodCol = col('Hop Deployment Method')
-    const mssCol       = col('MSS Completed NMS Ready ')
+    // col() trims every tracker header before comparing, so the lookup name
+    // must be trimmed too — the old 'MSS Completed NMS Ready ' (trailing
+    // space) could never match and left every MSS cell blank (CJ, 11/2026).
+    const mssCol       = col('MSS Completed NMS Ready')
     const powerCol     = col('Power-Up Completion')
     const mainCutCol   = col('Main Path Cutover Completed')
     const divCutCol    = col('Diversity Cutover Completed')
@@ -1628,11 +1649,13 @@ export default function GCCallPage() {
         pullInReady: hasNtp && hasMat && !vendorWindow.includes('🔴') && !vendorWindow.includes('⚠️') && !inProgress && !complete,
         pullInStatus: '',
         cm:        String(row[siteCmCol] || '').trim() || String(row2?.[siteCmCol] || '').trim(),
-        mss:       fmtDate(parseDateAny(row[mssCol])),
-        powerUp:   fmtDate(parseDateAny(row[powerCol])),
-        mainCutover: fmtDate(parseDateAny(row[mainCutCol])),
-        divCutover:  fmtDate(parseDateAny(row[divCutCol])),
-        decom:       fmtDate(parseDateAny(row[decomCol])),
+        // Sub-milestones: either site row may carry the date, and a typed
+        // status ("Complete", "N/A") shows as typed instead of going blank.
+        mss:         fmtDateOrStatusEither(row[mssCol], row2?.[mssCol]),
+        powerUp:     fmtDateOrStatusEither(row[powerCol], row2?.[powerCol]),
+        mainCutover: fmtDateOrStatusEither(row[mainCutCol], row2?.[mainCutCol]),
+        divCutover:  fmtDateOrStatusEither(row[divCutCol], row2?.[divCutCol]),
+        decom:       fmtDateOrStatusEither(row[decomCol], row2?.[decomCol]),
         gcPickupF: fmtDate(parseDateAny(row[gcPickupFCol])),
         gcPickupA: fmtDate(parseDateAny(row[gcPickupACol])),
         cxNotes:   String(row[cxNotesCol] || '').trim(),
