@@ -126,6 +126,10 @@ interface CallNote {
 // exist (renamed/deleted) the grid falls back to Default.
 const DEFAULT_VIEW_NAME = 'Main CX'
 
+// Where the Tracker Grid's dragged column widths are remembered.
+const COL_WIDTHS_LS_KEY = 'tracker-col-widths'
+const COL_WIDTHS_ROW_ID = 'tracker-col-widths'
+
 const STARTER_VIEW_DEFS: { name: string; keep: string[] }[] = [
   {
     name: 'Decom',
@@ -831,8 +835,13 @@ export default function TrackerGridPage() {
   const [viewportSize, setViewportSize] = useState({ width: 900, height: 600 })
   const [selectedRowKey, setSelectedRowKey] = useState<string | null>(null)
   // User-resized column widths, keyed by column name — overrides the default
-  // width heuristic once a column's been dragged. Session-only (not persisted).
+  // width heuristic once a column's been dragged. One set of widths for the
+  // whole grid (not per view), saved on mouse-up to this browser and to
+  // Supabase (pm_updates_cache 'tracker-col-widths') so it survives leaving
+  // the page and follows CJ across devices. Widths only — no Nokia data.
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({})
+  const columnWidthsRef = useRef<Record<string, number>>({})
+  useEffect(() => { columnWidthsRef.current = columnWidths }, [columnWidths])
   const colResizeRef = useRef<{ name: string; startX: number; startWidth: number } | null>(null)
 
   // Program roster (GC crew counts) and per-HOP crew assignments — same
@@ -860,6 +869,35 @@ export default function TrackerGridPage() {
       setCrewAssignments(map)
     }
     loadCrewAssignments()
+  }, [])
+
+  // Load saved column widths: this browser's copy first (instant, no flash
+  // of default widths), then Supabase (the copy that follows CJ between
+  // devices). A column dragged during the load keeps its new width.
+  useEffect(() => {
+    const clean = (o: unknown): Record<string, number> => {
+      const out: Record<string, number> = {}
+      if (o && typeof o === 'object') {
+        for (const [k, v] of Object.entries(o as Record<string, unknown>)) {
+          if (typeof v === 'number' && isFinite(v) && v >= 60 && v <= 2000) out[k] = v
+        }
+      }
+      return out
+    }
+    try {
+      const raw = localStorage.getItem(COL_WIDTHS_LS_KEY)
+      if (raw) setColumnWidths(prev => ({ ...clean(JSON.parse(raw)), ...prev }))
+    } catch {}
+    const loadRemote = async () => {
+      const { data } = await supabase.from('pm_updates_cache').select('updates').eq('id', COL_WIDTHS_ROW_ID).maybeSingle()
+      if (!data?.updates) return
+      try {
+        const remote = clean(JSON.parse(data.updates))
+        setColumnWidths(prev => ({ ...remote, ...prev }))
+        try { localStorage.setItem(COL_WIDTHS_LS_KEY, JSON.stringify(remote)) } catch {}
+      } catch {}
+    }
+    loadRemote()
   }, [])
 
   // Load saved views.
@@ -1061,9 +1099,11 @@ export default function TrackerGridPage() {
     e.preventDefault()
     e.stopPropagation()
     colResizeRef.current = { name, startX: e.clientX, startWidth }
+    let moved = false
     const handleMouseMove = (ev: MouseEvent) => {
       const state = colResizeRef.current
       if (!state) return
+      moved = true
       const newWidth = Math.max(60, state.startWidth + (ev.clientX - state.startX))
       setColumnWidths(prev => ({ ...prev, [state.name]: newWidth }))
     }
@@ -1071,6 +1111,18 @@ export default function TrackerGridPage() {
       colResizeRef.current = null
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
+      // Save once the drag ends (not on every pixel of the drag). The ref
+      // holds the latest widths from the last mousemove render. A bare click
+      // on the handle (no drag) saves nothing, so it can never wipe the
+      // saved widths with an empty set.
+      if (!moved) return
+      const widths = { ...columnWidthsRef.current }
+      try { localStorage.setItem(COL_WIDTHS_LS_KEY, JSON.stringify(widths)) } catch {}
+      supabase.from('pm_updates_cache').upsert({
+        id: COL_WIDTHS_ROW_ID,
+        updates: JSON.stringify(widths),
+        updated_at: new Date().toISOString(),
+      }).then(({ error }) => { if (error) console.error('[col-widths] save failed:', error) })
     }
     window.addEventListener('mousemove', handleMouseMove)
     window.addEventListener('mouseup', handleMouseUp)
