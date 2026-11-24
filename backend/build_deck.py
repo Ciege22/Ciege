@@ -203,6 +203,34 @@ def set_table_cell(shape, row, col, text, color=None, bold=None, clear_fill=Fals
         print(f'[set_table_cell] row={row} col={col} err={_e!r}', file=_s.stderr, flush=True)
 
 
+_A16_NS = 'http://schemas.microsoft.com/office/drawing/2014/main'
+
+
+def ensure_unique_row_ids(shape):
+    """Give every table row its own a16:rowId.
+
+    expand_table_rows clones the last row with copy.deepcopy, which copies that
+    row's rowId too, so cloned rows shared one id (MSS Readiness: the last 3
+    rows all had the same id). PowerPoint binds formatting to the row id, so
+    the duplicate rows couldn't have their font/size/format changed (CJ,
+    11/2026). Also repairs tables that already carry duplicates from an earlier
+    build. Only rewrites an id that repeats an earlier row's; rows with a
+    unique id are left exactly as they are.
+    """
+    import random
+    seen = set()
+    for tr in shape.table._tbl.findall(qn('a:tr')):
+        for rid in tr.iter(f'{{{_A16_NS}}}rowId'):
+            val = rid.get('val')
+            if val in seen:
+                new = str(random.randint(10000, 4294967295))
+                while new in seen:
+                    new = str(random.randint(10000, 4294967295))
+                rid.set('val', new)
+                val = new
+            seen.add(val)
+
+
 def expand_table_rows(shape, needed_data_rows, has_header=True):
     """Append duplicate rows so table has at least needed_data_rows data rows (header excluded
     unless has_header=False, for tables whose column headings live outside the table).
@@ -221,6 +249,10 @@ def expand_table_rows(shape, needed_data_rows, has_header=True):
     HOP names or any cell content) so it's diagnosable from Railway's logs
     instead of vanishing without a trace.
     """
+    try:
+        ensure_unique_row_ids(shape)
+    except Exception as _id_err:
+        print(f'[expand_table_rows] row id repair failed: {_id_err!r}', file=sys.stderr, flush=True)
     try:
         tbl_el = shape.table._tbl
         trs = tbl_el.findall(qn('a:tr'))
@@ -244,6 +276,10 @@ def expand_table_rows(shape, needed_data_rows, has_header=True):
                 added += 1
             except Exception as _row_err:
                 print(f'[expand_table_rows] row clone {added + 1}/{to_add} failed: {_row_err!r}', file=sys.stderr, flush=True)
+        try:
+            ensure_unique_row_ids(shape)  # the clones above carry their source row's id
+        except Exception as _id_err:
+            print(f'[expand_table_rows] row id repair failed: {_id_err!r}', file=sys.stderr, flush=True)
         if added < to_add:
             print(f'[expand_table_rows] short {to_add - added} row(s) — table has {current_data + added} of {needed_data_rows} needed data rows', file=sys.stderr, flush=True)
     except Exception as _err:
