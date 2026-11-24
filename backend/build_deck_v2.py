@@ -39,6 +39,7 @@ Behavioral differences from the original /build, all explicitly requested:
 """
 
 import os
+import sys
 import posixpath
 import re
 import copy
@@ -525,6 +526,13 @@ def find_table(slide, required_header_keywords):
         hdrs = [sh.table.cell(0, c).text.strip() for c in range(len(sh.table.columns))]
         if all(any(kw.lower() in h.lower() for h in hdrs) for kw in required_header_keywords):
             return sh, hdrs
+    # Loud, not silent: a table the builder can't find is simply never
+    # updated and keeps last build's rows (11/2026, "Hops in Progress").
+    # Counts and keywords only — never cell content.
+    n_tables = sum(1 for sh in slide.shapes if sh.has_table)
+    print(f'[find_table] no table with header keywords {list(required_header_keywords)} '
+          f'({n_tables} table(s) on this slide) — it will NOT be updated unless a fallback applies',
+          file=sys.stderr, flush=True)
     return None, None
 
 
@@ -1365,18 +1373,35 @@ def update_deck_v2(data: dict, previous_deck_path: str, output_path: str,
             if sh.has_text_frame and re.search(r'HOPs started', sh.text_frame.text):
                 set_shape_text(sh, f'{d["ip_count"]} HOPs started · Green=On Track · Yellow=At Risk · Red=Escalation · ⚑=Needs Attention')
         tbl_shape, hdrs = find_table(ip_slide, ['HOP'])
+        # This slide's table can have NO header row of its own — its column
+        # headings are a picture above it, so row 0 is already a HOP row and
+        # the header search above finds nothing (11/2026: the table then kept
+        # last build's rows while the count line updated). Fall back to the
+        # slide's only table with the picture's fixed column order.
+        headerless = False
+        if tbl_shape is None:
+            cand = next((sh for sh in ip_slide.shapes if sh.has_table), None)
+            if cand is not None and len(cand.table.columns) == 4:
+                tbl_shape, hdrs, headerless = cand, ['HOP', 'Cx Start', 'Fc End', 'Risk'], True
+                print('[Hops in Progress] table has no header row — filling it by column position',
+                      file=sys.stderr, flush=True)
+            else:
+                print('[Hops in Progress] could not locate the HOP table — NOT updated',
+                      file=sys.stderr, flush=True)
         if tbl_shape is not None:
+            first = 0 if headerless else 1
             hop_col = col_idx(hdrs, 'HOP')
             start_col = col_idx(hdrs, 'Cx Start', 'Start')
             end_col = col_idx(hdrs, 'Fc End', 'End')
             risk_col = col_idx(hdrs, 'Risk')
             notes_col = col_idx(hdrs, 'Comments', 'Live Status', 'Notes')
-            expand_table_rows(tbl_shape, len(ip_sorted))
-            fix_row_banding(tbl_shape)
+            expand_table_rows(tbl_shape, len(ip_sorted), has_header=not headerless)
+            if not headerless:
+                fix_row_banding(tbl_shape)
             new_starts_set = set(d['new_starts'])
-            for ri in range(1, len(tbl_shape.table.rows)):
-                if ri - 1 < len(ip_sorted):
-                    r = ip_sorted.iloc[ri - 1]; hop = r['HOP']
+            for ri in range(first, len(tbl_shape.table.rows)):
+                if ri - first < len(ip_sorted):
+                    r = ip_sorted.iloc[ri - first]; hop = r['HOP']
                     is_new = hop in new_starts_set
                     o18 = bool(r.get('over_18d', False))
                     risk = '🔴 Over 18d' if o18 else ('★ NEW' if is_new else 'G')

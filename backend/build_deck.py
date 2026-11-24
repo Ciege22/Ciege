@@ -173,6 +173,20 @@ def set_table_cell(shape, row, col, text, color=None, bold=None, clear_fill=Fals
             _sf_el = etree.SubElement(rPr_copy, f'{{{NS}}}solidFill')
             _sc_el = etree.SubElement(_sf_el, f'{{{NS}}}srgbClr')
             _sc_el.set('val', str(color))
+        # Empty cell: PowerPoint keeps an empty paragraph's formatting on
+        # <a:endParaRPr>, not in an empty <a:r>. An empty run leaves nothing
+        # selectable, so the cell's font can't be changed in PowerPoint
+        # (CJ, 11/2026: last two Live Status cells on MSS Readiness).
+        if text == '':
+            for old_end in para0._p.findall(qn('a:endParaRPr')):
+                para0._p.remove(old_end)
+            end_new = etree.Element(f'{{{NS}}}endParaRPr')
+            for attr, val in rPr_copy.attrib.items():
+                end_new.set(attr, val)
+            for child in rPr_copy:
+                end_new.append(copy.deepcopy(child))
+            para0._p.append(end_new)
+            return
         # Build a fresh run with preserved properties and insert BEFORE <a:endParaRPr>.
         r_new = etree.Element(f'{{{NS}}}r')
         if rPr_copy is not None:
@@ -189,8 +203,9 @@ def set_table_cell(shape, row, col, text, color=None, bold=None, clear_fill=Fals
         print(f'[set_table_cell] row={row} col={col} err={_e!r}', file=_s.stderr, flush=True)
 
 
-def expand_table_rows(shape, needed_data_rows):
-    """Append duplicate rows so table has at least needed_data_rows data rows (header excluded).
+def expand_table_rows(shape, needed_data_rows, has_header=True):
+    """Append duplicate rows so table has at least needed_data_rows data rows (header excluded
+    unless has_header=False, for tables whose column headings live outside the table).
 
     Bug fix, 11/2026 ("Hops in Progress" slide header said "7 HOPs started"
     but the table only had 5 rows): this used to be one bare `except: pass`
@@ -211,7 +226,7 @@ def expand_table_rows(shape, needed_data_rows):
         trs = tbl_el.findall(qn('a:tr'))
         if not trs:
             return
-        current_data = len(trs) - 1  # header is row 0
+        current_data = len(trs) - (1 if has_header else 0)  # header is row 0 unless the table has none
         if current_data >= needed_data_rows:
             return
         last_tr = trs[-1]
